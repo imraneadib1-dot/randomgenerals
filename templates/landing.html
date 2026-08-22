@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RandomGenerals AI — your own AI, running locally</title>
+    <meta
+      name="description"
+      content="Chat, code, images, voice and memory — powered by models running on real hardware, not a rented API."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='landing.css') }}"
+    />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="scroll-progress" id="scrollProgress" aria-hidden="true"></div>
+    <div class="glow-field" aria-hidden="true"></div>
+
+    <header class="nav">
+      <a class="nav-brand" href="/">
+        <span class="nav-mark" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 32 32" fill="none">
+            <circle cx="16" cy="16" r="13" fill="currentColor" />
+            <circle cx="22" cy="12" r="11" fill="#0a0e17" />
+          </svg>
+        </span>
+        <span>RandomGenerals<span class="nav-dot">.</span>AI</span>
+      </a>
+      <nav class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#how">How it works</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <div class="nav-actions">
+        {% if not signed_in %}
+        <a class="btn btn-ghost" href="/app">Sign in</a>
+        {% endif %}
+        <a class="btn btn-primary" href="/app">
+          {{ "Open app" if signed_in else "Launch app" }}
+        </a>
+        <button
+          type="button"
+          class="hamburger"
+          id="hamburger"
+          aria-label="Open menu"
+          aria-expanded="false"
+          aria-controls="mobileDrawer"
+        >
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </header>
+
+    <div class="drawer-backdrop" id="drawerBackdrop" hidden></div>
+    <nav class="mobile-drawer" id="mobileDrawer" aria-label="Mobile" hidden>
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#faq">FAQ</a>
+      <a class="btn btn-primary btn-block" href="/app">Launch app</a>
+    </nav>
+
+    <main id="main">
+      <section class="hero">
+        <!-- Sits behind the hero text (z-index/pointer-events in CSS) so
+             it can never intercept a click on the CTA buttons. -->
+        <canvas
+          class="hero-canvas"
+          id="heroCanvas"
+          aria-hidden="true"
+        ></canvas>
+        <span class="eyebrow">Runs on real hardware, not a rented API</span>
+        <h1>
+          Your own AI assistant.<br />
+          <span class="grad">Chat, code, images, voice.</span>
+        </h1>
+        <p class="hero-sub">
+          RandomGenerals AI runs language models locally and answers in
+          seconds — with web search, file understanding, a sandboxed code
+          runner, and memory that carries between conversations.
+        </p>
+        <div class="hero-cta">
+          <a class="btn btn-primary btn-lg" href="/app">Start free</a>
+          <a class="btn btn-ghost btn-lg" href="#features">See what it does</a>
+        </div>
+        <p class="hero-note">
+          4,000 credits free, refilling every hour. No card required.
+        </p>
+      </section>
+
+      <section class="features" id="features">
+        <div class="section-head">
+          <span class="eyebrow">Capabilities</span>
+          <h2>Everything in one place</h2>
+        </div>
+        <div class="card-grid">
+          <article class="card">
+            <span class="card-num">01</span>
+            <h3>Chat &amp; Deep search</h3>
+            <p>
+              Quick mode answers in about a second. Deep mode searches the
+              web first and reasons through the whole problem before it
+              replies — both included free.
+            </p>
+          </article>
+          <article class="card">
+            <span class="card-num">02</span>
+            <h3>Code that actually runs</h3>
+            <p>
+              A dedicated coding workspace with a model tuned for it, plus a
+              sandboxed Python runner — hit Run on any code block and see
+              real output, without leaving the chat.
+            </p>
+          </article>
+          <article class="card">
+            <span class="card-num">03</span>
+            <h3>Image generation</h3>
+            <p>
+              Describe it and get it, generated locally and privately. Bring
+              your own Gemini key if you want higher-fidelity results.
+            </p>
+          </article>
+          <article class="card">
+            <span class="card-num">04</span>
+            <h3>Voice in and out</h3>
+            <p>
+              Speak your message instead of typing it, and have any reply read
+              back aloud. Runs in the browser, so it adds no latency.
+            </p>
+          </article>
+          <article class="card">
+            <span class="card-num">05</span>
+            <h3>Memory that persists</h3>
+            <p>
+              Say “remember …” and it sticks — across separate conversations.
+              Set standing instructions once and every reply follows them.
+            </p>
+          </article>
+          <article class="card">
+            <span class="card-num">06</span>
+            <h3>Files and images in</h3>
+            <p>
+              Drop in documents, code, or whole folders and ask about them.
+              Attach a picture and, on Pro, a vision model reads it.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="how" id="how">
+        <div class="section-head">
+          <span class="eyebrow">How it works</span>
+          <h2>Three steps, no setup</h2>
+        </div>
+        <ol class="steps">
+          <li>
+            <span class="step-num">1</span>
+            <h3>Open the app</h3>
+            <p>
+              No install, no download. It runs in the browser on any device on
+              the link.
+            </p>
+          </li>
+          <li>
+            <span class="step-num">2</span>
+            <h3>Pick a workspace</h3>
+            <p>
+              Code, Chat, or Image — each one loads the right model and the
+              right defaults for the job.
+            </p>
+          </li>
+          <li>
+            <span class="step-num">3</span>
+            <h3>Ask</h3>
+            <p>
+              Replies stream back as they're generated. Stop, regenerate, copy,
+              or have it read aloud.
+            </p>
+          </li>
+        </ol>
+      </section>
+
+      <section class="pricing" id="pricing">
+        <div class="section-head">
+          <span class="eyebrow">Pricing</span>
+          <h2>Free to use. Pro when you need more.</h2>
+        </div>
+        <div class="price-grid">
+          <article class="price-card">
+            <h3>Free</h3>
+            <div class="price">$0</div>
+            <ul>
+              <li>4,000 credits, hourly refill</li>
+              <li>Fast chat model + coding model</li>
+              <li>Quick &amp; Deep modes</li>
+              <li>Images, code execution, voice</li>
+              <li>Remembers up to 25 things</li>
+            </ul>
+            <a class="btn btn-ghost btn-block" href="/app">Start free</a>
+          </article>
+          <article class="price-card price-card-pro">
+            <span class="price-badge">Best value</span>
+            <h3>Pro</h3>
+            <div class="price">$1.99<span>/mo</span></div>
+            <ul>
+              <li><strong>Advanced 7B model</strong> — noticeably sharper answers</li>
+              <li><strong>Image understanding</strong> — it sees what you attach</li>
+              <li><strong>Unlimited memory</strong> — no 25-item cap</li>
+              <li>Long-form code past 1,000 lines</li>
+              <li>100MB uploads · 10,000 credits / 15 min</li>
+            </ul>
+            <a class="btn btn-primary btn-block" href="/app">Go Pro</a>
+          </article>
+        </div>
+      </section>
+
+      <section class="faq" id="faq">
+        <div class="section-head">
+          <span class="eyebrow">FAQ</span>
+          <h2>Questions worth asking</h2>
+        </div>
+        <div class="faq-list">
+          <details>
+            <summary>Where does the AI actually run?</summary>
+            <p>
+              On the machine hosting this app, through Ollama — not a cloud AI
+              provider. Your conversations aren't sent to a third-party model
+              API. The one exception is optional: if you supply your own Gemini
+              key for higher-quality image generation, those image prompts go
+              to Google.
+            </p>
+          </details>
+          <details>
+            <summary>How good is it compared to ChatGPT or Claude?</summary>
+            <p>
+              Honestly: not as good, and it's worth saying plainly. Those run
+              models hundreds of times larger on datacentre hardware. This runs
+              7-billion-parameter models on a single GPU. It's genuinely useful
+              for everyday questions, coding help, and drafting — but it will
+              be less accurate on hard reasoning, and it can be wrong with
+              confidence.
+            </p>
+          </details>
+          <details>
+            <summary>What are credits?</summary>
+            <p>
+              A usage meter, charged by how much the model actually generates
+              rather than a flat fee per message — so short answers cost
+              little. They refill automatically on a timer; you never lose
+              access permanently.
+            </p>
+          </details>
+          <details>
+            <summary>Is the code runner safe?</summary>
+            <p>
+              It runs in a locked-down subprocess with a hard timeout, a memory
+              cap, no access to installed packages, and a throwaway working
+              directory — and it's limited to signed-in accounts. It is not a
+              full container, so it isn't network-isolated. That limitation is
+              documented rather than glossed over.
+            </p>
+          </details>
+          <details>
+            <summary>Do I need an account?</summary>
+            <p>
+              No — you can start chatting immediately as a guest, and your
+              conversations stay private to your browser session. Making an
+              account keeps your history and credits across devices, and
+              signing up carries your guest conversations over with you.
+            </p>
+          </details>
+        </div>
+      </section>
+
+      <section class="cta-band">
+        <h2>Try it now</h2>
+        <p>No install, no card, no waiting.</p>
+        <a class="btn btn-primary btn-lg" href="/app">Launch RandomGenerals AI</a>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-brand">
+        <span>RandomGenerals<span class="nav-dot">.</span>AI</span>
+        <p>An AI assistant that runs on hardware you control.</p>
+      </div>
+      <div class="footer-links">
+        <a href="#features">Features</a>
+        <a href="#how">How it works</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#faq">FAQ</a>
+        <a href="/app">Launch app</a>
+      </div>
+    </footer>
+
+    <button
+      type="button"
+      class="scroll-top"
+      id="scrollTop"
+      aria-label="Scroll back to top"
+      hidden
+    >
+      ↑
+    </button>
+
+    <div
+      class="cookie-banner"
+      id="cookieBanner"
+      role="region"
+      aria-label="Cookie notice"
+      hidden
+    >
+      <p>
+        This site stores a sign-in cookie and remembers your display
+        preferences in your browser. No third-party advertising or tracking
+        cookies are used.
+      </p>
+      <div class="cookie-actions">
+        <button type="button" class="btn btn-ghost" id="cookieDecline">
+          Essential only
+        </button>
+        <button type="button" class="btn btn-primary" id="cookieAccept">
+          Accept
+        </button>
+      </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='landing.js') }}"></script>
+    <script src="{{ url_for('static', filename='hero-physics.js') }}"></script>
+  </body>
+</html>

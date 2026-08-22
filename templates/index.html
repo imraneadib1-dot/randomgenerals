@@ -1,0 +1,684 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RandomGenerals AI — your local assistant</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='style.css') }}"
+    />
+  </head>
+  <body>
+    <div class="boot-screen" id="bootScreen" aria-hidden="true">
+      <div class="boot-mark">
+        <svg viewBox="0 0 32 32" width="60%" height="60%" aria-hidden="true">
+          <defs>
+            <filter id="moonShadowBoot" x="-50%" y="-50%" width="200%" height="200%">
+              <feDropShadow dx="0" dy="1.4" stdDeviation="1.1" flood-color="#0b1e4a" flood-opacity="0.4" />
+            </filter>
+          </defs>
+          <g filter="url(#moonShadowBoot)">
+            <circle cx="16" cy="16" r="10" class="moon-face" />
+            <circle cx="21.5" cy="12.5" r="8.5" class="moon-cutout" />
+          </g>
+        </svg>
+      </div>
+      <div class="boot-bar"><div class="boot-bar-fill" id="bootBarFill"></div></div>
+      <div class="boot-label" id="bootLabel">waking the assistant…</div>
+    </div>
+
+    <div class="bg-glow" id="bgGlow" aria-hidden="true"></div>
+
+    <div class="sky-decor" id="skyDecor" aria-hidden="true">
+      <div class="clouds-layer" id="cloudsLayer">
+        <div class="cloud cloud-1"></div>
+        <div class="cloud cloud-2"></div>
+        <div class="cloud cloud-3"></div>
+        <div class="cloud cloud-4"></div>
+        <div class="cloud cloud-5"></div>
+      </div>
+      <div class="night-moon" id="nightMoon"></div>
+    </div>
+
+    <button class="mobile-toggle" id="mobileToggle" aria-label="Toggle sidebar">
+      ☰
+    </button>
+
+    <header class="topbar">
+      <div class="topbar-brand">
+        <span class="brand-mark">
+          <svg viewBox="0 0 32 32" width="60%" height="60%" aria-hidden="true">
+            <defs>
+              <filter id="moonShadowTop" x="-50%" y="-50%" width="200%" height="200%">
+                <feDropShadow dx="0" dy="1.4" stdDeviation="1.1" flood-color="#0b1e4a" flood-opacity="0.4" />
+              </filter>
+            </defs>
+            <g filter="url(#moonShadowTop)">
+              <circle cx="16" cy="16" r="10" class="moon-face" />
+              <circle cx="21.5" cy="12.5" r="8.5" class="moon-cutout" />
+            </g>
+          </svg>
+        </span>
+        <span class="brand-name"
+          >RandomGenerals<span class="brand-dot">.</span>AI</span
+        >
+        <span class="version-tag">v1.0</span>
+      </div>
+
+      <div
+        class="bay-switch"
+        id="baySwitch"
+        role="tablist"
+        aria-label="Workspace"
+      >
+        <span class="bay-puck" id="bayPuck" aria-hidden="true"></span>
+        <button
+          class="bay-btn"
+          data-bay="code"
+          role="tab"
+          aria-selected="true"
+        >
+          <span class="bay-icon">&lt;/&gt;</span>
+          <span>Code</span>
+        </button>
+        <button
+          class="bay-btn"
+          data-bay="chat"
+          role="tab"
+          aria-selected="false"
+        >
+          <span class="bay-icon">◎</span>
+          <span>Chat</span>
+        </button>
+        <button
+          class="bay-btn"
+          data-bay="image"
+          role="tab"
+          aria-selected="false"
+        >
+          <span class="bay-icon">✺</span>
+          <span>Image</span>
+        </button>
+      </div>
+
+      <div class="topbar-right">
+        <span class="status-pill" id="statusPill">
+          <span class="status-dot" id="statusDot"></span>
+          <span id="statusText">connecting…</span>
+        </span>
+        <button class="account-btn" id="settingsBtn" type="button">
+          <span class="account-btn-icon">⚙</span>
+          <span id="settingsBtnLabel">Sign up / Settings</span>
+        </button>
+      </div>
+    </header>
+
+    <div class="app">
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-top">
+          <div class="thread-list-label" id="threadListLabel">Conversations</div>
+          <button class="new-chat-btn" id="newChatBtn">+ New chat</button>
+        </div>
+
+        <div class="thread-list" id="threadList"></div>
+
+        <div class="sidebar-bottom" id="sidebarBottom">
+          <div id="chatModeControls">
+            <div class="patch-bay-label" id="patchBayLabel">Channel</div>
+            <div class="channel-row" id="channelRow">
+              <!-- provider buttons injected by script.js -->
+            </div>
+            <select
+              id="modelSelect"
+              class="model-select"
+              title="Choose a model"
+            ></select>
+            <div class="channel-note" id="channelNote"></div>
+
+            <div class="patch-bay-label">Response mode</div>
+            <button
+              type="button"
+              class="mode-toggle"
+              id="strengthToggle"
+              role="switch"
+              aria-checked="false"
+              title="Quick: fast, brief answers. Deep: searches the web and thinks it through more carefully."
+            >
+              <span class="mode-toggle-label">Quick</span>
+              <span class="mode-toggle-track" aria-hidden="true">
+                <span class="mode-toggle-thumb"></span>
+              </span>
+              <span class="mode-toggle-label">Deep search</span>
+            </button>
+          </div>
+
+          <div id="imageModeControls" hidden>
+            <div class="patch-bay-label">Image quality</div>
+            <button
+              type="button"
+              class="mode-toggle"
+              id="imageQualityToggle"
+              role="switch"
+              aria-checked="false"
+              title="Local: free, private, runs on this machine. Gemini: higher quality via Google's API."
+              hidden
+            >
+              <span class="mode-toggle-label">Local</span>
+              <span class="mode-toggle-track" aria-hidden="true">
+                <span class="mode-toggle-thumb"></span>
+              </span>
+              <span class="mode-toggle-label">Gemini</span>
+            </button>
+            <div class="channel-note" id="imageModeNote">
+              Local generation - free, runs on this machine.
+            </div>
+          </div>
+
+          <div
+            class="credit-meter"
+            id="creditMeter"
+            title="In-app usage credits"
+          >
+            <div class="credit-meter-top">
+              <span class="credit-label">Credits</span>
+            </div>
+            <div class="credit-bar-track">
+              <div class="credit-bar-fill" id="creditBarFill"></div>
+            </div>
+            <div class="credit-count" id="creditCount">— / —</div>
+          </div>
+
+          <div class="status-rail">
+            <span class="clock" id="clock"></span>
+          </div>
+        </div>
+      </aside>
+
+      <div class="main">
+        <header class="panel-header">
+          <span class="topbar-title" id="topbarTitle">New chat</span>
+          <span class="topbar-model-chip" id="topbarModelChip"></span>
+          <button
+            class="delete-btn"
+            id="deleteBtn"
+            title="Delete this conversation"
+          >
+            delete
+          </button>
+        </header>
+
+        <main class="chat-shell">
+          <div class="chat-log" id="chatLog">
+            <div class="empty-state" id="emptyState">
+              <p class="empty-eyebrow" id="emptyEyebrow">randomgenerals --ready</p>
+              <h1 id="emptyTitle">Ask for code</h1>
+              <p class="empty-sub" id="emptySub">
+                Ask for code or debug an error — answered locally by
+                RandomGenerals AI, no cloud call.
+              </p>
+              <div class="empty-hints" id="emptyHints">
+                <div>
+                  <span>Enter</span> to send · <span>Shift+Enter</span> for a
+                  new line
+                </div>
+                <div><span>&lt;/&gt; ◎</span> switch bays above</div>
+              </div>
+            </div>
+          </div>
+        </main>
+
+        <footer class="composer">
+          <div class="attach-chips" id="attachChips"></div>
+          <!-- Code / Chat bays: text composer -->
+          <form id="chatForm" class="composer-form">
+            <input
+              type="file"
+              id="fileInput"
+              multiple
+              hidden
+              accept=".txt,.md,.py,.js,.jsx,.ts,.tsx,.json,.csv,.html,.htm,.css,.c,.cpp,.h,.hpp,.java,.cs,.go,.rs,.rb,.php,.sh,.yaml,.yml,.xml,.sql,.log,.ini,.cfg,.toml,.pdf,.docx,.png,.jpg,.jpeg,.gif,.webp,.bmp"
+            />
+            <input type="file" id="folderInput" webkitdirectory hidden />
+            <button
+              type="button"
+              class="attach-btn"
+              id="attachFileBtn"
+              title="Attach files (documents, code, images)"
+            >
+              📎
+            </button>
+            <button
+              type="button"
+              class="attach-btn"
+              id="attachFolderBtn"
+              title="Attach a folder"
+            >
+              📁
+            </button>
+            <button
+              type="button"
+              class="attach-btn mic-btn"
+              id="micBtn"
+              title="Speak your message"
+              hidden
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Z" stroke="currentColor" stroke-width="2"/>
+                <path d="M19 11a7 7 0 0 1-14 0M12 18v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </button>
+            <textarea
+              id="messageInput"
+              class="composer-input"
+              placeholder="Ask for code, debug an error…"
+              rows="1"
+              autofocus
+            ></textarea>
+            <button
+              type="submit"
+              class="send-btn"
+              id="sendBtn"
+              aria-label="Send"
+            >
+              <svg
+                class="send-icon"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="M4 12L20 4L14 20L11 13L4 12Z"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <svg
+                class="stop-icon"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor" />
+              </svg>
+            </button>
+          </form>
+
+          <div class="composer-hint" id="composerHint">
+            <span class="hint-dot"></span>
+            <span id="composerHintText">pick a channel to get started</span>
+          </div>
+        </footer>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="settingsBackdrop" hidden>
+      <div
+        class="modal"
+        id="settingsModal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settingsModalTitle"
+      >
+        <div class="modal-header">
+          <h2 id="settingsModalTitle">Settings</h2>
+          <button class="modal-close" id="settingsClose" aria-label="Close">
+            ✕
+          </button>
+        </div>
+
+        <div class="modal-tabs" role="tablist">
+          <button
+            class="modal-tab"
+            data-tab="account"
+            role="tab"
+            aria-selected="true"
+          >
+            Account
+          </button>
+          <button
+            class="modal-tab"
+            data-tab="plan"
+            role="tab"
+            aria-selected="false"
+          >
+            Plan &amp; billing
+          </button>
+          <button
+            class="modal-tab"
+            data-tab="memory"
+            role="tab"
+            aria-selected="false"
+          >
+            Memory
+          </button>
+          <button
+            class="modal-tab"
+            data-tab="appearance"
+            role="tab"
+            aria-selected="false"
+          >
+            Appearance
+          </button>
+          <button
+            class="modal-tab"
+            data-tab="about"
+            role="tab"
+            aria-selected="false"
+          >
+            About
+          </button>
+        </div>
+
+        <!-- Account tab -->
+        <div class="modal-panel" id="accountPanel">
+          <!-- Signed-out state -->
+          <div id="authSignedOut">
+            <button type="button" class="google-signin-btn" id="googleSignInBtn">
+              <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+                <path
+                  fill="#4285F4"
+                  d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62Z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.85.86-3.04.86-2.34 0-4.32-1.58-5.03-3.71H.96v2.33A9 9 0 0 0 9 18Z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M3.97 10.71A5.41 5.41 0 0 1 3.69 9c0-.6.1-1.18.28-1.71V4.96H.96A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.04l3.01-2.33Z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M9 3.58c1.32 0 2.51.45 3.44 1.35l2.59-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.96l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58Z"
+                />
+              </svg>
+              <span>Continue with Google</span>
+            </button>
+            <p class="auth-error" id="googleAuthError" hidden></p>
+            <p class="auth-note" id="googleNotConfiguredNote" hidden>
+              Google sign-in isn't configured on this server yet - see
+              <code>GOOGLE_CLIENT_ID</code> / <code>GOOGLE_CLIENT_SECRET</code>
+              in <code>.env</code>.
+            </p>
+
+            <div class="auth-divider"><span>or</span></div>
+
+            <form id="localAuthForm" class="auth-form">
+              <input
+                type="email"
+                id="localAuthEmail"
+                class="auth-input"
+                placeholder="Email"
+                autocomplete="email"
+                required
+              />
+              <input
+                type="password"
+                id="localAuthPassword"
+                class="auth-input"
+                placeholder="Password (8+ characters)"
+                autocomplete="current-password"
+                required
+              />
+              <button type="submit" class="auth-submit" id="localAuthSubmit">
+                Sign up
+              </button>
+              <p class="auth-error" id="localAuthError" hidden></p>
+              <button type="button" class="auth-switch" id="localAuthSwitch">
+                Already have an account? Log in
+              </button>
+            </form>
+
+            <p class="auth-note">
+              Free accounts start with 4,000 credits, refilling to full every
+              hour automatically.
+            </p>
+          </div>
+
+          <!-- Signed-in state -->
+          <div id="authSignedIn" hidden>
+            <div class="account-card">
+              <div class="account-avatar" id="accountAvatar">A</div>
+              <div class="account-info">
+                <span class="account-email" id="accountEmail"></span>
+                <span class="account-plan-badge" id="accountPlanBadge"
+                  >Free plan</span
+                >
+              </div>
+            </div>
+            <button
+              type="button"
+              class="auth-submit auth-logout"
+              id="logoutBtn"
+            >
+              Log out
+            </button>
+          </div>
+        </div>
+
+        <!-- Plan tab -->
+        <div class="modal-panel" id="planPanel" hidden>
+          <!-- Subscription dashboard: real plan status, renewal date, and
+               a route into Stripe's hosted portal for card/cancel. Hidden
+               entirely until there's an actual subscription to describe. -->
+          <div class="sub-dashboard" id="subDashboard" hidden>
+            <div class="sub-row">
+              <span class="sub-label">Current plan</span>
+              <span class="sub-value" id="subPlanValue">Free</span>
+            </div>
+            <div class="sub-row" id="subStatusRow" hidden>
+              <span class="sub-label">Status</span>
+              <span class="sub-value" id="subStatusValue"></span>
+            </div>
+            <div class="sub-row" id="subRenewalRow" hidden>
+              <span class="sub-label" id="subRenewalLabel">Renews</span>
+              <span class="sub-value" id="subRenewalValue"></span>
+            </div>
+            <button
+              type="button"
+              class="plan-btn sub-manage-btn"
+              id="managePlanBtn"
+              hidden
+            >
+              Manage payment &amp; cancel
+            </button>
+          </div>
+
+          <div class="plan-cards">
+            <div class="plan-card" id="planCardFree">
+              <div class="plan-card-top">
+                <span class="plan-name">Free</span>
+                <span class="plan-price">$0</span>
+              </div>
+              <ul class="plan-features">
+                <li>4,000 credits, hourly refill</li>
+                <li>Fast chat model + coding model</li>
+                <li>Images, code execution, web search, voice</li>
+                <li>Remembers up to 25 things</li>
+                <li class="plan-feature-off">Advanced 7B model</li>
+                <li class="plan-feature-off">Image understanding (vision)</li>
+              </ul>
+              <button type="button" class="plan-btn" id="planFreeBtn" disabled>
+                Current plan
+              </button>
+            </div>
+
+            <div class="plan-card plan-card-pro" id="planCardPro">
+              <div class="plan-card-top">
+                <span class="plan-name">Pro</span>
+                <span class="plan-price">$1.99<small>/mo</small></span>
+              </div>
+              <ul class="plan-features">
+                <li><strong>Advanced 7B model</strong> — noticeably sharper answers</li>
+                <li><strong>Image understanding</strong> — it actually sees what you attach</li>
+                <li><strong>Unlimited memory</strong> — no 25-item cap</li>
+                <li>Long-form code past 1,000 lines</li>
+                <li>100MB uploads · 10,000 credits every 15 min</li>
+              </ul>
+              <button
+                type="button"
+                class="plan-btn plan-btn-primary"
+                id="planProBtn"
+              >
+                Upgrade to Pro
+              </button>
+            </div>
+          </div>
+          <p class="plan-note" id="planNote">Sign in to manage your plan.</p>
+          <p class="auth-error" id="planError" hidden></p>
+          <p class="plan-fineprint" id="planFineprint">
+            Demo checkout only — no real payment is processed. Wire this up to
+            Stripe or another billing provider before taking real money.
+          </p>
+        </div>
+
+        <!-- Memory tab -->
+        <div class="modal-panel" id="memoryPanel" hidden>
+          <p class="memory-hint">
+            Standing instructions the AI follows in every conversation, plus
+            facts it remembers about you across separate chats. Say
+            "remember ..." in any message to add one on the fly, or add it
+            here directly.
+          </p>
+
+          <label class="memory-label" for="customInstructionsInput"
+            >Custom instructions</label
+          >
+          <textarea
+            id="customInstructionsInput"
+            class="memory-textarea"
+            rows="3"
+            placeholder="e.g. Keep answers short. I prefer Python over JavaScript."
+          ></textarea>
+          <button type="button" class="memory-save-btn" id="saveInstructionsBtn">
+            Save
+          </button>
+          <span class="memory-saved-note" id="instructionsSavedNote" hidden
+            >Saved</span
+          >
+
+          <div class="memory-divider"></div>
+
+          <label class="memory-label">Remembered facts</label>
+          <div class="memory-list" id="memoryList"></div>
+          <form class="memory-add-form" id="memoryAddForm">
+            <input
+              type="text"
+              id="memoryAddInput"
+              class="memory-add-input"
+              placeholder="Add something to remember..."
+              maxlength="500"
+            />
+            <button type="submit" class="memory-save-btn">Add</button>
+          </form>
+        </div>
+
+        <!-- Appearance tab -->
+        <div class="modal-panel" id="appearancePanel" hidden>
+          <div class="appearance-section">
+            <label class="memory-label">Accent colour</label>
+            <p class="memory-hint">
+              Sets the highlight colour used across buttons, the active
+              conversation, and message accents. Saved in this browser.
+            </p>
+            <div class="swatch-row" id="accentSwatches">
+              <!-- swatch buttons injected by script.js -->
+            </div>
+            <div class="custom-accent-row">
+              <label for="customAccent" class="custom-accent-label"
+                >Custom</label
+              >
+              <input type="color" id="customAccent" value="#3b82f6" />
+            </div>
+          </div>
+
+          <div class="memory-divider"></div>
+
+          <div class="appearance-section">
+            <label class="memory-label">Sky theme</label>
+            <p class="memory-hint">
+              The background follows your local clock by default - clouds in
+              the morning, a moon at night. Override it here if you'd rather
+              it stayed put.
+            </p>
+            <select id="skyThemeSelect" class="model-select">
+              <option value="auto">Follow the clock (default)</option>
+              <option value="morning">Always morning</option>
+              <option value="day">Always daytime</option>
+              <option value="night">Always night</option>
+            </select>
+          </div>
+
+          <div class="memory-divider"></div>
+
+          <div class="appearance-section">
+            <label class="memory-label">Your information</label>
+            <div class="userinfo-grid" id="userInfoGrid">
+              <!-- filled by script.js -->
+            </div>
+          </div>
+        </div>
+
+        <!-- About tab -->
+        <div class="modal-panel" id="aboutPanel" hidden>
+          <div class="about-status" id="aboutStatus">
+            <span class="about-status-dot" id="aboutStatusDot"></span>
+            <span id="aboutStatusText">checking…</span>
+          </div>
+
+          <div class="about-block">
+            <h3>What answers you</h3>
+            <p>
+              RandomGenerals AI runs on <strong>Ollama</strong>, a real language
+              model executing entirely on this machine —
+              <span id="aboutModelName">no model detected yet</span>. There
+              is no cloud API call in the loop: nothing you type leaves this
+              computer.
+            </p>
+          </div>
+
+          <div class="about-block">
+            <h3>What it can get wrong</h3>
+            <p>
+              Like any language model, it can state things confidently and
+              be wrong, especially about recent events, niche facts, or
+              anything it was never trained on. Treat answers as a
+              starting point, not ground truth — verify anything that
+              matters.
+            </p>
+          </div>
+
+          <div class="about-block">
+            <h3>The other experiment in this repo</h3>
+            <p>
+              <code>brain/</code> holds a second, much smaller model built
+              from scratch in plain NumPy — no PyTorch, no pretrained
+              weights, every matrix and gradient hand-written. It's not
+              wired into this chat (a few hundred thousand parameters can't
+              hold a conversation), but the code trains and runs on its
+              own: <code>python brain/train.py</code>.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+  </body>
+</html>

@@ -1,0 +1,24 @@
+{
+  "name": "randomgenerals-desktop",
+  "productName": "RandomGenerals AI",
+  "version": "1.0.0",
+  "description": "Desktop shell for RandomGenerals AI - local LLM chat, code, and image generation.",
+  "main": "src/main.js",
+  "author": "RandomGenerals",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dev": "cross-env RG_DEV=1 electron .",
+    "dist": "electron-builder --win --publish never",
+    "release": "electron-builder --win --publish always"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  }
+}

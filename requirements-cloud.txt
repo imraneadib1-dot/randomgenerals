@@ -1,0 +1,15 @@
+# Cloud deployment dependencies (Hugging Face Spaces / any CPU host).
+#
+# Generated from requirements.txt with the local-GPU stack removed:
+#   torch, diffusers, transformers, accelerate, safetensors
+# Those exist only for local image generation via imagegen.py, which
+# needs a GPU to be usable. They add ~2.3GB to the image for a feature
+# that would time out on 2 shared vCPUs, so the cloud build uses a
+# hosted image API instead.
+
+Flask==3.0.3
+python-dotenv==1.0.1
+requests==2.32.3
+stripe==11.1.1
+pypdf==6.16.1
+python-docx==1.2.0

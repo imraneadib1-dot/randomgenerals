@@ -1,0 +1,58 @@
+# Files an AI agent working in this repo should not read or modify.
+#
+# IMPORTANT - read this before relying on it:
+# The mechanism Claude Code actually ENFORCES is the `permissions.deny`
+# list in .claude/settings.json, which is checked on every tool call.
+# This file is a companion declaration: it documents intent, is honoured
+# by several other AI coding tools (Cursor, Continue, Cline), and keeps
+# the sensitive-path list in one readable place. Treat settings.json as
+# the enforcement point and this as the manifest - do not assume a tool
+# respects this file without checking.
+
+# ---- Secrets and credentials ----
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+*.crt
+*.cer
+id_rsa*
+id_ed25519*
+*credentials*
+*secrets*
+*.token
+
+# ---- Live user data ----
+# Real accounts, password hashes, chat history, credit balances.
+app.db
+app.db-shm
+app.db-wal
+*.sqlite
+*.sqlite3
+chat_data.json
+credits.json
+users.json
+
+# ---- User-supplied and generated content ----
+# Uploaded by whoever is using the app - not the developer's to read.
+static/uploads/
+static/generated/
+
+# ---- Build output and dependencies ----
+.venv/
+venv/
+node_modules/
+desktop/dist/
+__pycache__/
+*.pyc
+
+# ---- Large binaries: noise, not source ----
+brain/checkpoint-*.npz
+brain/cpp/*.dll
+*.safetensors
+*.bin
+
+# ---- Machine-local config ----
+.claude/settings.local.json

@@ -1,0 +1,58 @@
+# Secrets - never commit real keys, even though .env currently only
+# holds empty slots. The moment someone fills one in, this stops that
+# from landing in git history by default.
+.env
+
+# Live data - real user threads, credits, accounts. Not source code,
+# and increasingly likely to hold real people's data as this goes public.
+app.db
+app.db-shm
+app.db-wal
+
+# Pre-SQLite legacy snapshots (see db.py) - stale, but still real data.
+chat_data.json
+credits.json
+users.json
+
+# User-uploaded and AI-generated files - not source, and can grow large.
+static/uploads/
+static/generated/
+
+# Python
+__pycache__/
+*.pyc
+brain/__pycache__/
+
+# Virtual environments. Multiple gigabytes here (torch alone is most of
+# it) and entirely rebuildable from requirements.txt, so this must never
+# reach the repo - a single commit of it would blow past GitHub's file
+# size limits and make the clone unusable.
+.venv/
+venv/
+env/
+ENV/
+
+# Trained model checkpoints - large binary blobs, regenerable via
+# `python brain/train.py` from the corpus already in the repo.
+brain/checkpoint-*.npz
+brain/weights_export.json
+
+# Compiled C++ backend - build output, not source. Rebuild via
+# brain/cpp/build.ps1.
+brain/cpp/*.dll
+brain/cpp/*.obj
+brain/cpp/*.exp
+brain/cpp/*.lib
+
+# Editor/local machine settings
+.claude/settings.local.json
+
+# Runtime logs. Not source, and they embed absolute paths (and therefore
+# the local username) plus tunnel identifiers.
+logs/
+
+# Tunnel config: machine-specific, and names the tunnel UUID and the
+# path to its credentials. The credentials themselves live in
+# ~/.cloudflared and are never in the repo, but there's no reason to
+# publish the rest either.
+cloudflared-config.yml

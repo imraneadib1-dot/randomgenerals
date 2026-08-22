@@ -1,0 +1,60 @@
+appId: com.randomgenerals.ai
+productName: RandomGenerals AI
+copyright: Copyright © RandomGenerals
+
+directories:
+  output: dist
+  buildResources: resources
+
+files:
+  - src/**/*
+  - package.json
+
+# The Python server ships as an unpacked resource, NOT inside the asar:
+# Python has to read these as real files on disk, and app.asar is a
+# virtual archive it cannot import from.
+#
+# Note what is deliberately absent: .venv, the Ollama models, and the
+# HuggingFace cache. Those are ~23GB combined and are provisioned on
+# first run instead - GitHub Releases rejects any single file over 2GB,
+# so bundling them would produce an artifact that cannot be published.
+extraResources:
+  - from: ../
+    to: server
+    filter:
+      - "**/*.py"
+      - templates/**/*
+      - static/**/*
+      - requirements.txt
+      - "!**/__pycache__/**"
+      - "!.venv/**"
+      - "!venv/**"
+      - "!static/uploads/**"
+      - "!static/generated/**"
+      - "!brain/checkpoint-*.npz"
+      - "!brain/corpus/**"
+      - "!app.db*"
+      - "!.env"
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: resources/icon.ico
+  # Unsigned builds trigger SmartScreen ("Windows protected your PC").
+  # A real Authenticode certificate is ~$100-400/yr from a CA; without
+  # one, users must click "More info" -> "Run anyway". Stated here so
+  # it's a known trade-off rather than a surprise support ticket.
+
+nsis:
+  oneClick: false
+  perMachine: false            # per-user install needs no admin rights
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: RandomGenerals AI
+  deleteAppDataOnUninstall: false   # keep chats/licence across upgrades
+
+publish:
+  provider: github
+  releaseType: release

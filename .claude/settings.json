@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.local)",
+      "Read(./.env.production)",
+      "Read(./.env.development)",
+      "Read(./**/.env)",
+      "Read(./**/*.pem)",
+      "Read(./**/*.key)",
+      "Read(./**/*.pfx)",
+      "Read(./**/*.p12)",
+      "Read(./**/*.crt)",
+      "Read(./**/*.cer)",
+      "Read(./**/id_rsa*)",
+      "Read(./**/id_ed25519*)",
+      "Read(./**/credentials*)",
+      "Read(./**/secrets*)",
+      "Read(./app.db)",
+      "Read(./app.db-wal)",
+      "Read(./app.db-shm)",
+      "Read(./**/*.sqlite)",
+      "Read(./**/*.sqlite3)",
+      "Read(./.venv/**)",
+      "Read(//**/.ssh/**)",
+      "Read(//**/.aws/**)",
+      "Read(//**/AppData/Roaming/**)",
+      "Edit(./.env)",
+      "Edit(./app.db)",
+      "Edit(./.venv/**)",
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf ~*)",
+      "Bash(sudo:*)",
+      "Bash(curl:*|*sh)",
+      "Bash(*|*bash)",
+      "Bash(git push --force:*)",
+      "Bash(*format*:*)",
+      "PowerShell(Remove-Item -Recurse -Force C:\\*)",
+      "PowerShell(*Format-Volume*)",
+      "PowerShell(*Set-ExecutionPolicy*)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(npm publish:*)",
+      "Bash(pip install:*)",
+      "Bash(winget install:*)"
+    ]
+  }
+}

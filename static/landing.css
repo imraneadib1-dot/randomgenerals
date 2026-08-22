@@ -1,0 +1,874 @@
+/* ============================================================
+   RandomGenerals AI — public landing page.
+
+   Deliberately its own stylesheet, not an extension of style.css:
+   the app is a dense, functional workspace and this is a wide,
+   airy marketing page. They share a palette (see the tokens below,
+   which style.css mirrors for its dark theme) but almost no
+   components, so sharing a file would mean two sets of rules
+   constantly guarding against each other.
+
+   Dark charcoal ground, neon cyan accent, generous vertical
+   rhythm. Everything is one accent colour away from being
+   re-themed.
+   ============================================================ */
+:root {
+  --ink-0: #05080f;
+  --ink-1: #0a0e17;
+  --ink-2: #111725;
+  --ink-3: #1a2233;
+  --line: rgba(120, 160, 220, 0.14);
+  --line-bright: rgba(120, 200, 255, 0.32);
+
+  --text: #eaf1fb;
+  --text-soft: #9fb1cc;
+  --text-faint: #6b7c96;
+
+  --accent: #22d3ee;
+  --accent-2: #38bdf8;
+  --accent-glow: rgba(34, 211, 238, 0.22);
+
+  --font-display: "Sora", sans-serif;
+  --font-body: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  --maxw: 1120px;
+  --radius: 16px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* An author `display` beats the UA stylesheet's [hidden] rule, so any
+   hidden element that sets its own display (.mobile-drawer,
+   .cookie-banner) would stay visible without this. */
+[hidden] {
+  display: none !important;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--ink-0);
+  color: var(--text);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* Ambient glow behind the top of the page. Fixed and non-interactive
+   so it never intercepts a click or scrolls out of alignment. */
+.glow-field {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      620px 420px at 50% -8%,
+      rgba(34, 211, 238, 0.16),
+      transparent 70%
+    ),
+    radial-gradient(
+      520px 380px at 88% 8%,
+      rgba(56, 189, 248, 0.1),
+      transparent 70%
+    ),
+    radial-gradient(
+      480px 360px at 6% 22%,
+      rgba(99, 102, 241, 0.1),
+      transparent 70%
+    );
+}
+
+main,
+.nav,
+.footer {
+  position: relative;
+  z-index: 1;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+/* ---- buttons ---- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 14px;
+  padding: 10px 18px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease,
+    border-color 0.2s ease;
+  white-space: nowrap;
+}
+.btn-lg {
+  font-size: 15px;
+  padding: 14px 26px;
+}
+.btn-block {
+  width: 100%;
+}
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #04141a;
+  box-shadow: 0 8px 30px var(--accent-glow);
+}
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 40px var(--accent-glow);
+}
+.btn-ghost {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: var(--line);
+  color: var(--text);
+}
+.btn-ghost:hover {
+  border-color: var(--line-bright);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* ---- nav ---- */
+.nav {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 18px 24px;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  background: rgba(5, 8, 15, 0.72);
+  border-bottom: 1px solid var(--line);
+}
+.nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 16px;
+}
+.nav-mark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #04141a;
+}
+.nav-dot {
+  color: var(--accent);
+}
+.nav-links {
+  display: flex;
+  gap: 26px;
+  font-size: 14px;
+  color: var(--text-soft);
+}
+.nav-links a:hover {
+  color: var(--text);
+}
+.nav-actions {
+  display: flex;
+  gap: 10px;
+}
+
+/* ---- shared section furniture ---- */
+section {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 96px 24px;
+}
+.eyebrow {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 14px;
+}
+.section-head {
+  text-align: center;
+  margin-bottom: 48px;
+}
+.section-head h2 {
+  font-size: clamp(28px, 4vw, 40px);
+  font-weight: 700;
+}
+
+/* ---- hero ---- */
+.hero {
+  position: relative;   /* containing block for the canvas */
+  text-align: center;
+  padding-top: 88px;
+  padding-bottom: 72px;
+}
+
+/* The interactive moons/clouds layer.
+   pointer-events:none is load-bearing, not decoration: without it the
+   canvas covers the hero and swallows clicks on "Start free". Input is
+   read from window-level listeners in hero-physics.js instead, which
+   lets the shapes be dragged while every button underneath still works. */
+.hero-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Hero content sits above the canvas. */
+.hero > *:not(.hero-canvas) {
+  position: relative;
+  z-index: 1;
+}
+.hero h1 {
+  font-size: clamp(38px, 6.4vw, 68px);
+  font-weight: 800;
+  line-height: 1.06;
+  margin-bottom: 22px;
+}
+.grad {
+  background: linear-gradient(100deg, var(--accent), var(--accent-2) 55%, #a78bfa);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.hero-sub {
+  max-width: 640px;
+  margin: 0 auto 32px;
+  font-size: 17px;
+  line-height: 1.65;
+  color: var(--text-soft);
+}
+.hero-cta {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.hero-note {
+  margin-top: 20px;
+  font-size: 13px;
+  color: var(--text-faint);
+}
+
+/* ---- feature cards ---- */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 18px;
+}
+.card {
+  position: relative;
+  padding: 28px 26px;
+  border-radius: var(--radius);
+  background: linear-gradient(160deg, var(--ink-2), var(--ink-1));
+  border: 1px solid var(--line);
+  transition:
+    border-color 0.2s ease,
+    transform 0.2s ease;
+}
+.card:hover {
+  border-color: var(--line-bright);
+  transform: translateY(-3px);
+}
+.card-num {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent);
+  letter-spacing: 0.1em;
+}
+.card h3 {
+  font-size: 19px;
+  font-weight: 600;
+  margin: 12px 0 10px;
+}
+.card p {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--text-soft);
+}
+
+/* ---- steps ---- */
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px;
+  counter-reset: step;
+}
+.steps li {
+  padding: 26px 24px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.02);
+}
+.step-num {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 15px;
+  color: #04141a;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  margin-bottom: 14px;
+}
+.steps h3 {
+  font-size: 17px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.steps p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-soft);
+}
+
+/* ---- pricing ---- */
+.price-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+  max-width: 780px;
+  margin: 0 auto;
+}
+.price-card {
+  position: relative;
+  padding: 32px 28px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: linear-gradient(160deg, var(--ink-2), var(--ink-1));
+  display: flex;
+  flex-direction: column;
+}
+.price-card-pro {
+  border-color: var(--line-bright);
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.08), 0 20px 60px rgba(34, 211, 238, 0.08);
+}
+.price-badge {
+  position: absolute;
+  top: -11px;
+  left: 28px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #04141a;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+.price-card h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-soft);
+}
+.price {
+  font-family: var(--font-display);
+  font-size: 44px;
+  font-weight: 800;
+  margin: 6px 0 20px;
+}
+.price span {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-faint);
+}
+.price-card ul {
+  list-style: none;
+  margin: 0 0 24px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  flex: 1;
+}
+.price-card li {
+  position: relative;
+  padding-left: 24px;
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--text-soft);
+}
+.price-card li::before {
+  content: "✓";
+  position: absolute;
+  left: 0;
+  color: var(--accent);
+  font-weight: 700;
+}
+.price-card strong {
+  color: var(--text);
+}
+
+/* ---- faq ---- */
+.faq-list {
+  max-width: 780px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.faq-list details {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 0 20px;
+  transition: border-color 0.2s ease;
+}
+.faq-list details[open] {
+  border-color: var(--line-bright);
+}
+.faq-list summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 18px 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+.faq-list summary::-webkit-details-marker {
+  display: none;
+}
+.faq-list summary::after {
+  content: "+";
+  color: var(--accent);
+  font-size: 20px;
+  font-weight: 400;
+  flex-shrink: 0;
+}
+.faq-list details[open] summary::after {
+  content: "−";
+}
+.faq-list p {
+  margin: 0 0 18px;
+  font-size: 14.5px;
+  line-height: 1.7;
+  color: var(--text-soft);
+}
+
+/* ---- closing band ---- */
+.cta-band {
+  text-align: center;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: radial-gradient(
+    600px 200px at 50% 50%,
+    rgba(34, 211, 238, 0.08),
+    transparent 70%
+  );
+}
+.cta-band h2 {
+  font-size: clamp(28px, 4vw, 40px);
+  margin-bottom: 10px;
+}
+.cta-band p {
+  color: var(--text-soft);
+  margin: 0 0 26px;
+}
+
+/* ---- footer ---- */
+.footer {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 44px 24px 64px;
+  display: flex;
+  justify-content: space-between;
+  gap: 32px;
+  flex-wrap: wrap;
+}
+.footer-brand span {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 15px;
+}
+.footer-brand p {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--text-faint);
+  max-width: 320px;
+}
+.footer-links {
+  display: flex;
+  gap: 22px;
+  flex-wrap: wrap;
+  font-size: 13.5px;
+  color: var(--text-soft);
+  align-items: flex-start;
+}
+.footer-links a:hover {
+  color: var(--accent);
+}
+
+@media (max-width: 720px) {
+  .nav-links {
+    display: none;
+  }
+  section {
+    padding: 64px 20px;
+  }
+  .hero {
+    padding-top: 56px;
+  }
+}
+
+/* ---- Narrow phones ----
+   At 390px the nav genuinely doesn't fit: brand (~180px) + "Launch app"
+   (~110px) + hamburger (40px) + gaps + padding comes to roughly 420px.
+   Rather than let it overflow and clip, the pieces shrink. */
+@media (max-width: 480px) {
+  .nav {
+    gap: 10px;
+    padding: 14px 16px;
+  }
+  .nav-brand {
+    font-size: 14px;
+    gap: 7px;
+    min-width: 0;              /* allow the flex item to shrink */
+  }
+  .nav-mark {
+    width: 26px;
+    height: 26px;
+  }
+  .nav-actions .btn {
+    padding: 8px 13px;
+    font-size: 13px;
+  }
+  section {
+    padding: 52px 16px;
+  }
+  .hero h1 {
+    font-size: clamp(30px, 8.4vw, 44px);
+  }
+  .hero-sub {
+    font-size: 15.5px;
+  }
+  /* Stack the CTAs so neither gets squeezed to an unreadable width. */
+  .hero-cta {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .cookie-banner {
+    bottom: 10px;
+    padding: 14px 16px;
+  }
+  .cookie-banner p {
+    min-width: 0;              /* 240px was forcing the banner wide */
+    font-size: 12.5px;
+  }
+  .cookie-actions {
+    width: 100%;
+  }
+  .cookie-actions .btn {
+    flex: 1;
+  }
+}
+
+/* Long words (and the brand) must never push the page wider than the
+   screen - horizontal scroll on a phone is the one layout bug users
+   always notice. */
+h1,
+h2,
+h3,
+p {
+  overflow-wrap: break-word;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  * {
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ---- Skip link (keyboard accessibility) ----
+   Positioned off-screen rather than display:none, because a hidden
+   element can't take focus and the link would be unreachable by the
+   keyboard users it exists for. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  background: var(--accent);
+  color: #04141a;
+  font-weight: 600;
+  font-size: 14px;
+  padding: 12px 20px;
+  border-radius: 0 0 10px 0;
+}
+.skip-link:focus {
+  left: 0;
+}
+
+/* ---- Scroll progress ---- */
+.scroll-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 3px;
+  width: 0;
+  z-index: 60;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width 0.1s linear;
+}
+
+/* ---- Back to top ---- */
+.scroll-top {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 50;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--line-bright);
+  background: rgba(17, 23, 37, 0.9);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  color: var(--accent);
+  font-size: 18px;
+  cursor: pointer;
+  transition:
+    transform 0.15s ease,
+    background 0.2s ease;
+}
+.scroll-top:hover {
+  transform: translateY(-2px);
+  background: rgba(34, 211, 238, 0.16);
+}
+
+/* ---- Hamburger + mobile drawer ---- */
+.hamburger {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  width: 40px;
+  height: 36px;
+  padding: 0 8px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+}
+.hamburger span {
+  display: block;
+  height: 2px;
+  width: 100%;
+  background: var(--text);
+  border-radius: 2px;
+  transition:
+    transform 0.25s ease,
+    opacity 0.2s ease;
+}
+.hamburger.is-open span:nth-child(1) {
+  transform: translateY(7px) rotate(45deg);
+}
+.hamburger.is-open span:nth-child(2) {
+  opacity: 0;
+}
+.hamburger.is-open span:nth-child(3) {
+  transform: translateY(-7px) rotate(-45deg);
+}
+
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(0, 0, 0, 0.6);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+.mobile-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(78vw, 300px);
+  z-index: 80;
+  padding: 84px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--ink-1);
+  border-left: 1px solid var(--line);
+  animation: drawerIn 0.22s ease;
+}
+@keyframes drawerIn {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+.mobile-drawer a:not(.btn) {
+  padding: 13px 4px;
+  font-size: 15px;
+  color: var(--text-soft);
+  border-bottom: 1px solid var(--line);
+}
+.mobile-drawer a:not(.btn):hover {
+  color: var(--text);
+}
+.mobile-drawer .btn {
+  margin-top: 16px;
+}
+
+/* ---- Cookie notice ---- */
+.cookie-banner {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 18px;
+  z-index: 55;
+  width: min(680px, calc(100vw - 36px));
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding: 16px 20px;
+  border-radius: 14px;
+  border: 1px solid var(--line-bright);
+  background: rgba(17, 23, 37, 0.96);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.cookie-banner p {
+  flex: 1;
+  min-width: 240px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-soft);
+}
+.cookie-actions {
+  display: flex;
+  gap: 8px;
+}
+.cookie-actions .btn {
+  font-size: 13px;
+  padding: 8px 14px;
+}
+
+@media (max-width: 720px) {
+  .hamburger {
+    display: flex;
+  }
+  .nav-actions .btn-ghost {
+    display: none;
+  }
+}
+
+/* ---- Print ----
+   Strips the page back to its actual content: no fixed chrome, no
+   glow, no interactive affordances that mean nothing on paper, and
+   dark-on-white so it doesn't burn a cartridge of toner. */
+@media print {
+  .nav,
+  .footer,
+  .glow-field,
+  .scroll-progress,
+  .scroll-top,
+  .cookie-banner,
+  .mobile-drawer,
+  .drawer-backdrop,
+  .hamburger,
+  .skip-link,
+  .hero-cta,
+  .cta-band {
+    display: none !important;
+  }
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+  section {
+    padding: 16px 0;
+    page-break-inside: avoid;
+  }
+  .card,
+  .price-card,
+  .steps li,
+  .faq-list details {
+    border: 1px solid #bbb !important;
+    background: none !important;
+    box-shadow: none !important;
+    page-break-inside: avoid;
+  }
+  h1,
+  h2,
+  h3,
+  .price,
+  .card p,
+  .steps p,
+  .faq-list p,
+  .price-card li,
+  .hero-sub {
+    color: #000 !important;
+  }
+  .grad {
+    -webkit-text-fill-color: #000;
+    color: #000 !important;
+  }
+  .eyebrow,
+  .card-num {
+    color: #555 !important;
+  }
+  /* Answers are the point of an FAQ on paper - print them all open
+     regardless of which ones happened to be expanded on screen. */
+  .faq-list details > p {
+    display: block !important;
+  }
+  a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    font-size: 11px;
+    color: #555;
+  }
+}

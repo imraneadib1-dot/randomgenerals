@@ -1,0 +1,74 @@
+name: Build desktop app
+
+# Tag-driven releases: pushing v1.0.0 builds and publishes. The manual
+# trigger builds the installer as a downloadable artifact WITHOUT
+# publishing, so the build can be tested without burning a version number.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write # required to create the Release and upload the .exe
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          # No cache key here: there is no package-lock.json committed
+          # yet. Add `cache: npm` once you commit one - it needs the lock
+          # file to exist or the step fails.
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        # `npm ci` requires a lock file. Falls back to `npm install` so a
+        # fresh clone builds before the first lock file is committed.
+        run: |
+          if (Test-Path package-lock.json) { npm ci } else { npm install }
+        shell: pwsh
+
+      - name: Verify main process parses
+        working-directory: desktop
+        # A syntax error in main.js otherwise only surfaces after the
+        # full electron-builder run, which takes minutes.
+        run: |
+          node --check src/main.js
+          node --check src/preload.js
+          node --check src/backend.js
+          node --check src/entitlements.js
+          node --check src/ipc/terminal.js
+          node --check src/ipc/editor.js
+          node --check src/ipc/license.js
+        shell: pwsh
+
+      - name: Build installer
+        working-directory: desktop
+        run: npx electron-builder --win --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload installer as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RandomGenerals-AI-Windows
+          path: desktop/dist/*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish to GitHub Release
+        # Only on a version tag - workflow_dispatch runs stop at the
+        # artifact above.
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: desktop
+        run: npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

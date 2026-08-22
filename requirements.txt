@@ -1,0 +1,19 @@
+Flask==3.0.3
+python-dotenv==1.0.1
+requests==2.32.3
+stripe==11.1.1
+pypdf==6.16.1
+python-docx==1.2.0
+# Image generation (imagegen.py) - CPU-only torch build deliberately, to
+# avoid fighting Ollama for the machine's limited VRAM. Install with:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install diffusers transformers accelerate safetensors
+torch==2.13.0
+diffusers==0.39.0
+transformers==5.15.1
+accelerate==1.14.0
+safetensors==0.8.0
+# NumPy is not needed to run the app - it's only used by the from-scratch
+# model in brain/, which isn't wired into the live chat any more (see
+# app.py). Install it separately if you want to train/run that on its own:
+#   numpy==2.5.1
