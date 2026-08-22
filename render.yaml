@@ -46,6 +46,11 @@ services:
       # this is always correct here.
       - key: FORCE_HTTPS_COOKIES
         value: "1"
+      # Render terminates TLS in its own router, so the
+      # X-Forwarded-* headers come from it and can be trusted.
+      # Google sign-in needs this to build the right redirect_uri.
+      - key: TRUST_PROXY
+        value: "1"
       # Deliberately empty. Setting this turns the Pro upgrade button
       # into a free "make me Pro" switch - fine on localhost, not on
       # anything the public can reach.

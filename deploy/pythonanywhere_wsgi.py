@@ -39,6 +39,12 @@ os.environ.setdefault("DB_PATH", os.path.join(PROJECT, "app.db"))
 # Behind PythonAnywhere's nginx, so TLS always terminates in front of us
 # and session cookies can safely be marked Secure.
 os.environ.setdefault("FORCE_HTTPS_COOKIES", "1")
+
+# PythonAnywhere always serves through their nginx, so the
+# X-Forwarded-* headers are set by them and safe to trust. Without
+# this, Google sign-in builds its redirect_uri from the internal
+# address and Google rejects it as a mismatch.
+os.environ.setdefault("TRUST_PROXY", "1")
 os.environ.setdefault("APP_DEBUG", "0")
 
 # Never set ALLOW_MOCK_UPGRADE here. It grants Pro without paying - fine

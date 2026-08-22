@@ -221,6 +221,28 @@ app.config.update(
     SESSION_COOKIE_SECURE=os.environ.get("FORCE_HTTPS_COOKIES") == "1",
 )
 
+# Behind a reverse proxy - the Cloudflare tunnel, PythonAnywhere's nginx,
+# Render's router - Flask only sees the connection from the proxy, so it
+# thinks it is serving http://localhost:5001. Anything built with
+# url_for(_external=True) then comes out with that address.
+#
+# Google sign-in is where this stops being cosmetic. The redirect_uri
+# sent to Google has to match the one registered in Cloud Console
+# exactly; send http://localhost:5001/... from randomgenerals.com and
+# Google refuses the whole flow with redirect_uri_mismatch.
+#
+# ProxyFix makes Flask trust X-Forwarded-Proto and X-Forwarded-Host, so
+# url_for produces the address the user actually typed. It is opt-in
+# because those headers are just headers: with no proxy in front to
+# overwrite them, any visitor could set them by hand and choose what
+# this app believes its own hostname is. Only ever set TRUST_PROXY=1
+# when something really is terminating connections in front of this.
+if os.environ.get("TRUST_PROXY") == "1":
+    from werkzeug.middleware.proxy_fix import ProxyFix
+
+    app.wsgi_app = ProxyFix(  # type: ignore[method-assign]
+        app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
 
 @app.errorhandler(413)
 def too_large(_err):

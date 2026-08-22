@@ -21,6 +21,7 @@ configured (see gemini_configured() below), same pattern as Google
 sign-in.
 """
 import base64
+import importlib.util
 import io
 import os
 import threading
@@ -57,7 +58,14 @@ def _load_pipeline():
         if _pipe is None and _load_error is None:
             try:
                 import torch
-                from diffusers import AutoPipelineForText2Image
+                # pyright flags this as a private import and suggests
+                # diffusers.pipelines.auto_pipeline instead. That is the
+                # actual private path; this top-level name is what the
+                # diffusers docs tell you to use, and it works - it just
+                # arrives through a lazy module that pyright can't see
+                # into. Taking pyright's advice would couple this to
+                # diffusers' internal layout to silence a false positive.
+                from diffusers import AutoPipelineForText2Image  # type: ignore[reportPrivateImportUsage]  # noqa: E501
 
                 pipe = AutoPipelineForText2Image.from_pretrained(
                     MODEL_ID, torch_dtype=torch.float32,
@@ -74,6 +82,32 @@ def preload():
     for the download/load time - safe to call from a background thread
     at startup, a no-op if it's already loaded or already failed."""
     _load_pipeline()
+
+
+def local_available():
+    """Can the local pipeline plausibly run here? Cheap enough to call
+    per request.
+
+    Deliberately does NOT load the model. Loading takes around a minute
+    cold, and this gets called while deciding which tools to advertise
+    to the model - a decision that has to be instant. Checking that
+    torch and diffusers are importable is enough to tell a GPU box apart
+    from a cloud host that installed requirements-cloud.txt, which is
+    the distinction that actually matters.
+
+    If a load has already been attempted, its outcome is authoritative.
+    """
+    if _pipe is not None:
+        return True
+    if _load_error is not None:
+        return False
+    return (importlib.util.find_spec("torch") is not None
+            and importlib.util.find_spec("diffusers") is not None)
+
+
+def available():
+    """True if image generation can work at all, by any backend."""
+    return gemini_configured() or local_available()
 
 
 def _save_png_bytes(raw_bytes):

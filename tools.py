@@ -141,7 +141,11 @@ def available_specs(allow_images=True, allow_code=True, allow_web=True):
         specs.append(WEB_SEARCH)
     if allow_code:
         specs.append(RUN_PYTHON)
-    if allow_images and imagegen.gemini_configured():
+    # imagegen.available(), not gemini_configured(): the local diffusion
+    # backend works with no key at all, so gating on Gemini meant the
+    # model was never offered image generation on the very machine where
+    # it works best.
+    if allow_images and imagegen.available():
         specs.append(GENERATE_IMAGE)
     return specs
 
