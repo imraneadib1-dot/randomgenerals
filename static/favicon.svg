@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Tab icon: the same crescent-and-cloud the hero animates, reduced
+       to something that still reads at 16x16. Detail is deliberately
+       minimal - anything finer turns to mush at favicon size. -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b1120"/>
+      <stop offset="1" stop-color="#111c33"/>
+    </linearGradient>
+    <linearGradient id="puff" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#b9d2ee"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#sky)"/>
+  <circle cx="41" cy="23" r="11" fill="#ffe9a8"/>
+  <circle cx="36" cy="20" r="10" fill="#0b1120"/>
+  <g fill="url(#puff)">
+    <circle cx="23" cy="44" r="11"/>
+    <circle cx="34" cy="45" r="9"/>
+    <circle cx="43" cy="47" r="7"/>
+    <rect x="23" y="45" width="20" height="9" rx="4"/>
+  </g>
+</svg>

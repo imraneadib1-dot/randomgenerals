@@ -558,6 +558,50 @@ def spend_credits(amount):
     return True
 
 
+@app.route("/robots.txt")
+def robots_txt():
+    """What search engines may crawl.
+
+    Only the landing page is worth indexing. /app is the application
+    itself - it renders nothing useful without a session, so a crawler
+    would file an empty shell under the site's name. /api/ is machine
+    endpoints. The upload and generated directories hold users' own
+    files and images, which must never turn up in search results.
+
+    The sitemap line is built from the live host rather than hardcoded,
+    so this stays correct on a .pythonanywhere.com or .onrender.com
+    address as well as the real domain.
+    """
+    body = (
+        "User-agent: *\n"
+        "Allow: /$\n"
+        "Disallow: /app\n"
+        "Disallow: /api/\n"
+        "Disallow: /static/generated/\n"
+        "Disallow: /static/uploads/\n"
+        "\n"
+        f"Sitemap: {request.url_root}sitemap.xml\n"
+    )
+    return Response(body, mimetype="text/plain")
+
+
+@app.route("/sitemap.xml")
+def sitemap_xml():
+    """One entry, because there is one indexable page. A sitemap listing
+    pages that shouldn't be indexed actively works against you."""
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        "  <url>\n"
+        f"    <loc>{request.url_root}</loc>\n"
+        "    <changefreq>weekly</changefreq>\n"
+        "    <priority>1.0</priority>\n"
+        "  </url>\n"
+        "</urlset>\n"
+    )
+    return Response(body, mimetype="application/xml")
+
+
 @app.route("/")
 def landing():
     """The public front door. The app itself lives at /app.
