@@ -1,0 +1,62 @@
+# Render blueprint - https://render.com/docs/blueprint-spec
+#
+# Free plan, so: 512MB RAM, no GPU, no persistent disk, and the service
+# sleeps after ~15 minutes with no traffic (the next request wakes it,
+# taking roughly a minute). Chat therefore comes from Groq rather than
+# Ollama; app.py already falls back on its own when no local models
+# answer, so no code change is needed for that.
+services:
+  - type: web
+    name: randomgenerals
+    runtime: python
+    plan: free
+    region: frankfurt          # closest of Render's free regions to Morocco
+    buildCommand: pip install -r requirements-cloud.txt
+    # One worker, several threads - not multiple workers. db.py keeps a
+    # single module-level SQLite connection with check_same_thread=False,
+    # which is thread-safe within one process but would become one
+    # connection per process if workers were scaled up. Threads also suit
+    # the workload: replies stream token by token via SSE, so a request
+    # spends almost all its life waiting on Groq rather than on CPU, and
+    # sync workers would block every other visitor meanwhile.
+    #
+    # The long timeout exists for the same reason: a streamed reply is
+    # one long-lived response, and gunicorn's 30s default would cut off
+    # any answer still being written.
+    startCommand: >
+      gunicorn app:app
+      --bind 0.0.0.0:$PORT
+      --worker-class gthread
+      --workers 1
+      --threads 8
+      --timeout 300
+      --access-logfile -
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: APP_DEBUG
+        value: "0"
+      # Werkzeug's debugger is an interactive Python console on error
+      # pages. APP_DEBUG=0 above covers the dev server; this covers the
+      # case of it being reached any other way.
+      - key: FLASK_DEBUG
+        value: "0"
+      # HTTPS-only cookies. Render terminates TLS in front of the app, so
+      # this is always correct here.
+      - key: FORCE_HTTPS_COOKIES
+        value: "1"
+      # Deliberately empty. Setting this turns the Pro upgrade button
+      # into a free "make me Pro" switch - fine on localhost, not on
+      # anything the public can reach.
+      - key: ALLOW_MOCK_UPGRADE
+        value: ""
+      # Signs session cookies. Render generates a random value once and
+      # keeps it across deploys; if it ever changed, everyone would be
+      # silently signed out.
+      - key: SECRET_KEY
+        generateValue: true
+      # Set by hand in the Render dashboard (Environment -> Add secret),
+      # never in this file, since this file is public in the repo.
+      - key: GROQ_API_KEY
+        sync: false

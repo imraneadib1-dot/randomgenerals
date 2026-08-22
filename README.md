@@ -1,58 +1,67 @@
----
-title: RandomGenerals AI
-emoji: 🌙
-colorFrom: blue
-colorTo: indigo
-sdk: docker
-app_port: 7860
-pinned: false
-short_description: Chat, code, and images - with a sandboxed code runner
----
-
 # RandomGenerals AI
 
-Chat, coding help, image generation, voice input, web search, and memory
-that carries between conversations.
+Chat, coding help, image generation, voice input, web search, a sandboxed
+Python runner, and memory that carries between conversations.
+
+Live at **[randomgenerals.com](https://randomgenerals.com)**.
 
 ## Two ways this runs
 
-**Locally** (a laptop with a GPU): language models run on-device through
-[Ollama](https://ollama.com), so prompts never leave the machine.
+**Locally**, on a machine with a GPU: language models run on-device
+through [Ollama](https://ollama.com), so prompts never leave the
+computer. `LOCAL_AI.md` has the full audit of what does and doesn't
+make outbound network calls.
 
-**Hosted** (this Space): no GPU, so completions come from
-[Groq](https://groq.com)'s free tier instead. Same app, same features -
-the only difference is where the tokens are generated. `/api/health`
-reports which mode is active.
+**Hosted**, on a CPU-only server: no GPU, so completions come from
+[Groq](https://groq.com)'s free tier instead. Same app, same features —
+only the place the tokens are generated changes.
 
-## Configuration
+The app decides this per request rather than at startup. If Ollama stops
+answering — the laptop is asleep, or the process died — the next reply
+comes from the cloud automatically and is tagged as such in the UI, so a
+visitor never sees an error just because a machine went offline.
+`/api/health` reports which path is currently live.
 
-Set these as **Repository secrets** in Space settings (not in the repo):
+## Deploying
 
-| Secret | Required | Purpose |
+`render.yaml` is a [Render](https://render.com) blueprint — free plan, no
+credit card. Point Render at this repo, and the only thing to fill in by
+hand is `GROQ_API_KEY` (free, no card, from
+[console.groq.com](https://console.groq.com)); everything else in the
+blueprint is set for you, including a generated `SECRET_KEY`.
+
+### Configuration
+
+Set these as environment variables — never in the repo.
+
+| Variable | Required | Purpose |
 |---|---|---|
-| `GROQ_API_KEY` | **yes** | Chat completions. Free, no card, from [console.groq.com](https://console.groq.com) |
-| `SECRET_KEY` | **yes** | Signs session cookies. `python -c "import secrets; print(secrets.token_hex(32))"` |
+| `GROQ_API_KEY` | **yes**, when hosted | Cloud chat completions |
+| `SECRET_KEY` | **yes** | Signs session cookies |
+| `OLLAMA_URL` | no | Defaults to `http://localhost:11434` |
+| `DB_PATH` | no | Where SQLite lives |
+| `FORCE_HTTPS_COOKIES` | no | Set to `1` behind TLS |
 | `GEMINI_API_KEY` | no | Higher-quality image generation |
-| `STRIPE_SECRET_KEY` | no | Pro subscriptions |
-| `STRIPE_PRICE_ID_PRO` | no | Pro price id |
-| `STRIPE_WEBHOOK_SECRET` | no | Verifies Stripe callbacks |
+| `STRIPE_SECRET_KEY` / `STRIPE_PRICE_ID_PRO` / `STRIPE_WEBHOOK_SECRET` | no | Pro subscriptions |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | no | Google sign-in |
-| `DB_PATH` | no | Where SQLite lives (see below) |
+| `ALLOW_MOCK_UPGRADE` | no | **Leave unset when hosted** (see below) |
+
+`ALLOW_MOCK_UPGRADE=1` grants Pro without paying, so the plan UI can be
+worked on before billing exists. On anything the public can reach it is
+a free-Pro button. Only the exact string `1` enables it.
 
 ## Known limitation: storage is ephemeral
 
-The free CPU tier has **no persistent disk**. When the Space rebuilds or
-wakes from sleep, `app.db` is recreated empty — accounts, conversations
-and credits are lost.
+Render's free plan has **no persistent disk**. On every deploy — and
+after the service sleeps, which it does following ~15 minutes of no
+traffic — `app.db` comes back empty, losing accounts, conversations and
+credits.
 
-That's fine for a demo and not fine for real users. The fix is an
-external database; see `db.py`. Free options that need no credit card
-include [Turso](https://turso.tech) (libSQL — SQLite-compatible, so the
-change is small) and [Neon](https://neon.tech) or
+Fine for a demo, not fine for real users. The fix is a database that
+lives elsewhere; see `db.py`. Free and card-free options include
+[Turso](https://turso.tech) (libSQL, SQLite-compatible, so a small
+change) and [Neon](https://neon.tech) or
 [Supabase](https://supabase.com) (Postgres, a larger migration).
-
-The Space also sleeps after ~48 hours with no visitors and wakes on the
-next request.
 
 ## Local development
 
@@ -62,5 +71,6 @@ ollama pull llama3.2
 python app.py                        # http://127.0.0.1:5000
 ```
 
-`requirements-cloud.txt` is the trimmed set this container installs — no
-torch or diffusers, since neither is usable without a GPU.
+`requirements-cloud.txt` is the trimmed set a CPU host installs: no torch
+or diffusers, since neither is usable without a GPU. That is a ~2.3GB
+difference in install size.

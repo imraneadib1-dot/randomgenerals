@@ -1,4 +1,7 @@
-# RandomGenerals AI - container for Hugging Face Spaces (free CPU tier).
+# RandomGenerals AI - container image for any CPU-only host.
+#
+# Render uses render.yaml (its native Python runtime) rather than this
+# file; this stays for hosts that want a container instead.
 #
 # WHAT IS AND ISN'T IN HERE
 # No Ollama and no torch/diffusers. The free tier has 2 vCPU and no GPU:
