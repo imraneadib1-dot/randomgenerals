@@ -228,6 +228,30 @@ def too_large(_err):
 GENERATED_DIR = os.path.join("static", "generated")
 os.makedirs(GENERATED_DIR, exist_ok=True)
 
+
+def streaming_response(generator):
+    """Wrap a token generator in a Response that actually streams.
+
+    Behind a reverse proxy - PythonAnywhere and most shared hosts put
+    nginx in front of the app - the default is to buffer the whole
+    response and deliver it in one piece. The reply still arrives, but
+    the token-by-token effect is lost: the user stares at nothing for
+    several seconds and then the full answer appears at once.
+
+    X-Accel-Buffering: no is nginx's opt-out. Cache-Control stops any
+    intermediate cache from holding a partial stream and replaying it to
+    someone else. Both are ignored by servers that don't proxy, so this
+    is safe locally too.
+    """
+    return Response(
+        stream_with_context(generator),
+        mimetype="text/plain",
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache, no-transform",
+        },
+    )
+
 CODING_SYSTEM_PROMPT = (
     "If the user's message is just casual conversation - a greeting, "
     "small talk, a one-word check-in like 'wsp' or 'yo' - answer that "
@@ -1711,7 +1735,7 @@ def _canned_reply(thread, text):
     def generate():
         yield text
 
-    return Response(stream_with_context(generate()), mimetype="text/plain")
+    return streaming_response(generate())
 
 
 def _stream_reply(thread, provider, model, web_results, files, strength):
@@ -1856,7 +1880,7 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # moment it tries to charge for the reply. The user still saw their
     # answer, so the failure is invisible from the browser; it just means
     # credits were silently never deducted.
-    return Response(stream_with_context(generate()), mimetype="text/plain")
+    return streaming_response(generate())
 
 
 @app.route("/api/chat", methods=["POST"])
