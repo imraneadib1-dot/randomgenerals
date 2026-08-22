@@ -940,18 +940,91 @@ async function ensureThread() {
    ---------------------------------------------------------------- */
 let activeStreamController = null;
 
+// Human-readable labels for the tools the model can call. Anything not
+// listed still shows, just under its raw name.
+const TOOL_LABELS = {
+  web_search: ["Searching the web", "Searched the web"],
+  run_python: ["Running code", "Ran code"],
+  generate_image: ["Creating an image", "Created an image"],
+};
+
+function toolStatusStrip(msgEl) {
+  let strip = msgEl.querySelector(".tool-activity");
+  if (!strip) {
+    strip = document.createElement("div");
+    strip.className = "tool-activity";
+    msgEl.insertBefore(strip, msgEl.firstChild);
+  }
+  return strip;
+}
+
+function handleToolEvent(msgEl, evt) {
+  const [running, finished] = TOOL_LABELS[evt.tool] || [evt.tool, evt.tool];
+  const strip = toolStatusStrip(msgEl);
+  const id = "tool-" + evt.tool;
+  let row = strip.querySelector(`[data-tool="${CSS.escape(id)}"]`);
+  if (!row) {
+    row = document.createElement("div");
+    row.className = "tool-row";
+    row.dataset.tool = id;
+    strip.appendChild(row);
+  }
+  row.classList.toggle("is-running", evt.status === "start");
+  row.textContent = evt.status === "start" ? running + "…" : finished;
+
+  if (evt.status !== "done" || !evt.display) return;
+  const d = evt.display;
+  if (d.kind === "sources") {
+    renderSourceChips(msgEl, d.sources);
+  } else if (d.kind === "image" && d.url) {
+    const img = document.createElement("img");
+    img.className = "tool-image";
+    img.src = d.url;
+    img.alt = d.prompt || "Generated image";
+    img.loading = "lazy";
+    msgEl.appendChild(img);
+  }
+}
+
 async function consumeStream(res, bubble) {
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
-  let fullText = "";
+  const msgEl = bubble.parentElement;
+  // Tool events travel inside the text stream wrapped in U+001E pairs
+  // (see tool_event() in app.py). They have to come out before anything
+  // is rendered, and a pair can straddle two network chunks - so text
+  // after an unmatched separator is held back rather than shown, or the
+  // user would see a flash of raw JSON before it gets stripped.
+  const SEP = "";   // U+001E RECORD SEPARATOR
+  let buf = "";
+  let visible = "";
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    fullText += decoder.decode(value, { stream: true });
-    renderContent(bubble, fullText);
+    buf += decoder.decode(value, { stream: true });
+
+    for (;;) {
+      const start = buf.indexOf(SEP);
+      if (start === -1) break;
+      const end = buf.indexOf(SEP, start + 1);
+      if (end === -1) break;              // incomplete - wait for more
+      visible += buf.slice(0, start);
+      try {
+        handleToolEvent(msgEl, JSON.parse(buf.slice(start + 1, end)));
+      } catch (_) {
+        /* a malformed event is not worth breaking the reply over */
+      }
+      buf = buf.slice(end + 1);
+    }
+
+    const cut = buf.indexOf(SEP);
+    renderContent(bubble, visible + (cut === -1 ? buf : buf.slice(0, cut)));
     chatLog.parentElement.scrollTop = chatLog.parentElement.scrollHeight;
   }
-  return fullText;
+  const cut = buf.indexOf(SEP);
+  visible += cut === -1 ? buf : buf.slice(0, cut);
+  renderContent(bubble, visible);
+  return visible;
 }
 
 async function sendChatMessage(text) {

@@ -20,6 +20,7 @@ import imagegen  # local text-to-image generation - see imagegen.py
 import codeexec  # sandboxed Python execution - see codeexec.py
 import moderation  # content filtering - see moderation.py
 import features  # per-tier feature flags - see features.py
+import tools  # model-callable tools - see tools.py
 
 load_dotenv()  # reads .env in the project root - must run before any
 # os.environ.get() below, or values set there are missed
@@ -1333,7 +1334,21 @@ def stream_ollama(model, history, options=None, images=None, usage=None):
                 return
 
 
-def stream_groq(model, history, options=None, images=None, usage=None):
+def tool_event(payload):
+    """A structured event smuggled through the plain-text reply stream.
+
+    The reply is streamed as text and the browser appends whatever
+    arrives straight into the message bubble, so "searching the web..."
+    can't just be yielded - it would become part of the answer. Wrapping
+    events in U+001E (RECORD SEPARATOR) gives the frontend something it
+    can split on and pull out: the character has no visual form, no
+    meaning in markdown, and a language model will never emit one.
+    """
+    return "\x1e" + json.dumps(payload, separators=(",", ":")) + "\x1e"
+
+
+def stream_groq(model, history, options=None, images=None, usage=None,
+                tool_specs=None):
     """Stream from Groq's OpenAI-compatible API.
 
     Exists so the app can run somewhere without a GPU. Ollama needs
@@ -1354,57 +1369,112 @@ def stream_groq(model, history, options=None, images=None, usage=None):
                "vision model, or ask without the attachment.]")
         return
 
-    body = {
-        "model": model,
-        "messages": [{"role": m["role"], "content": m["content"]}
-                     for m in history],
-        "stream": True,
-    }
-    # Ollama and OpenAI-style APIs name these differently; translate
-    # rather than leaking Ollama's vocabulary into the request.
-    if options:
-        if "num_predict" in options:
-            body["max_tokens"] = options["num_predict"]
-        if "temperature" in options:
-            body["temperature"] = options["temperature"]
-        if "top_p" in options:
-            body["top_p"] = options["top_p"]
+    messages = [{"role": m["role"], "content": m["content"]}
+                for m in history]
 
-    try:
-        with requests.post(
-            f"{GROQ_URL}/chat/completions",
-            headers={"Authorization": f"Bearer {GROQ_API_KEY}",
-                     "Content-Type": "application/json"},
-            json=body, stream=True, timeout=120,
-        ) as r:
-            if r.status_code == 429:
-                yield ("[Groq's free daily limit is used up. Try the local "
-                       "model, or wait for the quota to reset.]")
-                return
-            r.raise_for_status()
-            for raw in r.iter_lines():
-                if not raw:
-                    continue
-                line = raw.decode("utf-8")
-                if not line.startswith("data: "):
-                    continue
-                payload = line[6:]
-                if payload.strip() == "[DONE]":
+    # One pass per round of tool calls, plus a final pass with no tools
+    # offered. That last one is what guarantees termination: with nothing
+    # to call, the model has to answer.
+    for round_index in range(tools.MAX_ROUNDS + 1):
+        body = {"model": model, "messages": messages, "stream": True}
+        # Ollama and OpenAI-style APIs name these differently; translate
+        # rather than leaking Ollama's vocabulary into the request.
+        if options:
+            if "num_predict" in options:
+                body["max_tokens"] = options["num_predict"]
+            if "temperature" in options:
+                body["temperature"] = options["temperature"]
+            if "top_p" in options:
+                body["top_p"] = options["top_p"]
+        if tool_specs and round_index < tools.MAX_ROUNDS:
+            body["tools"] = tool_specs
+            body["tool_choice"] = "auto"
+
+        # Tool calls arrive spread across deltas: the first carries the id
+        # and name, then arguments dribble in as JSON fragments that have
+        # to be concatenated before they parse. Keyed by the index the
+        # API supplies, because several tools can be called at once and
+        # their fragments interleave.
+        calls = {}
+        said = []
+        try:
+            with requests.post(
+                f"{GROQ_URL}/chat/completions",
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}",
+                         "Content-Type": "application/json"},
+                json=body, stream=True, timeout=120,
+            ) as r:
+                if r.status_code == 429:
+                    yield ("[Groq's free daily limit is used up. Try the "
+                           "local model, or wait for the quota to reset.]")
                     return
-                try:
-                    chunk = json.loads(payload)
-                except json.JSONDecodeError:
-                    continue
-                # Usage arrives on the final chunk when present; it's what
-                # credit charging is based on.
-                if chunk.get("usage") and usage is not None:
-                    usage["eval_count"] = chunk["usage"].get("completion_tokens")
-                for choice in chunk.get("choices", []):
-                    piece = choice.get("delta", {}).get("content")
-                    if piece:
-                        yield piece
-    except requests.exceptions.RequestException as e:
-        yield f"[Couldn't reach Groq: {e}]"
+                r.raise_for_status()
+                for raw in r.iter_lines():
+                    if not raw:
+                        continue
+                    line = raw.decode("utf-8")
+                    if not line.startswith("data: "):
+                        continue
+                    payload = line[6:]
+                    if payload.strip() == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
+                    # Usage arrives on the final chunk when present; it's
+                    # what credit charging is based on.
+                    if chunk.get("usage") and usage is not None:
+                        usage["eval_count"] = \
+                            chunk["usage"].get("completion_tokens")
+                    for choice in chunk.get("choices", []):
+                        delta = choice.get("delta", {})
+                        piece = delta.get("content")
+                        if piece:
+                            said.append(piece)
+                            yield piece
+                        for tc in delta.get("tool_calls") or []:
+                            slot = calls.setdefault(
+                                tc.get("index", 0),
+                                {"id": "", "name": "", "args": ""})
+                            if tc.get("id"):
+                                slot["id"] = tc["id"]
+                            fn = tc.get("function") or {}
+                            if fn.get("name"):
+                                slot["name"] = fn["name"]
+                            if fn.get("arguments"):
+                                slot["args"] += fn["arguments"]
+        except requests.exceptions.RequestException as e:
+            yield f"[Couldn't reach Groq: {e}]"
+            return
+
+        if not calls:
+            return
+
+        ordered = [calls[k] for k in sorted(calls)]
+        # The assistant turn that requested the tools has to go back into
+        # the history verbatim, or the tool results that follow it have
+        # nothing to attach to and the API rejects the next request.
+        messages.append({
+            "role": "assistant",
+            "content": "".join(said) or None,
+            "tool_calls": [
+                {"id": c["id"] or f"call_{i}", "type": "function",
+                 "function": {"name": c["name"], "arguments": c["args"] or "{}"}}
+                for i, c in enumerate(ordered)
+            ],
+        })
+
+        for i, c in enumerate(ordered):
+            yield tool_event({"tool": c["name"], "status": "start"})
+            result = tools.dispatch(c["name"], c["args"])
+            yield tool_event({"tool": c["name"], "status": "done",
+                              "display": result.get("display")})
+            messages.append({
+                "role": "tool",
+                "tool_call_id": c["id"] or f"call_{i}",
+                "content": result["text"],
+            })
 
 
 PROVIDER_STREAMERS = {
@@ -1819,6 +1889,24 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
         stream_kwargs["images"] = images_b64
     usage = {}
     stream_kwargs["usage"] = usage
+
+    # Let the model reach for tools itself. Only wired up for the cloud
+    # provider so far: Ollama's tool support varies by model and a small
+    # local model that hallucinates a tool call produces a worse answer
+    # than one that just talks.
+    #
+    # Web search is skipped when the frontend already ran one, since its
+    # results are in the prompt and searching again would be a slower way
+    # to learn the same thing. It's also skipped in code mode, where the
+    # sandbox is what matters and searching mid-answer mostly derails it.
+    if provider == "groq":
+        specs = tools.available_specs(
+            allow_web=not web_results and mode != "code",
+            allow_code=True,
+            allow_images=mode != "code",
+        )
+        if specs:
+            stream_kwargs["tool_specs"] = specs
 
     def generate():
         full_reply = ""
