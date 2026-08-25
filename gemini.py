@@ -42,11 +42,34 @@ _models_cache = {"at": 0.0, "models": None, "error": ""}
 MODELS_TTL = 3600
 
 # Used only if the catalogue cannot be reached at all.
-FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"]
+FALLBACK_MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest"]
 
-# Families that exist in the catalogue but make no sense in a chat
-# picker: embeddings, image-only models, and text-to-speech.
-_NON_CHAT = ("embedding", "aqa", "imagen", "tts", "veo", "learnlm")
+# Families that appear in the catalogue but do not belong in a chat
+# picker: embeddings, image and music generators, robotics, computer-use
+# and the research agents. Left in, they crowd out the models someone
+# would actually pick - and the list is alphabetical, so the first entry
+# a user sees would otherwise be "antigravity-preview".
+_NON_CHAT = (
+    "embedding", "aqa", "imagen", "tts", "veo", "learnlm",
+    "-image", "robotics", "lyria", "nano-banana", "antigravity",
+    "deep-research", "computer-use", "omni",
+)
+
+# Aliases, deliberately, rather than pinned versions. "gemini-2.5-flash"
+# was the sensible default when this was written and Google had already
+# closed it to new users by the time it was first called - the error
+# tells you to move to whatever is current. A -latest alias moves on its
+# own, which is the only version of this that does not need revisiting.
+#
+# Ordered best-effort first: the full Flash model, then Lite. Lite is not
+# a downgrade worth avoiding here, it is what answers when Flash is busy.
+PREFERRED = ["gemini-flash-latest", "gemini-flash-lite-latest"]
+
+# Gemini 3.x reasons internally before replying, and that reasoning is
+# billed against maxOutputTokens. With this app's Quick mode cap of 320
+# the budget was spent thinking and the reply came back as "I am" - two
+# tokens, cut off mid-sentence. This floor leaves room for both.
+MIN_OUTPUT_TOKENS = 2048
 
 
 def api_key():
@@ -165,7 +188,7 @@ def _attach_images(contents, images):
             return
 
 
-def stream_chat(model, history, options=None, images=None, usage=None):
+def _stream_one(model, history, options=None, images=None, usage=None):
     """Stream a reply. Signature matches the other providers in app.py.
 
     Yields text as it arrives, or a single bracketed message explaining
@@ -194,7 +217,9 @@ def stream_chat(model, history, options=None, images=None, usage=None):
     cfg = {}
     if options:
         if "num_predict" in options:
-            cfg["maxOutputTokens"] = options["num_predict"]
+            # Raised to the floor, never lowered - see MIN_OUTPUT_TOKENS.
+            cfg["maxOutputTokens"] = max(int(options["num_predict"]),
+                                         MIN_OUTPUT_TOKENS)
         if "temperature" in options:
             cfg["temperature"] = options["temperature"]
         if "top_p" in options:
@@ -253,3 +278,55 @@ def stream_chat(model, history, options=None, images=None, usage=None):
                         yield f"\n\n[Gemini stopped early: {reason}]"
     except requests.exceptions.RequestException as e:
         yield f"[Couldn't reach Gemini: {e}]"
+
+
+# Errors that mean "this model, right now" rather than "this request".
+# Retrying the same call against a different model is worth doing for
+# these and pointless for anything else.
+_TRANSIENT = ("high demand", "overloaded", "try again later",
+              "no longer available", "not found", "unavailable")
+
+
+def _candidates(model):
+    """The model to try, then sensible stand-ins - deduplicated, and
+    only ones the account can actually see."""
+    seen, out = set(), []
+    catalogue = models()
+    for m in [model] + PREFERRED:
+        if m and m not in seen and (not catalogue or m in catalogue):
+            seen.add(m)
+            out.append(m)
+    return out or [model]
+
+
+def stream_chat(model, history, options=None, images=None, usage=None):
+    """Stream a reply, moving to another model if this one is unusable.
+
+    Gemini's free tier returns "this model is currently experiencing high
+    demand" often enough that a single-model attempt is not dependable -
+    and a retired model produces a similar refusal. Both were hit within
+    a minute of first trying this.
+
+    Retrying is only safe while nothing has been sent yet: once a token
+    has reached the user it cannot be taken back, so a failure mid-reply
+    is passed through as-is rather than restarted.
+    """
+    attempts = _candidates(model)
+    last = ""
+    for i, candidate in enumerate(attempts):
+        produced = False
+        for piece in _stream_one(candidate, history, options, images, usage):
+            # A bracketed message as the very first output is this
+            # module reporting a failure, not model text.
+            if not produced and piece.startswith("["):
+                last = piece
+                if (i + 1 < len(attempts)
+                        and any(t in piece.lower() for t in _TRANSIENT)):
+                    break          # try the next model
+                yield piece
+                return
+            produced = True
+            yield piece
+        if produced:
+            return
+    yield last or "[No Gemini model was able to answer.]"

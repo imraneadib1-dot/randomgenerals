@@ -1316,15 +1316,16 @@ def _best_cloud_model(mode, available):
     this can never return nothing and strand a request that has already
     decided to use the cloud.
     """
-    preferred = {
-        # Flash over Pro on purpose: the free tier's daily request count
-        # is the scarce resource here, not quality, and Flash is fast
-        # enough that a fallback does not feel like a downgrade.
-        "code": ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-pro"],
-        "chat": ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-pro"],
-    }.get(mode, ["gemini-2.5-flash", "gemini-2.0-flash"])
-    for m in preferred:
+    # The -latest aliases, not pinned versions. A pinned default was
+    # already closed to new accounts by the time it was first called;
+    # an alias moves with Google instead of needing to be chased.
+    # gemini.stream_chat retries the next one if the first is busy, so
+    # this only has to name a sensible starting point.
+    for m in gemini.PREFERRED:
         if m in available:
+            return m
+    for m in available:
+        if "flash" in m:
             return m
     return available[0]
 
