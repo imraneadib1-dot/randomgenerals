@@ -567,6 +567,33 @@ def spend_credits(amount):
     return True
 
 
+@app.template_global()
+def asset(filename):
+    """A URL for a static file that changes whenever the file does.
+
+    Cloudflare serves this site's static assets with Cache-Control:
+    max-age=14400, so a browser keeps script.js for four hours and does
+    not even ask whether a newer one exists. Every fix shipped inside
+    that window is invisible: the code on the server is right, the code
+    running in the browser is whatever it downloaded hours ago, and the
+    bug being reported was fixed long ago.
+
+    That is not a caching bug to switch off - four hours of caching is
+    exactly what you want for speed. The fix is to make the URL itself
+    change: appending the file's modification time means a new build is
+    a new URL, which no cache anywhere can answer with an old copy,
+    while an unchanged file keeps its URL and stays cached.
+    """
+    path = os.path.join(app.static_folder or "static", filename)
+    try:
+        version = int(os.path.getmtime(path))
+    except OSError:
+        # A missing file is a template bug, not a reason to 500 the page
+        # - fall back to an unversioned URL and let it 404 visibly.
+        return url_for("static", filename=filename)
+    return url_for("static", filename=filename, v=version)
+
+
 @app.route("/robots.txt")
 def robots_txt():
     """What search engines may crawl.

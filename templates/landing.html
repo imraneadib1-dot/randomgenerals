@@ -12,7 +12,7 @@
          tracking parameters on the end is indexed once rather than
          competing with itself in search results. -->
     <link rel="canonical" href="https://randomgenerals.com/" />
-    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="{{ asset('favicon.svg') }}" type="image/svg+xml" />
 
     <!-- Open Graph and Twitter cards. Without these a shared link is a
          bare URL; with them it unfurls into a titled card with the
@@ -44,7 +44,7 @@
     />
     <link
       rel="stylesheet"
-      href="{{ url_for('static', filename='landing.css') }}"
+      href="{{ asset('landing.css') }}"
     />
   </head>
   <body>
@@ -362,7 +362,7 @@
       </div>
     </div>
 
-    <script src="{{ url_for('static', filename='landing.js') }}"></script>
-    <script src="{{ url_for('static', filename='hero-physics.js') }}"></script>
+    <script src="{{ asset('landing.js') }}"></script>
+    <script src="{{ asset('hero-physics.js') }}"></script>
   </body>
 </html>
