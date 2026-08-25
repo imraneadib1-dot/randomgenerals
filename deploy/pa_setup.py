@@ -139,23 +139,13 @@ def main():
     else:
         ok("SECRET_KEY present (" + str(len(values["SECRET_KEY"])) + " chars)")
 
-    groq = values.get("GROQ_API_KEY", "")
-    if not groq:
-        print("\n  " + YELLOW + "Your Groq API key is missing." + RESET)
-        print("  Get it from https://console.groq.com/keys (free, no card).")
-        print("  Paste it below and press Enter.\n")
-        try:
-            groq = input("  GROQ_API_KEY: ").strip()
-        except EOFError:
-            groq = ""
-        if not groq:
-            die("no key entered. Re-run this script when you have it.")
-        values["GROQ_API_KEY"] = groq
-
-    if not groq.startswith("gsk_"):
-        warn("key does not start with 'gsk_' (starts with '" + groq[:4] + "')")
-        warn("continuing anyway - double-check it if chat fails later.")
-    ok("GROQ_API_KEY present (" + str(len(values["GROQ_API_KEY"])) + " chars)")
+    # No AI provider key is requested any more. The cloud provider was
+    # removed, so this app answers only from Ollama on the machine it
+    # runs on - and PythonAnywhere has no Ollama. Every page will serve
+    # correctly and prompts will report the local AI as unavailable.
+    # Said plainly at the end of this script rather than left to be
+    # discovered.
+    values.pop("GROQ_API_KEY", None)
 
     # ALLOW_MOCK_UPGRADE grants Pro without paying. Never on a public site.
     values.pop("ALLOW_MOCK_UPGRADE", None)
@@ -245,12 +235,12 @@ def main():
             code = r.status
         ok("/api/health -> " + str(code))
         mode = health.get("mode")
-        cloud = health.get("compute", {}).get("cloud_models")
-        print("       mode=" + str(mode) + "  cloud_models=" + str(cloud))
-        if cloud:
-            ok("Groq is reachable - chat will work")
-        else:
-            warn("cloud models unavailable - check GROQ_API_KEY in .env")
+        print("       mode=" + str(mode))
+        if not health.get("compute", {}).get("local_models"):
+            warn("no local models here - expected, since PythonAnywhere has")
+            warn("no GPU and no Ollama. Pages will serve, but a prompt will")
+            warn("answer 'the local AI isn't running'. Adding a cloud")
+            warn("provider back is what would make it answer.")
     except Exception as e:
         warn("could not reach " + url + "/api/health yet: " + str(e))
         warn("Give it 30 seconds and open the URL in your browser.")

@@ -7,9 +7,13 @@ What it does **not** give you is a custom domain. The site lives at
 `https://<username>.pythonanywhere.com`; `randomgenerals.com` cannot
 point at it on this plan.
 
-There is no GPU, so every reply comes from Groq. `api.groq.com` is on
-PythonAnywhere's free-tier allowlist, as are DuckDuckGo, Stripe and
-Google's OAuth endpoints - checked against
+There is no GPU and no Ollama here, and this app answers only from
+Ollama. So the site will serve every page, sign-ins and billing will
+work, and a prompt will report that the local AI isn't running. Adding
+a cloud provider back is what would make it answer - see app.py.
+
+Outbound access on the free tier is allowlisted; DuckDuckGo, Stripe,
+Paddle and Google's OAuth endpoints are all on it, checked against
 <https://www.pythonanywhere.com/whitelist/>.
 
 ---
@@ -45,7 +49,6 @@ Never commit these - `.env` is gitignored.
 ```bash
 cd ~/randomgenerals
 python -c "import secrets; print('SECRET_KEY=' + secrets.token_hex(32))" > .env
-echo "GROQ_API_KEY=PASTE_YOUR_KEY_HERE" >> .env
 chmod 600 .env
 nano .env      # replace PASTE_YOUR_KEY_HERE with the real gsk_... value
 ```
@@ -95,8 +98,8 @@ Check it came up cleanly:
 curl -s https://<username>.pythonanywhere.com/api/health
 ```
 
-`"mode"` should read `cloud` and `cloud_models` should be `true`. If it
-says `local`, `GROQ_API_KEY` didn't load - see below.
+`"mode"` will read `unavailable`, which is correct here - there is no
+Ollama on this host.
 
 ---
 
@@ -109,7 +112,6 @@ actual traceback.
 |---|---|
 | `ModuleNotFoundError: No module named 'app'` | Source code path wrong, or `USERNAME` not changed in the WSGI file |
 | `ModuleNotFoundError` for flask/requests | Virtualenv path wrong on the Web tab |
-| Replies fail, health says `local` | `.env` not found - check the `load_dotenv` path in the WSGI file |
 | Reply appears all at once, not word by word | nginx buffering; `streaming_response()` in `app.py` sets `X-Accel-Buffering: no` to prevent this |
 | Site 500s after a `git pull` | You have to press **Reload**; code changes are not picked up automatically |
 
@@ -119,8 +121,8 @@ Free web apps expire after **three months**. PythonAnywhere emails you a
 link to press to extend it, and the app goes offline if you ignore it.
 
 CPU is capped at 100 seconds/day. That meters *your* processor time, not
-time spent waiting on Groq, so a chat app uses very little of it -
-generating a reply is almost entirely waiting on the network. Going over
+time spent waiting on the network, so serving pages uses very little
+of it. Going over
 throttles the app rather than stopping it.
 
 ## Updating later
