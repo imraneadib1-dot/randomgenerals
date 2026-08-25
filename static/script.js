@@ -1609,6 +1609,23 @@ async function changePlan(plan) {
     });
     const data = await res.json();
     if (res.ok && data.checkout_url) {
+      // Paddle hands back our own URL with ?_ptxn=<transaction id> on it,
+      // because its checkout is an overlay rather than a page. Pulling the
+      // id out and opening the overlay in place is the same flow without
+      // the full page reload - and it still works if Paddle.js is slow,
+      // because the navigation below is kept as the fallback.
+      const txn = new URL(data.checkout_url, window.location.origin)
+        .searchParams.get("_ptxn");
+      if (txn && paddleReady) {
+        try {
+          const paddle = await paddleReady;
+          paddle.Checkout.open({ transactionId: txn });
+          planProBtn.disabled = false;
+          return;
+        } catch (e) {
+          console.error("Paddle overlay failed, falling back:", e);
+        }
+      }
       window.location.href = data.checkout_url;
       return;
     } else if (res.ok) {
@@ -1640,20 +1657,63 @@ planFreeBtn.addEventListener("click", () => {
 
 let billingLive = false;
 
+// Paddle's checkout is an overlay drawn on this page by Paddle.js, not a
+// hosted page to redirect to like Stripe's. So the script has to be
+// present and initialised before any Upgrade click, and the transaction
+// id arrives as ?_ptxn= on our own URL. Without this the whole flow
+// looks broken in the most confusing way possible: the transaction is
+// created successfully, the browser navigates, and nothing appears.
+let paddleReady = null;
+
+function loadPaddle(token, environment) {
+  if (paddleReady) return paddleReady;
+  paddleReady = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.paddle.com/paddle/v2/paddle.js";
+    s.onload = () => {
+      try {
+        // Must be set before Initialize, and only for sandbox - calling
+        // it with "production" is not valid.
+        if (environment === "sandbox") window.Paddle.Environment.set("sandbox");
+        window.Paddle.Initialize({ token });
+        resolve(window.Paddle);
+      } catch (e) {
+        reject(e);
+      }
+    };
+    s.onerror = () => reject(new Error("Paddle.js failed to load"));
+    document.head.appendChild(s);
+  });
+  return paddleReady;
+}
+
 async function loadPlansMeta() {
   try {
     const res = await fetch("/api/plans");
     const data = await res.json();
     billingLive = !!data.billing_live;
 
+    if (data.processor === "paddle" && data.paddle_client_token) {
+      // Initialised on page load, not on click: Paddle.js opens the
+      // overlay by itself when it sees ?_ptxn= in the URL, and it can
+      // only do that if it is already running when the page loads.
+      loadPaddle(data.paddle_client_token, data.paddle_environment).catch(
+        (e) => console.error("Paddle failed to initialise:", e),
+      );
+    }
+
     if (billingLive) {
       planProBtn.disabled = false;
       planProBtn.textContent = "Upgrade to Pro";
       planProBtn.removeAttribute("title");
       planFineprint.textContent =
-        "Real card payments via Stripe. Card details are entered on " +
-        "Stripe's own checkout page and never touch this server. Manage " +
-        "or cancel any time from the button above.";
+        data.processor === "paddle"
+          ? "Card details are entered in Paddle's own checkout and never " +
+            "touch this server. Paddle is the seller of record and handles " +
+            "VAT. Cancel any time from the button above."
+          : "Real card payments via Stripe. Card details are entered on " +
+            "Stripe's own checkout page and never touch this server. Manage " +
+            "or cancel any time from the button above.";
     } else {
       // Disable rather than let the click fail. Previously the button
       // stayed active, the click returned 503, and the resulting red

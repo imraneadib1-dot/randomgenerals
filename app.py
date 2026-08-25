@@ -916,7 +916,11 @@ def subscribe():
             url, err = paddle_billing.create_checkout(
                 user_id=uid,
                 email=user["email"],
-                return_url=request.host_url.rstrip("/") + "/app?checkout=success",
+                # Paddle appends ?_ptxn=<id> to this. It is where the
+                # overlay opens, not a "payment finished" landing page -
+                # appending checkout=success here made the app announce
+                # success before anyone had paid.
+                return_url=request.host_url.rstrip("/") + "/app",
             )
             if err:
                 return jsonify({"error": f"Could not start checkout: {err}"}), 502
@@ -1150,7 +1154,16 @@ def health():
 
 @app.route("/api/plans", methods=["GET"])
 def get_plans():
-    return jsonify({"plans": PLANS, "billing_live": billing_live()})
+    return jsonify({
+        "plans": PLANS,
+        "billing_live": billing_live() or paddle_billing.configured(),
+        "processor": "paddle" if paddle_billing.configured() else "stripe",
+        # Safe to publish: Paddle client tokens are designed to ship
+        # in the page. They can start a checkout and nothing else -
+        # the API key, which can read and refund, never leaves here.
+        "paddle_client_token": paddle_billing.client_token(),
+        "paddle_environment": paddle_billing.environment(),
+    })
 
 
 @app.route("/api/features", methods=["GET"])

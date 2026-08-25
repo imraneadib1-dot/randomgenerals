@@ -56,6 +56,7 @@ env = os.environ.get("PADDLE_ENV", "sandbox").strip().lower()
 api_key = os.environ.get("PADDLE_API_KEY", "").strip()
 price_id = os.environ.get("PADDLE_PRICE_ID_PRO", "").strip()
 webhook_secret = os.environ.get("PADDLE_WEBHOOK_SECRET", "").strip()
+client_token = os.environ.get("PADDLE_CLIENT_TOKEN", "").strip()
 
 base = ("https://api.paddle.com" if env == "production"
         else "https://sandbox-api.paddle.com")
@@ -107,6 +108,25 @@ if not webhook_secret:
         "Notifications > your destination > secret key")
 else:
     ok(f"PADDLE_WEBHOOK_SECRET set ({len(webhook_secret)} chars)")
+
+if not client_token:
+    bad("PADDLE_CLIENT_TOKEN is not set",
+        "Paddle's checkout is an overlay drawn by Paddle.js on your own "
+        "page, not a page to redirect to. Without this token Paddle.js "
+        "never starts and Upgrade appears to do nothing at all. "
+        "Developer tools > Authentication > Client-side tokens")
+elif not client_token.startswith(("test_", "live_")):
+    warn(f"PADDLE_CLIENT_TOKEN starts {client_token[:6]!r} - client-side "
+         f"tokens start with test_ or live_. Check you did not paste the "
+         f"API key here.")
+else:
+    expected = "test_" if env == "sandbox" else "live_"
+    if not client_token.startswith(expected):
+        bad(f"PADDLE_CLIENT_TOKEN starts {client_token[:5]!r} but "
+            f"PADDLE_ENV={env} expects {expected!r}",
+            "Sandbox and production have separate client tokens")
+    else:
+        ok(f"PADDLE_CLIENT_TOKEN set ({len(client_token)} chars)")
 
 if problems:
     print(f"\n{RED}Fix the above before continuing.{RESET}\n")

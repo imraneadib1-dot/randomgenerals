@@ -60,6 +60,25 @@ def webhook_secret():
     return _env("PADDLE_WEBHOOK_SECRET").strip()
 
 
+def client_token():
+    """The browser-side token, which is a different credential from the
+    API key and is *meant* to be public - it ships inside the page.
+
+    Paddle Billing has no hosted checkout page to redirect to. Its
+    checkout is an overlay that Paddle.js opens on your own site, and
+    Paddle.js cannot start without this token. Without it the flow gets
+    as far as a transaction being created and then simply does nothing
+    visible, which is exactly how it failed here.
+
+    Paddle > Developer tools > Authentication > Client-side tokens.
+    """
+    return _env("PADDLE_CLIENT_TOKEN").strip()
+
+
+def client_ready():
+    return configured() and not _is_placeholder(client_token())
+
+
 def environment():
     return _env("PADDLE_ENV", "sandbox").strip().lower()
 
@@ -116,6 +135,12 @@ def config_problem():
         return ("PADDLE_WEBHOOK_SECRET is missing, so payments would "
                 "succeed without anyone being upgraded. Create a "
                 "notification destination in Paddle > Developer tools.")
+    if _is_placeholder(client_token()):
+        return ("PADDLE_CLIENT_TOKEN is missing. Paddle's checkout is an "
+                "overlay opened by Paddle.js in the browser, not a page to "
+                "redirect to, and Paddle.js cannot start without this "
+                "token - so Upgrade appears to do nothing. Paddle > "
+                "Developer tools > Authentication > Client-side tokens.")
     return ""
 
 
