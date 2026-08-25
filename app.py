@@ -21,6 +21,7 @@ import codeexec  # sandboxed Python execution - see codeexec.py
 import moderation  # content filtering - see moderation.py
 import features  # per-tier feature flags - see features.py
 import tools  # model-callable tools - see tools.py
+import paddle_billing  # subscriptions where Stripe can't reach - see paddle_billing.py
 
 load_dotenv()  # reads .env in the project root - must run before any
 # os.environ.get() below, or values set there are missed
@@ -898,6 +899,21 @@ def subscribe():
     user = USERS[uid]
 
     if plan == "pro":
+        # Paddle first when it's configured. It is a merchant of record,
+        # so it can sell from countries Stripe has no account type for -
+        # Morocco among them - which is the only reason to prefer it.
+        # Where both work, Stripe is cheaper, so this order only matters
+        # on a deployment that has deliberately set Paddle up.
+        if paddle_billing.configured():
+            url, err = paddle_billing.create_checkout(
+                user_id=uid,
+                email=user["email"],
+                return_url=request.host_url.rstrip("/") + "/app?checkout=success",
+            )
+            if err:
+                return jsonify({"error": f"Could not start checkout: {err}"}), 502
+            return jsonify({"checkout_url": url})
+
         if billing_live():
             try:
                 checkout_kwargs = {
@@ -1046,6 +1062,59 @@ def billing_webhook():
             save_users()
 
     return jsonify({"received": True})
+
+
+@app.route("/api/billing/paddle/webhook", methods=["POST"])
+def paddle_webhook():
+    """Paddle calls this when a subscription is created or changes.
+
+    Same trust model as the Stripe webhook above: this URL is public and
+    unauthenticated, so the signature is the only thing distinguishing a
+    real Paddle callback from anyone who guesses the path and POSTs
+    themselves a Pro subscription. It therefore fails closed - no secret
+    configured means the endpoint refuses outright rather than trusting
+    the body.
+    """
+    ok, reason = paddle_billing.verify_webhook(
+        request.get_data(), request.headers.get("Paddle-Signature", ""))
+    if not ok:
+        # 400 rather than 403: Paddle retries on 5xx, and a request that
+        # failed verification will fail identically every time, so
+        # asking them to retry it forever helps nobody.
+        return jsonify({"error": f"Rejected: {reason}"}), 400
+
+    payload = request.get_json(force=True, silent=True) or {}
+    event = paddle_billing.parse_event(payload)
+    if not event:
+        # Acknowledged, not acted on. Returning an error for events we
+        # simply don't handle would make Paddle retry them and
+        # eventually disable the destination.
+        return jsonify({"received": True, "handled": False})
+
+    # user_id comes from custom_data set at checkout, which is the only
+    # reliable link back to a local account - matching on email breaks
+    # as soon as someone pays with a different address than they signed
+    # up with.
+    user = USERS.get(str(event.get("user_id") or ""))
+    if not user:
+        return jsonify({"received": True, "handled": False,
+                        "reason": "unknown user"})
+
+    if event["active"]:
+        if user["plan"] != "pro":
+            _apply_plan(user, "pro")
+    elif user["plan"] != "free":
+        _apply_plan(user, "free")
+
+    user["paddle_subscription_id"] = event.get("subscription_id")
+    user["paddle_customer_id"] = event.get("customer_id")
+    user["subscription_status"] = event.get("status")
+    user["cancel_at_period_end"] = event.get("cancel_at_period_end", False)
+    if event.get("current_period_end"):
+        user["current_period_end"] = event["current_period_end"]
+    save_users()
+
+    return jsonify({"received": True, "handled": True})
 
 
 @app.route("/api/health", methods=["GET"])
