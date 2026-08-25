@@ -23,52 +23,52 @@
      re-pointing them re-themes the app without touching the ~2400
      lines of component rules underneath. "sky" now means the dark
      ground the panels float on, not a blue daytime sky. */
-  --sky-top: #05080f;
-  --sky-mid: #080d18;
-  --sky-bottom: #0a1120;
+  --sky-top: #0a0709;
+  --sky-mid: #0f0b0f;
+  --sky-bottom: #140e14;
 
   /* Panels are now light-on-dark rather than white glass: a barely-lit
      surface that still reads as raised against the ground behind it. */
   --surface: rgba(255, 255, 255, 0.04);
   --surface-raised: rgba(255, 255, 255, 0.07);
-  --panel: rgba(17, 23, 37, 0.72);
-  --border: rgba(120, 160, 220, 0.12);
-  --border-strong: rgba(120, 200, 255, 0.22);
+  --panel: rgba(26, 19, 26, 0.74);
+  --border: rgba(255, 170, 180, 0.12);
+  --border-strong: rgba(255, 120, 140, 0.24);
 
-  --ink: #eaf1fb;
-  --ink-soft: #9fb1cc;
-  --ink-faint: #6b7c96;
+  --ink: #f6eef0;
+  --ink-soft: #c3b0b6;
+  --ink-faint: #8b7b84;
 
   /* Text sitting directly on the ground (topbar), not on a panel. The
      drop shadow that kept white text legible over a bright sky is
      pointless over a dark one - dropped rather than left as a smudge. */
-  --ink-on-sky: #eaf1fb;
-  --ink-on-sky-soft: rgba(234, 241, 251, 0.72);
+  --ink-on-sky: #f6eef0;
+  --ink-on-sky-soft: rgba(246, 238, 240, 0.72);
   --sky-text-shadow: none;
 
   /* Deck chrome fallback (= Code bay accent) */
-  --deck: #22d3ee;
-  --deck-soft: rgba(34, 211, 238, 0.16);
+  --deck: #ff2f52;
+  --deck-soft: rgba(255, 47, 82, 0.16);
 
   /* Bay accents — one per workspace. Shifted onto the landing page's
      cyan/blue/violet ramp so switching bays still reads as a change of
      temperature, but all three now belong to the same family. */
-  --bay-code: #22d3ee;
-  --bay-code-soft: rgba(34, 211, 238, 0.16);
-  --bay-chat: #38bdf8;
-  --bay-chat-soft: rgba(56, 189, 248, 0.16);
-  --bay-image: #a78bfa;
-  --bay-image-soft: rgba(167, 139, 250, 0.16);
+  --bay-code: #ff2f52;
+  --bay-code-soft: rgba(255, 47, 82, 0.16);
+  --bay-chat: #ff7a3d;
+  --bay-chat-soft: rgba(255, 122, 61, 0.16);
+  --bay-image: #ff5c8a;
+  --bay-image-soft: rgba(255, 92, 138, 0.16);
 
   /* Channel colors — one per provider, never blended */
   --c-ollama: #34d399;
   --c-ollama-soft: rgba(52, 211, 153, 0.14);
-  --c-groq: #f97362;
-  --c-groq-soft: rgba(249, 115, 98, 0.14);
+  --c-groq: #fbbf24;
+  --c-groq-soft: rgba(251, 191, 36, 0.14);
   --c-imagegen: #a78bfa;
   --c-imagegen-soft: rgba(167, 139, 250, 0.14);
 
-  --user-bubble: rgba(34, 211, 238, 0.1);
+  --user-bubble: rgba(255, 47, 82, 0.11);
   --error: #f2778d;
   --success: #34d399;
   --credit-low: #f2778d;
@@ -143,12 +143,12 @@ body {
   background-image:
     radial-gradient(
       1100px 480px at 12% -8%,
-      rgba(34, 211, 238, 0.1) 0%,
+      rgba(255, 47, 82, 0.11) 0%,
       transparent 62%
     ),
     radial-gradient(
       950px 440px at 92% -4%,
-      rgba(56, 189, 248, 0.08) 0%,
+      rgba(255, 122, 61, 0.08) 0%,
       transparent 60%
     ),
     linear-gradient(
@@ -214,12 +214,12 @@ html.time-night body {
   background:
     radial-gradient(
       32% 20% at 10% 18%,
-      rgba(56, 189, 248, 0.13),
+      rgba(255, 122, 61, 0.13),
       transparent 72%
     ),
     radial-gradient(
       26% 16% at 78% 10%,
-      rgba(34, 211, 238, 0.11),
+      rgba(255, 47, 82, 0.11),
       transparent 72%
     ),
     radial-gradient(

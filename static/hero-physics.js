@@ -111,7 +111,13 @@
         // Clouds are fluffier than they are heavy; moons are dense. This
         // only affects how much they shove each other.
         mass: isMoon ? r * 1.6 : r * 0.7,
-        hue: isMoon ? rand(188, 200) : rand(198, 222),
+        // Warm hues, to match the red palette. These drive the shadowed
+        // side of a cloud and the body of a moon, so leaving them on the
+        // old cyan ramp put blue-grey undersides under a red sky - the
+        // one detail that makes a recoloured theme look recoloured.
+        // Clouds sit redder than the moons, which stay amber, so the two
+        // still read as different objects rather than one warm smear.
+        hue: isMoon ? rand(30, 44) : rand(8, 26),
         spin: rand(-0.003, 0.003),
         angle: rand(0, Math.PI * 2),
         drift: rand(0, Math.PI * 2),   // phase, for a gentle bob
