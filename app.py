@@ -31,6 +31,7 @@ import imagegen  # noqa: E402  local text-to-image generation
 import codeexec  # noqa: E402  sandboxed Python execution - see codeexec.py
 import moderation  # noqa: E402  content filtering - see moderation.py
 import features  # noqa: E402  per-tier feature flags - see features.py
+import gemini  # noqa: E402  cloud fallback for when this machine is off
 import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
 
 # The one AI this app talks to: Ollama, running locally (llama3.2 pulled
@@ -1110,16 +1111,20 @@ def health():
     the deployment's health check and by the UI's status indicator, so
     it has to stay fast enough to call often.
 
-    There is one source of answers now - Ollama on this machine - so
-    "can it answer at all" and "is Ollama up" are the same question.
+    Two possible sources: Ollama on this machine, and Gemini as a
+    fallback for when this machine is off. `mode` says which one a
+    request would actually reach right now.
     """
+    local = ollama_reachable()
+    cloud = gemini.configured()
     return jsonify({
         "status": "ok",
         "time": now_iso(),
         "compute": {
-            "local_models": ollama_reachable(),
+            "local_models": local,
+            "cloud_models": cloud,
         },
-        "mode": "local" if ollama_reachable() else "unavailable",
+        "mode": "local" if local else ("cloud" if cloud else "unavailable"),
     })
 
 
@@ -1224,10 +1229,21 @@ def get_credits():
 # ----------------------------------------------------------------------
 @app.route("/api/providers", methods=["GET"])
 def list_providers():
-    # One channel: the models on this machine. The cloud provider was
-    # removed deliberately, so prompts never leave the device.
+    providers = [ollama_provider()]
+    # Only advertised when a key exists, so the picker never offers a
+    # channel that would immediately fail.
+    if gemini.configured():
+        providers.append({
+            "id": "gemini",
+            "label": "Cloud",
+            "available": True,
+            "models": gemini.models(),
+            "model_info": [describe_model(m) for m in gemini.models()],
+            "note": "Used automatically when this machine is off. Runs "
+                    "off-device, so prompts leave it.",
+        })
     return jsonify({
-        "providers": [ollama_provider()],
+        "providers": providers,
         "gemini_configured": imagegen.gemini_configured(),
     })
 
@@ -1285,6 +1301,26 @@ def ollama_reachable():
         ok = False
     _ollama_health.update({"at": now, "ok": ok})
     return ok
+
+
+def _best_cloud_model(mode, available):
+    """Which cloud model stands in for the local one this bay uses.
+
+    First match wins, falling back to whatever the catalogue offers, so
+    this can never return nothing and strand a request that has already
+    decided to use the cloud.
+    """
+    preferred = {
+        # Flash over Pro on purpose: the free tier's daily request count
+        # is the scarce resource here, not quality, and Flash is fast
+        # enough that a fallback does not feel like a downgrade.
+        "code": ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-pro"],
+        "chat": ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-pro"],
+    }.get(mode, ["gemini-2.5-flash", "gemini-2.0-flash"])
+    for m in preferred:
+        if m in available:
+            return m
+    return available[0]
 
 
 def ollama_provider():
@@ -1446,6 +1482,7 @@ def tool_event(payload):
 
 PROVIDER_STREAMERS = {
     "ollama": stream_ollama,
+    "gemini": gemini.stream_chat,
 }
 
 
@@ -1809,17 +1846,28 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
         for m in thread["messages"] if m["type"] == "text"
     ]
 
-    # There is no cloud fallback any more: this app answers from the
-    # models on this machine or not at all. So when Ollama isn't
-    # reachable, say so plainly instead of letting the request fail
-    # somewhere further down with a connection error the user cannot act
-    # on. Ollama not running is by far the most common cause, and it is
-    # the one thing they can actually fix.
+    # Local first, always. Prompts stay on this machine whenever that is
+    # possible at all, and Gemini is only reached for when it isn't -
+    # Ollama not started, still loading, or the whole machine off and the
+    # app running somewhere else.
+    #
+    # The reply is tagged so the UI can say which one answered. Falling
+    # back silently would mean a user who chose local for privacy could
+    # have a prompt leave the device without ever being told.
     fell_back_to_cloud = False
     if provider == "ollama" and not ollama_reachable():
+        if gemini.configured():
+            cloud_models = gemini.models()
+            if cloud_models:
+                provider = "gemini"
+                model = _best_cloud_model(mode, cloud_models)
+                fell_back_to_cloud = True
+
+    if provider == "ollama" and not ollama_reachable():
         def unavailable():
-            yield ("[The local AI isn't running, so there's nothing to "
-                   "answer with right now. Start Ollama and try again.]")
+            yield ("[The local AI isn't running and no cloud fallback is "
+                   "configured, so there's nothing to answer with. Start "
+                   "Ollama, or set GEMINI_API_KEY on the server.]")
         return streaming_response(unavailable())
 
     streamer = PROVIDER_STREAMERS[provider]

@@ -37,6 +37,7 @@ const BAY_META = {
 
 const PROVIDER_META = {
   ollama: { label: "RandomGenerals AI" },
+  gemini: { label: "Cloud" },
   imagegen: { label: "Image" },
 };
 
