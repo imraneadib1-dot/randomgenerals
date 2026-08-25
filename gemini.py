@@ -38,7 +38,7 @@ API_ROOT = "https://generativelanguage.googleapis.com/v1beta"
 # Fetched live and cached. A hardcoded list rots into 404s the moment
 # Google retires a model - which is exactly how the previous cloud
 # provider broke, so the same mistake is not repeated here.
-_models_cache = {"at": 0.0, "models": None}
+_models_cache = {"at": 0.0, "models": None, "error": ""}
 MODELS_TTL = 3600
 
 # Used only if the catalogue cannot be reached at all.
@@ -59,8 +59,22 @@ def configured():
     return bool(api_key())
 
 
+def last_error():
+    """Why the last catalogue fetch failed, or "" if it didn't. Read by
+    /api/health so a bad key is visible instead of being inferred."""
+    return _models_cache.get("error") or ""
+
+
 def models():
-    """Chat-capable Gemini models, fetched live and cached for an hour."""
+    """Chat-capable Gemini models, fetched live and cached for an hour.
+
+    A rejected key returns nothing rather than the fallback list. The
+    fallback exists for Google being unreachable - a network blip should
+    not empty the picker. Using it for an auth failure hides the failure:
+    the app looks configured, the picker looks populated, and the first
+    person to send a message gets the error instead. That happened, so
+    the two cases are now told apart.
+    """
     if not configured():
         return []
     now = time.time()
@@ -70,6 +84,18 @@ def models():
     try:
         r = requests.get(f"{API_ROOT}/models", params={"key": api_key()},
                          timeout=8)
+        if r.status_code in (401, 403):
+            detail = ""
+            try:
+                detail = (r.json().get("error", {}).get("message") or "")[:200]
+            except ValueError:
+                pass
+            _models_cache.update({
+                "at": now, "models": [],
+                "error": f"Google rejected the key ({r.status_code}). "
+                         f"{detail}",
+            })
+            return []
         r.raise_for_status()
         found = []
         for m in r.json().get("models", []):
@@ -81,10 +107,15 @@ def models():
                 continue
             found.append(name)
         out = sorted(set(found)) or FALLBACK_MODELS
-    except requests.exceptions.RequestException:
+        _models_cache.update({"at": now, "models": out, "error": ""})
+        return out
+    except requests.exceptions.RequestException as e:
+        # Unreachable, not rejected - serve the last good list so a blip
+        # does not empty the picker, and retry on the next call.
         out = cached["models"] or FALLBACK_MODELS
-    _models_cache.update({"at": now, "models": out})
-    return out
+        _models_cache.update({"at": now, "models": out,
+                              "error": f"could not reach Google: {e}"})
+        return out
 
 
 def _to_contents(history):

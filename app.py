@@ -1116,8 +1116,11 @@ def health():
     request would actually reach right now.
     """
     local = ollama_reachable()
-    cloud = gemini.configured()
-    return jsonify({
+    # A key being present is not the same as a key that works. Asking
+    # whether any model came back is what distinguishes "configured" from
+    # "actually usable" - a rejected key looks like the former.
+    cloud = bool(gemini.configured() and gemini.models())
+    payload = {
         "status": "ok",
         "time": now_iso(),
         "compute": {
@@ -1125,7 +1128,10 @@ def health():
             "cloud_models": cloud,
         },
         "mode": "local" if local else ("cloud" if cloud else "unavailable"),
-    })
+    }
+    if gemini.configured() and not cloud:
+        payload["cloud_problem"] = gemini.last_error()
+    return jsonify(payload)
 
 
 @app.route("/api/plans", methods=["GET"])
