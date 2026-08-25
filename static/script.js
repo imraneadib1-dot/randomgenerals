@@ -1623,10 +1623,33 @@ async function changePlan(plan) {
           planProBtn.disabled = false;
           return;
         } catch (e) {
-          console.error("Paddle overlay failed, falling back:", e);
+          console.error("Paddle overlay failed:", e);
+          setError(
+            planError,
+            "The payment window could not open. Reload the page and try " +
+              "again — if it keeps happening, check that the browser or an " +
+              "ad blocker isn't blocking cdn.paddle.com.",
+          );
+          planProBtn.disabled = false;
+          return;
         }
       }
-      window.location.href = data.checkout_url;
+      // No transaction id means this isn't a Paddle URL - a Stripe
+      // checkout link, which really is a page to send the browser to.
+      if (!txn) {
+        window.location.href = data.checkout_url;
+        return;
+      }
+      // Paddle URL, but Paddle.js never initialised. Navigating there
+      // does eventually work - the reloaded page starts Paddle.js, which
+      // opens the overlay from ?_ptxn - but it looks exactly like the app
+      // resetting itself for no reason, so say what is happening instead
+      // of doing it silently.
+      setError(
+        planError,
+        "The payment window isn't ready yet. Reload the page and try again.",
+      );
+      planProBtn.disabled = false;
       return;
     } else if (res.ok) {
       currentUser = data.user;
