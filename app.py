@@ -13,18 +13,26 @@ from typing import Any, TYPE_CHECKING
 import requests
 from werkzeug.security import generate_password_hash, check_password_hash
 
-import db  # SQLite persistence - see db.py for the schema and why
-import websearch  # keyless web search - see websearch.py for how/limits
-import attachments  # upload handling/text extraction - see attachments.py
-import imagegen  # local text-to-image generation - see imagegen.py
-import codeexec  # sandboxed Python execution - see codeexec.py
-import moderation  # content filtering - see moderation.py
-import features  # per-tier feature flags - see features.py
-import tools  # model-callable tools - see tools.py
-import paddle_billing  # subscriptions where Stripe can't reach - see paddle_billing.py
+# Reads .env in the project root. This has to happen before the local
+# imports below, not merely before the os.environ.get() calls further
+# down this file: imagegen and paddle_billing both read their keys at
+# module level, so importing them first meant they ran against an
+# environment .env had not been applied to yet.
+#
+# The symptom is quiet and confusing - the key is correct, a standalone
+# check confirms it, and the app still behaves as though nothing is
+# configured. GEMINI_API_KEY could never have worked either.
+load_dotenv()
 
-load_dotenv()  # reads .env in the project root - must run before any
-# os.environ.get() below, or values set there are missed
+import db  # noqa: E402  SQLite persistence - see db.py for the schema and why
+import websearch  # noqa: E402  keyless web search - see websearch.py
+import attachments  # noqa: E402  upload handling/text extraction
+import imagegen  # noqa: E402  local text-to-image generation
+import codeexec  # noqa: E402  sandboxed Python execution - see codeexec.py
+import moderation  # noqa: E402  content filtering - see moderation.py
+import features  # noqa: E402  per-tier feature flags - see features.py
+import tools  # noqa: E402  model-callable tools - see tools.py
+import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
 
 # The one AI this app talks to: Ollama, running locally (llama3.2 pulled
 # already). Runs fully on this machine - no cloud call, no API key - but

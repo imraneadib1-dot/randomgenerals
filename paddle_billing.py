@@ -35,15 +35,40 @@ import time
 
 import requests
 
-API_KEY = os.environ.get("PADDLE_API_KEY", "")
-PRICE_ID_PRO = os.environ.get("PADDLE_PRICE_ID_PRO", "")
-WEBHOOK_SECRET = os.environ.get("PADDLE_WEBHOOK_SECRET", "")
-ENV = os.environ.get("PADDLE_ENV", "sandbox").strip().lower()
+# Config is read at call time, never captured at import.
+#
+# Reading it at import binds whatever the environment happened to be at
+# the moment this module was first imported, which makes correctness
+# depend on load_dotenv() having already run - a dependency that is
+# invisible, easy to break by reordering imports, and fails by looking
+# exactly like "no keys configured" while the keys sit correctly in
+# .env. That bug already happened here once. Functions cost nothing and
+# cannot be got wrong.
+def _env(name, default=""):
+    return os.environ.get(name, default)
 
-# Two completely separate hosts. Pointing production keys at the sandbox
-# host fails as an auth error rather than anything that explains itself,
-# so this is worth getting right up front.
-API_BASE = ("https://api.paddle.com" if ENV == "production"
+
+def api_key():
+    return _env("PADDLE_API_KEY").strip()
+
+
+def price_id_pro():
+    return _env("PADDLE_PRICE_ID_PRO").strip()
+
+
+def webhook_secret():
+    return _env("PADDLE_WEBHOOK_SECRET").strip()
+
+
+def environment():
+    return _env("PADDLE_ENV", "sandbox").strip().lower()
+
+
+def api_base():
+    """Sandbox and production are two entirely separate systems, with
+    separate keys, prices and dashboards. Pointing one's keys at the
+    other's host is an auth error that names neither."""
+    return ("https://api.paddle.com" if environment() == "production"
             else "https://sandbox-api.paddle.com")
 
 # Signatures are rejected if the timestamp is too old, so a captured
@@ -70,24 +95,24 @@ def configured():
     """Can checkouts be created? Webhooks are checked separately, since
     checkout works without them - it just means nobody is ever upgraded,
     which is the failure that looks like the payment vanished."""
-    return not (_is_placeholder(API_KEY) or _is_placeholder(PRICE_ID_PRO))
+    return not (_is_placeholder(api_key()) or _is_placeholder(price_id_pro()))
 
 
 def webhook_ready():
-    return configured() and not _is_placeholder(WEBHOOK_SECRET)
+    return configured() and not _is_placeholder(webhook_secret())
 
 
 def config_problem():
     """A specific sentence about what is missing. 'Not configured' sends
     whoever is debugging to read the source; naming the variable does
     not."""
-    if _is_placeholder(API_KEY):
+    if _is_placeholder(api_key()):
         return ("PADDLE_API_KEY is missing or a placeholder. Create one in "
                 "Paddle > Developer tools > Authentication.")
-    if _is_placeholder(PRICE_ID_PRO):
+    if _is_placeholder(price_id_pro()):
         return ("PADDLE_PRICE_ID_PRO is missing or a placeholder. It is the "
                 "price id from your Pro product, and starts with 'pri_'.")
-    if _is_placeholder(WEBHOOK_SECRET):
+    if _is_placeholder(webhook_secret()):
         return ("PADDLE_WEBHOOK_SECRET is missing, so payments would "
                 "succeed without anyone being upgraded. Create a "
                 "notification destination in Paddle > Developer tools.")
@@ -96,7 +121,7 @@ def config_problem():
 
 def _headers():
     return {
-        "Authorization": f"Bearer {API_KEY}",
+        "Authorization": f"Bearer {api_key()}",
         "Content-Type": "application/json",
         # Pinning the API version means Paddle changing their default
         # cannot silently change the response shape this code parses.
@@ -121,7 +146,7 @@ def create_checkout(user_id, email, return_url):
         return None, config_problem()
 
     body = {
-        "items": [{"price_id": PRICE_ID_PRO, "quantity": 1}],
+        "items": [{"price_id": price_id_pro(), "quantity": 1}],
         "custom_data": {"user_id": str(user_id)},
         "checkout": {"url": return_url},
     }
@@ -129,7 +154,7 @@ def create_checkout(user_id, email, return_url):
         body["customer"] = {"email": email}
 
     try:
-        r = requests.post(f"{API_BASE}/transactions", headers=_headers(),
+        r = requests.post(f"{api_base()}/transactions", headers=_headers(),
                           json=body, timeout=20)
     except requests.exceptions.RequestException as e:
         return None, f"Could not reach Paddle: {e}"
@@ -170,7 +195,7 @@ def verify_webhook(raw_body, signature_header):
     Paddle sends: Paddle-Signature: ts=<unix>;h1=<hex hmac>
     where the HMAC is over the exact bytes "<ts>:<raw body>".
     """
-    if _is_placeholder(WEBHOOK_SECRET):
+    if _is_placeholder(webhook_secret()):
         return False, "PADDLE_WEBHOOK_SECRET is not set"
     if not signature_header:
         return False, "no Paddle-Signature header"
@@ -195,7 +220,7 @@ def verify_webhook(raw_body, signature_header):
     if isinstance(raw_body, str):
         raw_body = raw_body.encode("utf-8")
     signed = ts.encode("ascii") + b":" + raw_body
-    expected = hmac.new(WEBHOOK_SECRET.encode("utf-8"), signed,
+    expected = hmac.new(webhook_secret().encode("utf-8"), signed,
                         hashlib.sha256).hexdigest()
 
     # compare_digest, not ==, so the comparison takes the same time
