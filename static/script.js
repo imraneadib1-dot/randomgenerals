@@ -37,7 +37,6 @@ const BAY_META = {
 
 const PROVIDER_META = {
   ollama: { label: "RandomGenerals AI" },
-  groq: { label: "Groq" },
   imagegen: { label: "Image" },
 };
 
@@ -394,46 +393,13 @@ function showEmptyState() {
 // slower model made every-day use feel broken. qwen2.5 is still there
 // in the dropdown for anyone who wants to pick it on purpose and knows
 // they're paying a one-time load cost for it.
-// OpenAI's open-weight models, served free through Groq. gpt-oss-120b
-// is roughly seventeen times the size of the 7B coder that fits on this
-// machine's GPU, and measured at half a second for a complete function -
-// so for code it is both better and faster than running locally, which
-// is not the tradeoff local-vs-cloud usually offers.
-const isOpenAIModel = (m) => /gpt-oss/i.test(m);
-
 function preferredModel(models, bay) {
   if (!models.length) return null;
   const isCoder = (m) => /coder|code/i.test(m);
-  if (bay === "code") {
-    // Biggest OpenAI model first, then the smaller one, then whatever
-    // coding-tuned local model exists. The fallback chain matters
-    // because this same function runs for the local provider too, where
-    // no gpt-oss model is present.
-    return (
-      models.find((m) => /gpt-oss-120b/i.test(m)) ||
-      models.find(isOpenAIModel) ||
-      models.find(isCoder) ||
-      models[0]
-    );
-  }
+  if (bay === "code") return models.find(isCoder) || models[0];
 
   const isVision = (m) => /llava|vision|moondream|minicpm-v|bakllava/i.test(m);
   const isGeneral = (m) => !isCoder(m) && !isVision(m);
-
-  // The speed-over-accuracy default above is a VRAM argument, and it
-  // only applies locally: one multi-GB model fits at a time, so picking
-  // the bigger one costs a ~39s reload. Nothing is loaded on a cloud
-  // channel, every model answers equally fast, and the biggest one is
-  // simply better - so prefer it there. Without this the list order
-  // decided it, which meant chat opened on allam-2-7b, a model
-  // specialised for Arabic, for everyone.
-  if (models.some(isOpenAIModel)) {
-    return (
-      models.find((m) => /gpt-oss-120b/i.test(m)) ||
-      models.find(isOpenAIModel) ||
-      models[0]
-    );
-  }
 
   return (
     models.find((m) => /llama3\.2/i.test(m)) ||
@@ -449,16 +415,12 @@ function applyPreferredModel(bay) {
   if (preferred) modelSelect.value = preferred;
 }
 
-// Which channel a bay should open on. Only the Code bay expresses a
-// preference, and only when Groq actually has an OpenAI model to offer -
-// otherwise this returns null and whatever channel the user was on is
-// left alone, including when they picked it deliberately.
-function preferredProviderFor(bay) {
-  if (bay !== "code") return null;
-  const groq = providers.find(
-    (p) => p.id === "groq" && p.available && p.models.some(isOpenAIModel),
-  );
-  return groq ? "groq" : null;
+// With a single channel there is nothing to choose between, so this
+// always declines to express a preference. Kept rather than deleted
+// because selectBay() and loadProviders() both consult it, and it is
+// where a preference would go if another channel is ever added.
+function preferredProviderFor(_bay) {
+  return null;
 }
 
 function selectBay(bay) {

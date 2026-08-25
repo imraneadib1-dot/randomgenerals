@@ -31,7 +31,6 @@ import imagegen  # noqa: E402  local text-to-image generation
 import codeexec  # noqa: E402  sandboxed Python execution - see codeexec.py
 import moderation  # noqa: E402  content filtering - see moderation.py
 import features  # noqa: E402  per-tier feature flags - see features.py
-import tools  # noqa: E402  model-callable tools - see tools.py
 import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
 
 # The one AI this app talks to: Ollama, running locally (llama3.2 pulled
@@ -41,59 +40,6 @@ import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
 # working code. brain/ is untouched on disk; this app just isn't wired to
 # it any more.
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-
-# Groq - optional cloud fallback, for running where there's no GPU.
-# Free tier, no credit card. Only offered when a key is present, so a
-# purely local install behaves exactly as before.
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-GROQ_URL = "https://api.groq.com/openai/v1"
-
-# Groq retires models fairly often - a hardcoded list here silently
-# rots into 404s at the moment someone tries to chat (which is exactly
-# what happened with llama-3.3-70b-versatile). So the list is fetched
-# live and cached, with these as a last-resort fallback if the API is
-# unreachable at startup.
-GROQ_FALLBACK_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
-
-# Model families that exist on Groq but make no sense in a chat picker:
-# speech-to-text, text-to-speech, and safety classifiers.
-_GROQ_NON_CHAT = ("whisper", "prompt-guard", "orpheus", "safeguard", "tts")
-
-_groq_models_cache = {"at": 0.0, "models": None}
-GROQ_MODELS_TTL = 3600  # re-check hourly; the catalogue changes rarely
-
-
-def groq_configured():
-    return bool(GROQ_API_KEY)
-
-
-def groq_models():
-    """Chat-capable Groq models, fetched live and cached for an hour."""
-    if not GROQ_API_KEY:
-        return []
-    now = datetime.datetime.now().timestamp()
-    cached = _groq_models_cache
-    if cached["models"] is not None and now - cached["at"] < GROQ_MODELS_TTL:
-        return cached["models"]
-    try:
-        r = requests.get(
-            f"{GROQ_URL}/models",
-            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
-            timeout=8,
-        )
-        r.raise_for_status()
-        ids = [d["id"] for d in r.json().get("data", [])]
-        models = sorted(
-            i for i in ids
-            if not any(bad in i.lower() for bad in _GROQ_NON_CHAT)
-        )
-        models = models or GROQ_FALLBACK_MODELS
-    except requests.exceptions.RequestException:
-        # Serve the last good list if we have one, rather than an empty
-        # picker, and retry on the next call.
-        models = cached["models"] or GROQ_FALLBACK_MODELS
-    _groq_models_cache.update({"at": now, "models": models})
-    return models
 
 # Billing - real subscription charges via Stripe Checkout, when a Stripe
 # account is configured. Without keys, upgrading stays the old mock
@@ -1162,20 +1108,18 @@ def health():
 
     Deliberately cheap: no database write, no model call. It's polled by
     the deployment's health check and by the UI's status indicator, so
-    it has to stay fast enough to call often. `ollama` reports whether
-    local inference is available, which is what tells a cloud
-    deployment it must use Groq.
+    it has to stay fast enough to call often.
+
+    There is one source of answers now - Ollama on this machine - so
+    "can it answer at all" and "is Ollama up" are the same question.
     """
     return jsonify({
         "status": "ok",
         "time": now_iso(),
         "compute": {
             "local_models": ollama_reachable(),
-            "cloud_models": groq_configured(),
         },
-        # Which brain a request would actually reach right now.
-        "mode": "local" if ollama_reachable()
-                else ("cloud" if groq_configured() else "unavailable"),
+        "mode": "local" if ollama_reachable() else "unavailable",
     })
 
 
@@ -1280,23 +1224,11 @@ def get_credits():
 # ----------------------------------------------------------------------
 @app.route("/api/providers", methods=["GET"])
 def list_providers():
-    providers = [ollama_provider()]
-    # Only advertised when a key exists, so the picker never offers a
-    # channel that will immediately fail.
-    if groq_configured():
-        providers.append({
-            "id": "groq",
-            "label": "Cloud",
-            "available": True,
-            "models": groq_models(),
-            "model_info": [describe_model(m) for m in groq_models()],
-            "note": "Always available. Runs off-device, so prompts leave "
-                    "this machine.",
-        })
+    # One channel: the models on this machine. The cloud provider was
+    # removed deliberately, so prompts never leave the device.
     return jsonify({
-        "providers": providers,
+        "providers": [ollama_provider()],
         "gemini_configured": imagegen.gemini_configured(),
-        "groq_configured": groq_configured(),
     })
 
 
@@ -1315,8 +1247,6 @@ MODEL_DISPLAY_NAMES = {
     "openai/gpt-oss-120b": ("Max", "Strongest overall - large cloud model"),
     "openai/gpt-oss-20b": ("Swift Cloud", "Fast cloud replies"),
     "qwen/qwen3.6-27b": ("Core Cloud", "Balanced cloud model"),
-    "groq/compound": ("Agent", "Multi-step reasoning with tools"),
-    "groq/compound-mini": ("Agent Mini", "Lighter multi-step reasoning"),
     "allam-2-7b": ("Arabic", "Tuned for Arabic language"),
 }
 
@@ -1355,22 +1285,6 @@ def ollama_reachable():
         ok = False
     _ollama_health.update({"at": now, "ok": ok})
     return ok
-
-
-def _best_cloud_model(mode, available):
-    """Pick the cloud model that best matches what the local one was for.
-
-    Preference order per bay, first match wins; falls back to whatever
-    the account is allowed to run so this can never return nothing.
-    """
-    preferred = {
-        "code": ["openai/gpt-oss-120b", "qwen/qwen3.6-27b", "openai/gpt-oss-20b"],
-        "chat": ["openai/gpt-oss-120b", "qwen/qwen3.6-27b", "openai/gpt-oss-20b"],
-    }.get(mode, ["openai/gpt-oss-20b", "openai/gpt-oss-120b"])
-    for m in preferred:
-        if m in available:
-            return m
-    return available[0]
 
 
 def ollama_provider():
@@ -1530,139 +1444,8 @@ def tool_event(payload):
     return "\x1e" + json.dumps(payload, separators=(",", ":")) + "\x1e"
 
 
-def stream_groq(model, history, options=None, images=None, usage=None,
-                tool_specs=None):
-    """Stream from Groq's OpenAI-compatible API.
-
-    Exists so the app can run somewhere without a GPU. Ollama needs
-    ~6GB of VRAM; every free always-on host has none, so a hosted
-    deployment has to get its tokens from somewhere else. Groq's free
-    tier needs no credit card and serves Llama 3.3 70B - a considerably
-    stronger model than the 7B ones that fit on a consumer GPU.
-
-    The trade-off is explicit and worth stating: prompts leave the
-    machine. Ollama stays the default precisely because it doesn't.
-    """
-    if images:
-        # Vision would need the multimodal message format, and the
-        # models wired up here are text-only. Silently dropping the
-        # image would make the model answer about a picture it can't
-        # see, which is worse than saying so.
-        yield ("[This model can't see images - switch to the local "
-               "vision model, or ask without the attachment.]")
-        return
-
-    messages = [{"role": m["role"], "content": m["content"]}
-                for m in history]
-
-    # One pass per round of tool calls, plus a final pass with no tools
-    # offered. That last one is what guarantees termination: with nothing
-    # to call, the model has to answer.
-    for round_index in range(tools.MAX_ROUNDS + 1):
-        body = {"model": model, "messages": messages, "stream": True}
-        # Ollama and OpenAI-style APIs name these differently; translate
-        # rather than leaking Ollama's vocabulary into the request.
-        if options:
-            if "num_predict" in options:
-                body["max_tokens"] = options["num_predict"]
-            if "temperature" in options:
-                body["temperature"] = options["temperature"]
-            if "top_p" in options:
-                body["top_p"] = options["top_p"]
-        if tool_specs and round_index < tools.MAX_ROUNDS:
-            body["tools"] = tool_specs
-            body["tool_choice"] = "auto"
-
-        # Tool calls arrive spread across deltas: the first carries the id
-        # and name, then arguments dribble in as JSON fragments that have
-        # to be concatenated before they parse. Keyed by the index the
-        # API supplies, because several tools can be called at once and
-        # their fragments interleave.
-        calls = {}
-        said = []
-        try:
-            with requests.post(
-                f"{GROQ_URL}/chat/completions",
-                headers={"Authorization": f"Bearer {GROQ_API_KEY}",
-                         "Content-Type": "application/json"},
-                json=body, stream=True, timeout=120,
-            ) as r:
-                if r.status_code == 429:
-                    yield ("[Groq's free daily limit is used up. Try the "
-                           "local model, or wait for the quota to reset.]")
-                    return
-                r.raise_for_status()
-                for raw in r.iter_lines():
-                    if not raw:
-                        continue
-                    line = raw.decode("utf-8")
-                    if not line.startswith("data: "):
-                        continue
-                    payload = line[6:]
-                    if payload.strip() == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(payload)
-                    except json.JSONDecodeError:
-                        continue
-                    # Usage arrives on the final chunk when present; it's
-                    # what credit charging is based on.
-                    if chunk.get("usage") and usage is not None:
-                        usage["eval_count"] = \
-                            chunk["usage"].get("completion_tokens")
-                    for choice in chunk.get("choices", []):
-                        delta = choice.get("delta", {})
-                        piece = delta.get("content")
-                        if piece:
-                            said.append(piece)
-                            yield piece
-                        for tc in delta.get("tool_calls") or []:
-                            slot = calls.setdefault(
-                                tc.get("index", 0),
-                                {"id": "", "name": "", "args": ""})
-                            if tc.get("id"):
-                                slot["id"] = tc["id"]
-                            fn = tc.get("function") or {}
-                            if fn.get("name"):
-                                slot["name"] = fn["name"]
-                            if fn.get("arguments"):
-                                slot["args"] += fn["arguments"]
-        except requests.exceptions.RequestException as e:
-            yield f"[Couldn't reach Groq: {e}]"
-            return
-
-        if not calls:
-            return
-
-        ordered = [calls[k] for k in sorted(calls)]
-        # The assistant turn that requested the tools has to go back into
-        # the history verbatim, or the tool results that follow it have
-        # nothing to attach to and the API rejects the next request.
-        messages.append({
-            "role": "assistant",
-            "content": "".join(said) or None,
-            "tool_calls": [
-                {"id": c["id"] or f"call_{i}", "type": "function",
-                 "function": {"name": c["name"], "arguments": c["args"] or "{}"}}
-                for i, c in enumerate(ordered)
-            ],
-        })
-
-        for i, c in enumerate(ordered):
-            yield tool_event({"tool": c["name"], "status": "start"})
-            result = tools.dispatch(c["name"], c["args"])
-            yield tool_event({"tool": c["name"], "status": "done",
-                              "display": result.get("display")})
-            messages.append({
-                "role": "tool",
-                "tool_call_id": c["id"] or f"call_{i}",
-                "content": result["text"],
-            })
-
-
 PROVIDER_STREAMERS = {
     "ollama": stream_ollama,
-    "groq": stream_groq,
 }
 
 
@@ -2026,23 +1809,18 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
         for m in thread["messages"] if m["type"] == "text"
     ]
 
-    # Automatic failover to the cloud. If the local models aren't
-    # answering - Ollama not started, still loading a model, GPU busy -
-    # the request quietly goes to Groq instead of failing in the user's
-    # face. They get an answer; a note is attached so it's not silent
-    # about which brain replied.
-    #
-    # Scope worth being clear about: this covers Ollama being down while
-    # the app is up. It cannot cover the machine being off, because the
-    # app is on the same machine - that needs off-device hosting.
+    # There is no cloud fallback any more: this app answers from the
+    # models on this machine or not at all. So when Ollama isn't
+    # reachable, say so plainly instead of letting the request fail
+    # somewhere further down with a connection error the user cannot act
+    # on. Ollama not running is by far the most common cause, and it is
+    # the one thing they can actually fix.
     fell_back_to_cloud = False
     if provider == "ollama" and not ollama_reachable():
-        if groq_configured():
-            cloud_models = groq_models()
-            if cloud_models:
-                provider = "groq"
-                model = _best_cloud_model(mode, cloud_models)
-                fell_back_to_cloud = True
+        def unavailable():
+            yield ("[The local AI isn't running, so there's nothing to "
+                   "answer with right now. Start Ollama and try again.]")
+        return streaming_response(unavailable())
 
     streamer = PROVIDER_STREAMERS[provider]
     # num_ctx matters more here than it looks. Without it, Ollama defaults
@@ -2073,23 +1851,14 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     usage = {}
     stream_kwargs["usage"] = usage
 
-    # Let the model reach for tools itself. Only wired up for the cloud
-    # provider so far: Ollama's tool support varies by model and a small
-    # local model that hallucinates a tool call produces a worse answer
-    # than one that just talks.
-    #
-    # Web search is skipped when the frontend already ran one, since its
-    # results are in the prompt and searching again would be a slower way
-    # to learn the same thing. It's also skipped in code mode, where the
-    # sandbox is what matters and searching mid-answer mostly derails it.
-    if provider == "groq":
-        specs = tools.available_specs(
-            allow_web=not web_results and mode != "code",
-            allow_code=True,
-            allow_images=mode != "code",
-        )
-        if specs:
-            stream_kwargs["tool_specs"] = specs
+    # Model-driven tool calling is not wired up. It only ever ran on the
+    # cloud provider, which has been removed - Ollama's tool support
+    # varies by model, and a small local model that hallucinates a tool
+    # call answers worse than one that just talks. tools.py is kept
+    # because the hard parts (schemas, dispatch that never raises, size
+    # caps) are done and tested, ready if a provider that supports it
+    # comes back. Web search, the code sandbox and image generation all
+    # still work; the user drives them from the UI as before.
 
     def generate():
         full_reply = ""

@@ -2,9 +2,12 @@
 #
 # Free plan, so: 512MB RAM, no GPU, no persistent disk, and the service
 # sleeps after ~15 minutes with no traffic (the next request wakes it,
-# taking roughly a minute). Chat therefore comes from Groq rather than
-# Ollama; app.py already falls back on its own when no local models
-# answer, so no code change is needed for that.
+# taking roughly a minute).
+#
+# NOTE: this app answers only from Ollama on the machine it runs on,
+# and Render's free plan has no GPU and no Ollama - so a deployment
+# here serves the site but cannot answer prompts. Kept for the day
+# there is a host with local inference, or a cloud provider again.
 services:
   - type: web
     name: randomgenerals
@@ -17,7 +20,7 @@ services:
     # which is thread-safe within one process but would become one
     # connection per process if workers were scaled up. Threads also suit
     # the workload: replies stream token by token via SSE, so a request
-    # spends almost all its life waiting on Groq rather than on CPU, and
+    # spends almost all its life waiting on the model rather than on CPU,
     # sync workers would block every other visitor meanwhile.
     #
     # The long timeout exists for the same reason: a streamed reply is
@@ -61,7 +64,3 @@ services:
       # silently signed out.
       - key: SECRET_KEY
         generateValue: true
-      # Set by hand in the Render dashboard (Environment -> Add secret),
-      # never in this file, since this file is public in the repo.
-      - key: GROQ_API_KEY
-        sync: false

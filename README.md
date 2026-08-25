@@ -7,28 +7,25 @@ Live at **[randomgenerals.com](https://randomgenerals.com)**.
 
 ## Two ways this runs
 
-**Locally**, on a machine with a GPU: language models run on-device
-through [Ollama](https://ollama.com), so prompts never leave the
-computer. `LOCAL_AI.md` has the full audit of what does and doesn't
-make outbound network calls.
+Language models run on-device through [Ollama](https://ollama.com), so
+prompts never leave the computer. `LOCAL_AI.md` has the full audit of
+what does and doesn't make outbound network calls.
 
-**Hosted**, on a CPU-only server: no GPU, so completions come from
-[Groq](https://groq.com)'s free tier instead. Same app, same features —
-only the place the tokens are generated changes.
-
-The app decides this per request rather than at startup. If Ollama stops
-answering — the laptop is asleep, or the process died — the next reply
-comes from the cloud automatically and is tagged as such in the UI, so a
-visitor never sees an error just because a machine went offline.
-`/api/health` reports which path is currently live.
+There is no cloud provider and no remote fallback: this is a deliberate
+constraint, not a missing feature. The consequence is equally
+deliberate — when Ollama isn't running, the app says so instead of
+quietly sending the prompt somewhere else. `/api/health` reports whether
+it can answer right now.
 
 ## Deploying
 
 `render.yaml` is a [Render](https://render.com) blueprint — free plan, no
 credit card. Point Render at this repo, and the only thing to fill in by
-hand is `GROQ_API_KEY` (free, no card, from
-[console.groq.com](https://console.groq.com)); everything else in the
-blueprint is set for you, including a generated `SECRET_KEY`.
+hand is `SECRET_KEY`, which the blueprint generates for you.
+
+Worth knowing before you do: Render's free plan has no GPU and no
+Ollama, so a deployment there serves the site but cannot answer
+prompts.
 
 ### Configuration
 
@@ -36,7 +33,6 @@ Set these as environment variables — never in the repo.
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `GROQ_API_KEY` | **yes**, when hosted | Cloud chat completions |
 | `SECRET_KEY` | **yes** | Signs session cookies |
 | `OLLAMA_URL` | no | Defaults to `http://localhost:11434` |
 | `DB_PATH` | no | Where SQLite lives |
