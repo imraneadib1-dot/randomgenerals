@@ -4,7 +4,12 @@ const BAY_META = {
   code: {
     eyebrow: "randomgenerals --ready",
     title: "Ask for code",
-    sub: "Ask for code or debug an error — answered locally by RandomGenerals AI, no cloud call.",
+    // Deliberately says nothing about where it runs. The Code bay now
+    // opens on the cloud channel when a stronger model is available
+    // there, so a fixed "no cloud call" line was simply untrue - and
+    // the composer hint under the input already names the live
+    // channel, which is the honest place for it.
+    sub: "Ask for code or debug an error — you get working code back, not a lecture.",
     placeholder: "Ask for code, debug an error…",
     hints:
       "<div><span>Enter</span> to send · <span>Shift+Enter</span> for a new line</div>" +
@@ -389,13 +394,47 @@ function showEmptyState() {
 // slower model made every-day use feel broken. qwen2.5 is still there
 // in the dropdown for anyone who wants to pick it on purpose and knows
 // they're paying a one-time load cost for it.
+// OpenAI's open-weight models, served free through Groq. gpt-oss-120b
+// is roughly seventeen times the size of the 7B coder that fits on this
+// machine's GPU, and measured at half a second for a complete function -
+// so for code it is both better and faster than running locally, which
+// is not the tradeoff local-vs-cloud usually offers.
+const isOpenAIModel = (m) => /gpt-oss/i.test(m);
+
 function preferredModel(models, bay) {
   if (!models.length) return null;
   const isCoder = (m) => /coder|code/i.test(m);
-  if (bay === "code") return models.find(isCoder) || models[0];
+  if (bay === "code") {
+    // Biggest OpenAI model first, then the smaller one, then whatever
+    // coding-tuned local model exists. The fallback chain matters
+    // because this same function runs for the local provider too, where
+    // no gpt-oss model is present.
+    return (
+      models.find((m) => /gpt-oss-120b/i.test(m)) ||
+      models.find(isOpenAIModel) ||
+      models.find(isCoder) ||
+      models[0]
+    );
+  }
 
   const isVision = (m) => /llava|vision|moondream|minicpm-v|bakllava/i.test(m);
   const isGeneral = (m) => !isCoder(m) && !isVision(m);
+
+  // The speed-over-accuracy default above is a VRAM argument, and it
+  // only applies locally: one multi-GB model fits at a time, so picking
+  // the bigger one costs a ~39s reload. Nothing is loaded on a cloud
+  // channel, every model answers equally fast, and the biggest one is
+  // simply better - so prefer it there. Without this the list order
+  // decided it, which meant chat opened on allam-2-7b, a model
+  // specialised for Arabic, for everyone.
+  if (models.some(isOpenAIModel)) {
+    return (
+      models.find((m) => /gpt-oss-120b/i.test(m)) ||
+      models.find(isOpenAIModel) ||
+      models[0]
+    );
+  }
+
   return (
     models.find((m) => /llama3\.2/i.test(m)) ||
     models.find(isGeneral) ||
@@ -410,9 +449,27 @@ function applyPreferredModel(bay) {
   if (preferred) modelSelect.value = preferred;
 }
 
+// Which channel a bay should open on. Only the Code bay expresses a
+// preference, and only when Groq actually has an OpenAI model to offer -
+// otherwise this returns null and whatever channel the user was on is
+// left alone, including when they picked it deliberately.
+function preferredProviderFor(bay) {
+  if (bay !== "code") return null;
+  const groq = providers.find(
+    (p) => p.id === "groq" && p.available && p.models.some(isOpenAIModel),
+  );
+  return groq ? "groq" : null;
+}
+
 function selectBay(bay) {
   if (!BAY_ORDER.includes(bay)) return;
   currentBay = bay;
+
+  // Set before selectProvider runs: it applies the preferred model for
+  // whatever currentBay currently is, so switching the channel first
+  // would pick a model for the bay being left behind.
+  const wanted = preferredProviderFor(bay);
+  if (wanted && wanted !== activeProvider) selectProvider(wanted);
 
   const idx = BAY_ORDER.indexOf(bay);
   bayPuck.style.transform = `translateX(${idx * 100}%)`;
@@ -542,7 +599,13 @@ async function loadProviders() {
     statusText.textContent = firstAvailable ? "Online" : "Offline";
 
     if (firstAvailable) {
-      selectProvider(firstAvailable.id);
+      // The bay's own preference wins over "first available in the
+      // list". Without this the Code bay only moved to the OpenAI model
+      // once the user clicked a bay tab - on a fresh load it opened on
+      // whichever channel happened to come first, which is the local
+      // one, so the default nobody changes was the weaker model.
+      const wanted = preferredProviderFor(currentBay);
+      selectProvider(wanted || firstAvailable.id);
     } else {
       modelSelect.innerHTML = "<option>no channel available</option>";
       modelSelect.disabled = true;
