@@ -1350,10 +1350,19 @@ p {
       rgba(18, 13, 10, 0.78) 34%,
       rgba(18, 13, 10, 0.42) 62%,
       rgba(18, 13, 10, 0.30) 100%),
+    /* Near-opaque at the very top, easing off over the first third.
+       The clip opens on bright sky and the hero above it ends dark, so
+       masking alone was not enough - the two tones met at a line and the
+       eye read that as a join no matter how soft the alpha ramp was.
+       Starting this section dark and letting the sky emerge downward is
+       what actually removes the seam. */
     linear-gradient(180deg,
-      rgba(18, 13, 10, 0.55) 0%,
-      rgba(18, 13, 10, 0.18) 45%,
-      rgba(18, 13, 10, 0.62) 100%);
+      rgba(18, 13, 10, 0.97) 0%,
+      rgba(18, 13, 10, 0.88) 12%,
+      rgba(18, 13, 10, 0.44) 34%,
+      rgba(18, 13, 10, 0.20) 55%,
+      rgba(18, 13, 10, 0.72) 92%,
+      rgba(18, 13, 10, 0.95) 100%);
 }
 
 /* Outside the scroll-driven state the section is a plain stacked list,
@@ -1366,5 +1375,134 @@ p {
 @media (prefers-reduced-motion: reduce) {
   .scene-video {
     display: none;
+  }
+}
+
+/* ================================================================ */
+/* Continuity                                                        */
+/*                                                                   */
+/* The page read as separate slabs: full-bleed footage ending on a   */
+/* hard horizontal line, then flat dark, then more footage. Each     */
+/* piece was fine and the joins were not.                            */
+/*                                                                   */
+/* Two fixes. The video edges are masked so footage dissolves into   */
+/* the page instead of being cut off by one, and the page itself     */
+/* carries a single continuous wash rather than one flat colour, so  */
+/* there is something for those edges to dissolve into.              */
+/* ================================================================ */
+
+/* A slow vertical wash over the whole document. Fixed, so it does not
+   scroll away and re-establish the banding it exists to remove. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(120% 80% at 72% 0%,
+      rgba(194, 103, 61, 0.10) 0%, transparent 58%),
+    radial-gradient(90% 60% at 12% 100%,
+      rgba(224, 164, 88, 0.07) 0%, transparent 60%);
+}
+
+/* Footage fades out at top and bottom rather than ending on a line.
+   mask-image is the right tool: it fades the video's own pixels, where
+   an overlay gradient would have to guess the colour underneath and
+   would be wrong the moment the page background changed. */
+.hero-video {
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    #000 14%,
+    #000 62%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    #000 14%,
+    #000 62%,
+    transparent 100%
+  );
+}
+
+.scene.scene-live .scene-video {
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    #000 12%,
+    #000 82%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    #000 12%,
+    #000 82%,
+    transparent 100%
+  );
+}
+
+/* The scrims fade at the BOTTOM only.
+   
+   Masking their top as well was self-defeating: the scrim is what darkens
+   the top of the clip so it does not meet the section above it as a bright
+   band, and fading it to transparent there removed exactly the darkening
+   that was doing the work. The top has to stay opaque; only the tail needs
+   to dissolve so the scrim does not outlive the footage it covers. */
+.hero-video-scrim,
+.scene.scene-live .scene-video-scrim {
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    #000 0%,
+    #000 74%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    180deg,
+    #000 0%,
+    #000 74%,
+    transparent 100%
+  );
+}
+
+/* Same for the drawn canvases underneath, which had the same hard edge. */
+.hero-canvas,
+.scene.scene-live .scene-canvas {
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    #000 10%,
+    #000 84%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    180deg,
+    transparent 0%,
+    #000 10%,
+    #000 84%,
+    transparent 100%
+  );
+}
+
+/* Sections were pinned tight against each other, so even without the
+   hard video edge the rhythm read as stacked panels. Consistent
+   breathing room between them does more for continuity than any
+   gradient. */
+.features,
+.how,
+.pricing,
+.faq {
+  padding-top: clamp(72px, 9vw, 128px);
+  padding-bottom: clamp(72px, 9vw, 128px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The section is a plain stacked list here, and masking a static
+     canvas at the top of it just clips the image. */
+  .scene.scene-live .scene-canvas {
+    -webkit-mask-image: none;
+    mask-image: none;
   }
 }

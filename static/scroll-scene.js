@@ -181,18 +181,54 @@
     return scrubbable;
   }
 
+  // Where the scroll says the playhead should be, and where it actually
+  // is. Kept apart so the video eases toward the target instead of
+  // jumping to it.
+  //
+  // Setting currentTime straight from the scroll position ties playback
+  // to the wheel's own granularity: a mouse wheel moves in coarse steps,
+  // so the figure advanced in visible jerks. Easing decouples the two -
+  // the scroll sets a destination and the video slides toward it, which
+  // is what makes it read as motion rather than as scrubbing.
+  let targetTime = 0;
+  let smoothing = false;
+
   function scrubTo(p) {
     if (!readyToScrub()) return;
     const dur = video.duration;
     if (!isFinite(dur) || dur <= 0) return;
-    const target = Math.max(0, Math.min(dur - END_TRIM, p * (dur - END_TRIM)));
-    if (Math.abs(video.currentTime - target) < FRAME) return;
-    try {
-      video.currentTime = target;
-    } catch (e) {
-      // A seek can throw while the element is still settling. The next
-      // scroll event will try again; there is nothing to recover here.
+    targetTime = Math.max(0, Math.min(dur - END_TRIM, p * (dur - END_TRIM)));
+    if (!smoothing) {
+      smoothing = true;
+      requestAnimationFrame(smoothStep);
     }
+  }
+
+  function smoothStep() {
+    if (!video || !scrubbable) {
+      smoothing = false;
+      return;
+    }
+    const delta = targetTime - video.currentTime;
+    if (Math.abs(delta) < FRAME) {
+      // Close enough that another seek would show nothing. Stop the loop
+      // rather than spin a frame callback forever.
+      smoothing = false;
+      return;
+    }
+    try {
+      // 0.18 is the compromise: high enough to keep up with a deliberate
+      // scroll, low enough that a single wheel notch glides instead of
+      // snapping. A large jump - a scrollbar drag, an anchor link - is
+      // covered by the cap, which stops the video crawling through
+      // seconds of footage to catch up.
+      const stepped = video.currentTime + delta * 0.18;
+      video.currentTime = Math.abs(delta) > 1.2 ? targetTime : stepped;
+    } catch (e) {
+      // A seek can throw while the element is still settling; the next
+      // frame tries again.
+    }
+    requestAnimationFrame(smoothStep);
   }
 
   // Skipped entirely under reduced motion: CSS hides the video there,
