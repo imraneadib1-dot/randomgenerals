@@ -170,15 +170,23 @@
                video sits over it, so a blocked or unsupported video
                leaves a finished-looking scene rather than a black box. -->
           <canvas class="scene-canvas" id="sceneCanvas" aria-hidden="true"></canvas>
+          <!-- Scrubbed by scroll position, not played. No autoplay and
+               no loop: scroll-scene.js sets currentTime from how far you
+               are through the section, so the figure walks as you scroll
+               and stops when you stop.
+
+               preload="auto" matters here in a way it does not for a
+               playing video - seeking into a range that has not been
+               buffered stalls, and the whole effect depends on the seek
+               landing immediately. The file is about 1MB, so fetching all
+               of it up front is cheap. -->
           <video
             class="scene-video"
             id="sceneVideo"
             src="{{ asset('video/scene.mp4') }}"
-            autoplay
             muted
-            loop
             playsinline
-            preload="metadata"
+            preload="auto"
             aria-hidden="true"
             tabindex="-1"
           ></video>

@@ -331,9 +331,8 @@ function setupBackgroundVideo(id) {
   document.addEventListener("visibilitychange", sync);
 }
 
-// Both background videos, same handling. The scene one matters more for
-// the off-screen pause: it sits three screens down, so without it the
-// browser decodes a looping clip nobody is looking at for as long as the
-// page is open.
+// Only the hero video plays on its own. The scene video is scrubbed by
+// scroll position in scroll-scene.js, so handing it to this would fight
+// that: this pauses and resumes on visibility, which would move the
+// playhead out from under the scrubbing.
 setupBackgroundVideo("heroVideo");
-setupBackgroundVideo("sceneVideo");

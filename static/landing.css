@@ -1313,11 +1313,19 @@ p {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  /* Zoomed and pushed left. Two reasons: the source is letterboxed, so a
-     plain cover fit shows the black bars at some aspect ratios; and the
-     generator's watermark sits in the top-right, which this pushes off
-     the edge. */
-  transform: scale(1.14) translate(-3%, 0);
+  /* Zoomed and pushed RIGHT, to carry the generator's top-right
+     watermark past the right edge of the frame.
+     
+     The direction matters and the first attempt had it backwards:
+     translating left moves the content left, which pulls more of its
+     right-hand side into view - the opposite of hiding it. Positive X
+     pushes that edge out.
+     
+     1.32 rather than 1.14 because the scale is what creates the overflow
+     the translate can spend: at 1.14 there was only ~7% of slack each
+     side and the watermark needs more than that. The zoom also crops the
+     letterboxing baked into the source. */
+  transform: scale(1.32) translate(7%, -1%);
   pointer-events: none;
   z-index: 0;
   opacity: 0;

@@ -145,11 +145,83 @@
     beats.forEach((b, n) => b.classList.toggle("is-active", n === i));
   }
 
+  /* ---- video scrubbing --------------------------------------------- */
+  //
+  // The figure walks as you scroll: currentTime is driven straight from
+  // scroll progress rather than the video playing itself.
+  //
+  // Three things this has to get right.
+  //
+  // Seeking into an unbuffered range stalls, and a stalled seek is a
+  // frozen frame that looks like the effect is broken. So nothing is
+  // scrubbed until enough of the file has arrived, and the video reveals
+  // itself only at that point.
+  //
+  // Assigning currentTime on every scroll event queues seeks faster than
+  // the decoder retires them, which stutters. A small threshold skips
+  // seeks too fine to see - below about a frame at 30fps there is nothing
+  // to show for the work.
+  //
+  // And the last frames are not always seekable: browsers clamp to just
+  // under duration, so mapping progress 1.0 to exactly duration can leave
+  // the seek permanently pending. The range is trimmed slightly short.
+  const video = document.getElementById("sceneVideo");
+  let scrubbable = false;
+  const FRAME = 1 / 30;
+  const END_TRIM = 0.05;
+
+  function readyToScrub() {
+    if (!video || scrubbable) return scrubbable;
+    // HAVE_FUTURE_DATA or better, and a buffered range that starts at
+    // the beginning - a mid-file range is no use for scrubbing from 0.
+    if (video.readyState >= 3 && video.buffered.length > 0) {
+      scrubbable = true;
+      video.classList.add("is-ready");
+    }
+    return scrubbable;
+  }
+
+  function scrubTo(p) {
+    if (!readyToScrub()) return;
+    const dur = video.duration;
+    if (!isFinite(dur) || dur <= 0) return;
+    const target = Math.max(0, Math.min(dur - END_TRIM, p * (dur - END_TRIM)));
+    if (Math.abs(video.currentTime - target) < FRAME) return;
+    try {
+      video.currentTime = target;
+    } catch (e) {
+      // A seek can throw while the element is still settling. The next
+      // scroll event will try again; there is nothing to recover here.
+    }
+  }
+
+  // Skipped entirely under reduced motion: CSS hides the video there,
+  // and fetching a megabyte to decode frames nobody will see is waste
+  // on top of ignoring the preference.
+  if (video && !reduced) {
+    // Reveal and first frame as soon as it is seekable, so the section
+    // does not sit on the drawn fallback waiting for a scroll.
+    video.addEventListener("loadeddata", () => {
+      if (readyToScrub()) scrubTo(progress());
+    });
+    video.addEventListener("canplaythrough", () => {
+      if (readyToScrub()) scrubTo(progress());
+    });
+    // Some browsers will not decode a frame until playback has been
+    // kicked once. Playing and immediately pausing gets a frame on
+    // screen without the video actually running.
+    const kick = video.play();
+    if (kick && typeof kick.then === "function") {
+      kick.then(() => video.pause()).catch(() => {});
+    }
+  }
+
   /* ---- loop -------------------------------------------------------- */
   function render() {
     const p = progress();
     paint(p);
     setBeat(p);
+    scrubTo(p);
   }
 
   if (reduced) {
