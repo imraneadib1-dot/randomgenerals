@@ -162,20 +162,33 @@ h3 {
 }
 
 /* ---- nav ---- */
+/* The bar spans the viewport; only its contents are held to the content
+   width. Constraining the bar itself drew a dark rounded slab across the
+   middle of the hero with the footage visible either side of it - the
+   most obvious "cut into panels" element on the page.
+   
+   The background is also much lighter than it was. At 0.72 it was an
+   opaque strip sitting on top of the video; the point of a blurred bar
+   is that what is behind it still reads through. */
 .nav {
   position: sticky;
   top: 0;
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 24px;
-  max-width: var(--maxw);
-  margin: 0 auto;
-  padding: 18px 24px;
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
-  background: rgba(5, 8, 15, 0.72);
-  border-bottom: 1px solid var(--line);
+  width: 100%;
+  padding: 18px max(24px, calc((100% - var(--maxw)) / 2 + 24px));
+  box-sizing: border-box;
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
+  backdrop-filter: blur(14px) saturate(120%);
+  background: linear-gradient(
+    180deg,
+    rgba(12, 9, 8, 0.62) 0%,
+    rgba(12, 9, 8, 0.34) 100%
+  );
+  border-bottom: 1px solid rgba(226, 190, 150, 0.07);
 }
 .nav-brand {
   display: flex;
@@ -250,8 +263,17 @@ section {
    lets the shapes be dragged while every button underneath still works. */
 .hero-canvas {
   position: absolute;
-  inset: 0;
-  width: 100%;
+  /* Full-bleed, matching .hero-video exactly. The video is masked at its
+     edges, so wherever it is transparent the canvas shows through - and
+     while the canvas was confined to the page's max-width container that
+     appeared as a brighter rectangle with hard vertical edges down both
+     sides of the hero. Two layers occupying different boxes is what read
+     as the page being cut into panels. */
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100vw;
   height: 100%;
   z-index: 0;
   pointer-events: none;
