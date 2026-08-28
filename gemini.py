@@ -232,7 +232,10 @@ def _stream_one(model, history, options=None, images=None, usage=None):
         with requests.post(
             url, params={"key": api_key(), "alt": "sse"},
             headers={"Content-Type": "application/json"},
-            json=body, stream=True, timeout=120,
+            # (connect, read). The read budget is per-chunk while
+            # streaming, not for the whole reply, so 45s is a long
+            # silence - and failing over beats waiting two minutes.
+            json=body, stream=True, timeout=(10, 45),
         ) as r:
             if r.status_code == 429:
                 yield ("[Google's free daily limit is used up. It resets "
@@ -284,7 +287,11 @@ def _stream_one(model, history, options=None, images=None, usage=None):
 # Retrying the same call against a different model is worth doing for
 # these and pointless for anything else.
 _TRANSIENT = ("high demand", "overloaded", "try again later",
-              "no longer available", "not found", "unavailable")
+              "no longer available", "not found", "unavailable",
+              # A read timeout is also "this model, right now" - it was
+              # not in this list, so a model that hung simply hung for
+              # the full timeout and never handed off to a faster one.
+              "timed out", "timeout", "read timed out")
 
 
 def _candidates(model):

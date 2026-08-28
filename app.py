@@ -1321,7 +1321,14 @@ def _best_cloud_model(mode, available):
     # an alias moves with Google instead of needing to be chased.
     # gemini.stream_chat retries the next one if the first is busy, so
     # this only has to name a sensible starting point.
-    for m in gemini.PREFERRED:
+    # Code gets the Pro model, chat gets Flash. Reasoning through an
+    # unfamiliar API or a subtle bug is where the stronger model earns
+    # its slower response, and a coding answer is read once and used -
+    # unlike chat, where waiting is the thing you notice. gemini.stream_chat
+    # falls back on its own if Pro is busy or over quota.
+    order = (["gemini-pro-latest"] + gemini.PREFERRED if mode == "code"
+             else gemini.PREFERRED)
+    for m in order:
         if m in available:
             return m
     for m in available:
@@ -1888,7 +1895,13 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # a chat conversation and keeps the whole model comfortably inside
     # VRAM, so it runs on GPU only.
     combined_options = dict(CODE_MODEL_OPTIONS) if mode == "code" else {}
-    combined_options["num_ctx"] = 8192
+    # 8192 for chat, 16384 for code. Measured on this GPU: 16384 stays
+    # entirely in VRAM, 32768 spills to CPU and collapses throughput.
+    # Code is where the extra context actually pays - a long file plus
+    # its error output does not fit in 8192, and what gets dropped is
+    # the top of the file, which is usually where the imports and the
+    # definitions being asked about live.
+    combined_options["num_ctx"] = 16384 if mode == "code" else 8192
     combined_options.update(STRENGTH_LEVELS[strength]["options"])
     if mode == "code":
         # Quick's 320-token cap and Deep's 2048 are both prose-sized -

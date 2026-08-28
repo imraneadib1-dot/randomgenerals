@@ -13,20 +13,20 @@
    re-themed.
    ============================================================ */
 :root {
-  --ink-0: #0a0709;
-  --ink-1: #110c11;
-  --ink-2: #1a131a;
-  --ink-3: #251c26;
-  --line: rgba(255, 170, 180, 0.13);
-  --line-bright: rgba(255, 120, 140, 0.34);
+  --ink-0: #0c0a0b;
+  --ink-1: #141011;
+  --ink-2: #1e181a;
+  --ink-3: #2b2226;
+  --line: rgba(226, 202, 190, 0.10);
+  --line-bright: rgba(212, 162, 108, 0.30);
 
-  --text: #f6eef0;
-  --text-soft: #c3b0b6;
-  --text-faint: #8b7b84;
+  --text: #f4efe9;
+  --text-soft: #b9aead;
+  --text-faint: #8a7f7c;
 
-  --accent: #ff2f52;
-  --accent-2: #ff7a3d;
-  --accent-glow: rgba(255, 47, 82, 0.24);
+  --accent: #c8324a;
+  --accent-2: #d4a24c;
+  --accent-glow: rgba(200, 50, 74, 0.18);
 
   --font-display: "Sora", sans-serif;
   --font-body: "Inter", sans-serif;
@@ -80,12 +80,12 @@ body {
   background:
     radial-gradient(
       620px 420px at 50% -8%,
-      rgba(255, 47, 82, 0.16),
+      rgba(200, 50, 74, 0.14),
       transparent 70%
     ),
     radial-gradient(
       520px 380px at 88% 8%,
-      rgba(255, 122, 61, 0.10),
+      rgba(212, 162, 108, 0.09),
       transparent 70%
     ),
     radial-gradient(
@@ -269,7 +269,7 @@ section {
   margin-bottom: 22px;
 }
 .grad {
-  background: linear-gradient(100deg, var(--accent), var(--accent-2) 52%, #ffc46b);
+  background: linear-gradient(100deg, var(--accent), var(--accent-2) 52%, #e6c68a);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -391,7 +391,7 @@ section {
 }
 .price-card-pro {
   border-color: var(--line-bright);
-  box-shadow: 0 0 0 1px rgba(255, 47, 82, 0.09), 0 20px 60px rgba(255, 47, 82, 0.09);
+  box-shadow: 0 0 0 1px rgba(200, 50, 74, 0.08), 0 20px 60px rgba(200, 50, 74, 0.08);
 }
 .price-badge {
   position: absolute;
@@ -506,7 +506,7 @@ section {
   border-bottom: 1px solid var(--line);
   background: radial-gradient(
     600px 200px at 50% 50%,
-    rgba(255, 47, 82, 0.09),
+    rgba(200, 50, 74, 0.08),
     transparent 70%
   );
 }
@@ -689,7 +689,7 @@ p {
 }
 .scroll-top:hover {
   transform: translateY(-2px);
-  background: rgba(255, 47, 82, 0.16);
+  background: rgba(200, 50, 74, 0.14);
 }
 
 /* ---- Hamburger + mobile drawer ---- */

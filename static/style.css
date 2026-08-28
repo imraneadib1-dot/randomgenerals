@@ -23,59 +23,59 @@
      re-pointing them re-themes the app without touching the ~2400
      lines of component rules underneath. "sky" now means the dark
      ground the panels float on, not a blue daytime sky. */
-  --sky-top: #0a0709;
-  --sky-mid: #0f0b0f;
-  --sky-bottom: #140e14;
+  --sky-top: #0c0a0b;
+  --sky-mid: #121011;
+  --sky-bottom: #191416;
 
   /* Panels are now light-on-dark rather than white glass: a barely-lit
      surface that still reads as raised against the ground behind it. */
   --surface: rgba(255, 255, 255, 0.04);
   --surface-raised: rgba(255, 255, 255, 0.07);
-  --panel: rgba(26, 19, 26, 0.74);
-  --border: rgba(255, 170, 180, 0.12);
-  --border-strong: rgba(255, 120, 140, 0.24);
+  --panel: rgba(30, 24, 26, 0.76);
+  --border: rgba(226, 202, 190, 0.10);
+  --border-strong: rgba(212, 162, 108, 0.26);
 
-  --ink: #f6eef0;
-  --ink-soft: #c3b0b6;
-  --ink-faint: #8b7b84;
+  --ink: #f4efe9;
+  --ink-soft: #b9aead;
+  --ink-faint: #8a7f7c;
 
   /* Text sitting directly on the ground (topbar), not on a panel. The
      drop shadow that kept white text legible over a bright sky is
      pointless over a dark one - dropped rather than left as a smudge. */
-  --ink-on-sky: #f6eef0;
-  --ink-on-sky-soft: rgba(246, 238, 240, 0.72);
+  --ink-on-sky: #f4efe9;
+  --ink-on-sky-soft: rgba(244, 239, 233, 0.72);
   --sky-text-shadow: none;
 
   /* Deck chrome fallback (= Code bay accent) */
-  --deck: #ff2f52;
-  --deck-soft: rgba(255, 47, 82, 0.16);
+  --deck: #c8324a;
+  --deck-soft: rgba(200, 50, 74, 0.15);
 
   /* Bay accents — one per workspace. Shifted onto the landing page's
      cyan/blue/violet ramp so switching bays still reads as a change of
      temperature, but all three now belong to the same family. */
-  --bay-code: #ff2f52;
-  --bay-code-soft: rgba(255, 47, 82, 0.16);
-  --bay-chat: #ff7a3d;
-  --bay-chat-soft: rgba(255, 122, 61, 0.16);
-  --bay-image: #ff5c8a;
-  --bay-image-soft: rgba(255, 92, 138, 0.16);
+  --bay-code: #c8324a;
+  --bay-code-soft: rgba(200, 50, 74, 0.15);
+  --bay-chat: #d4a24c;
+  --bay-chat-soft: rgba(212, 162, 108, 0.15);
+  --bay-image: #b0798f;
+  --bay-image-soft: rgba(176, 121, 143, 0.15);
 
   /* Channel colors — one per provider, never blended */
-  --c-ollama: #34d399;
-  --c-ollama-soft: rgba(52, 211, 153, 0.14);
+  --c-ollama: #6bbf9a;
+  --c-ollama-soft: rgba(107, 191, 154, 0.13);
   /* One per provider, and the name must match the provider id: the
      channel button sets --btn-color to var(--c-<id>) at runtime, so a
      provider with no token here renders with an undefined colour and
      the button comes out unstyled. That is what happened when the old
      provider's token was deleted and the new one's was not added. */
-  --c-gemini: #fbbf24;
-  --c-gemini-soft: rgba(251, 191, 36, 0.14);
-  --c-imagegen: #a78bfa;
+  --c-gemini: #d4a24c;
+  --c-gemini-soft: rgba(212, 162, 108, 0.13);
+  --c-imagegen: #a08bb0;
   --c-imagegen-soft: rgba(167, 139, 250, 0.14);
 
-  --user-bubble: rgba(255, 47, 82, 0.11);
+  --user-bubble: rgba(200, 50, 74, 0.10);
   --error: #f2778d;
-  --success: #34d399;
+  --success: #6bbf9a;
   --credit-low: #f2778d;
   --credit-mid: #e8b64c;
 
@@ -148,12 +148,12 @@ body {
   background-image:
     radial-gradient(
       1100px 480px at 12% -8%,
-      rgba(255, 47, 82, 0.11) 0%,
+      rgba(200, 50, 74, 0.10) 0%,
       transparent 62%
     ),
     radial-gradient(
       950px 440px at 92% -4%,
-      rgba(255, 122, 61, 0.08) 0%,
+      rgba(212, 162, 108, 0.07) 0%,
       transparent 60%
     ),
     linear-gradient(
@@ -219,12 +219,12 @@ html.time-night body {
   background:
     radial-gradient(
       32% 20% at 10% 18%,
-      rgba(255, 122, 61, 0.13),
+      rgba(212, 162, 108, 0.12),
       transparent 72%
     ),
     radial-gradient(
       26% 16% at 78% 10%,
-      rgba(255, 47, 82, 0.11),
+      rgba(200, 50, 74, 0.10),
       transparent 72%
     ),
     radial-gradient(
