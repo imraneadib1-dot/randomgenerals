@@ -1302,3 +1302,61 @@ p {
     display: none;
   }
 }
+
+/* ---- scene video -------------------------------------------------- */
+/* The filmed clip replaces the drawn dunes as the visible layer here, so
+   the page is footage throughout rather than half drawn and half filmed.
+   The canvas stays underneath purely as the fallback. */
+.scene.scene-live .scene-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Zoomed and pushed left. Two reasons: the source is letterboxed, so a
+     plain cover fit shows the black bars at some aspect ratios; and the
+     generator's watermark sits in the top-right, which this pushes off
+     the edge. */
+  transform: scale(1.14) translate(-3%, 0);
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0;
+  transition: opacity 0.9s ease;
+}
+
+.scene.scene-live .scene-video.is-ready {
+  opacity: 1;
+}
+
+/* Heavier on the left than the hero's, because the captions here are a
+   full paragraph sitting over a moving subject rather than a headline
+   over sky. */
+.scene.scene-live .scene-video-scrim {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    linear-gradient(90deg,
+      rgba(18, 13, 10, 0.92) 0%,
+      rgba(18, 13, 10, 0.78) 34%,
+      rgba(18, 13, 10, 0.42) 62%,
+      rgba(18, 13, 10, 0.30) 100%),
+    linear-gradient(180deg,
+      rgba(18, 13, 10, 0.55) 0%,
+      rgba(18, 13, 10, 0.18) 45%,
+      rgba(18, 13, 10, 0.62) 100%);
+}
+
+/* Outside the scroll-driven state the section is a plain stacked list,
+   where a pinned background video makes no sense. */
+.scene:not(.scene-live) .scene-video,
+.scene:not(.scene-live) .scene-video-scrim {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scene-video {
+    display: none;
+  }
+}

@@ -166,7 +166,23 @@
            reveal animation hit earlier today. -->
       <section class="scene" id="scene">
         <div class="scene-sticky">
+          <!-- Same layering as the hero: the canvas is the floor and the
+               video sits over it, so a blocked or unsupported video
+               leaves a finished-looking scene rather than a black box. -->
           <canvas class="scene-canvas" id="sceneCanvas" aria-hidden="true"></canvas>
+          <video
+            class="scene-video"
+            id="sceneVideo"
+            src="{{ asset('video/scene.mp4') }}"
+            autoplay
+            muted
+            loop
+            playsinline
+            preload="metadata"
+            aria-hidden="true"
+            tabindex="-1"
+          ></video>
+          <div class="scene-video-scrim" aria-hidden="true"></div>
           <div class="scene-beats">
             <article class="scene-beat" data-beat="0">
               <span class="eyebrow">01 — On your machine</span>

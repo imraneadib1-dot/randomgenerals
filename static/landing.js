@@ -267,8 +267,8 @@ document
    rejects rather than throwing. Unhandled, that is a console error and
    a permanently invisible video.
    ---------------------------------------------------------------- */
-(function heroVideo() {
-  const v = document.getElementById("heroVideo");
+function setupBackgroundVideo(id) {
+  const v = document.getElementById(id);
   if (!v) return;
 
   const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -276,12 +276,32 @@ document
 
   const reveal = () => v.classList.add("is-ready");
 
-  // playing fires on the first real frame. canplay is the fallback for
-  // browsers that seek differently, and both are one-shot.
-  v.addEventListener("playing", reveal, { once: true });
-  v.addEventListener("canplay", () => {
-    if (v.currentTime > 0 || !v.paused) reveal();
-  }, { once: true });
+  // Check the state before subscribing, not only after.
+  //
+  // The autoplay attribute starts playback during parsing, so by the
+  // time this runs the video is frequently already playing - which means
+  // `playing` and `canplay` have already fired and one-shot listeners
+  // wait forever for events that will not come again. The element then
+  // sits at opacity 0 permanently while decoding happily underneath:
+  // readyState 4, not paused, time advancing, and invisible.
+  //
+  // readyState >= 2 is HAVE_CURRENT_DATA - there is a frame to show.
+  function revealIfReady() {
+    if (v.readyState >= 2 || !v.paused || v.currentTime > 0) {
+      reveal();
+      return true;
+    }
+    return false;
+  }
+
+  if (!revealIfReady()) {
+    v.addEventListener("playing", reveal, { once: true });
+    v.addEventListener("canplay", reveal, { once: true });
+    v.addEventListener("loadeddata", reveal, { once: true });
+    // Last resort: if none of those arrive but the video is fine, a
+    // permanently hidden video is worse than an unfaded one.
+    window.setTimeout(revealIfReady, 2500);
+  }
 
   const attempt = v.play();
   if (attempt && typeof attempt.catch === "function") {
@@ -309,4 +329,11 @@ document
     window.setTimeout(() => { queued = false; sync(); }, 150);
   }, { passive: true });
   document.addEventListener("visibilitychange", sync);
-})();
+}
+
+// Both background videos, same handling. The scene one matters more for
+// the off-screen pause: it sits three screens down, so without it the
+// browser decodes a looping clip nobody is looking at for as long as the
+// page is open.
+setupBackgroundVideo("heroVideo");
+setupBackgroundVideo("sceneVideo");
