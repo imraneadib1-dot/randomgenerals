@@ -129,3 +129,128 @@ document
     /* nothing to do - attribution is best-effort */
   }
 })();
+
+/* ----------------------------------------------------------------
+   Motion
+   ----------------------------------------------------------------
+   Two effects, both cheap: reveal-on-scroll, and a glow that follows
+   the cursor across a card.
+
+   Everything is skipped entirely under prefers-reduced-motion. The
+   reveal is skipped by never adding the class that hides things, so
+   the page is simply static rather than static-and-invisible.
+   ---------------------------------------------------------------- */
+(function motion() {
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---- reveal on scroll ---- */
+  //
+  // A scroll listener rather than IntersectionObserver. IO is the usual
+  // advice and is cheaper in principle, but it failed to fire at all
+  // under test here, and its failure mode is the worst available: the
+  // class that hides the element is applied, the callback that would
+  // show it never runs, and eighteen sections stay permanently blank -
+  // which looks like a page with no content rather than like a bug.
+  //
+  // A geometry check on scroll cannot fail that way. It is throttled to
+  // one measurement per animation frame, reads a single bounding box
+  // per not-yet-revealed element, and unregisters itself once they have
+  // all been shown, so the steady-state cost is nothing.
+  const targets = Array.from(
+    document.querySelectorAll(
+      ".section-head, .card, .price-card, .step, .faq-list details, .cta-band",
+    ),
+  );
+
+  if (!reduced && targets.length) {
+    targets.forEach((el) => {
+      const siblings = Array.from(el.parentElement?.children || []);
+      // Stagger by position within the row, so a grid arrives as a wave.
+      // Capped - past a handful the delay stops reading as choreography
+      // and starts reading as the page being slow.
+      const i = Math.min(siblings.indexOf(el), 5);
+      el.style.transitionDelay = `${i * 70}ms`;
+      el.classList.add("reveal");
+    });
+
+    let pending = targets.slice();
+    let queued = false;
+
+    const check = () => {
+      queued = false;
+      const h = window.innerHeight;
+      pending = pending.filter((el) => {
+        const r = el.getBoundingClientRect();
+        // Slightly inside the viewport, so an element finishes arriving
+        // as it comes into view rather than starting once already there.
+        if (r.top < h * 0.88 && r.bottom > 0) {
+          el.classList.add("is-visible");
+          return false;
+        }
+        return true;
+      });
+      if (!pending.length) {
+        window.removeEventListener("scroll", request);
+        window.removeEventListener("resize", request);
+      }
+    };
+
+    // setTimeout rather than requestAnimationFrame. rAF is the usual
+    // choice and pauses politely in background tabs, but it did not run
+    // at all under test here, so every throttled check after the first
+    // was silently dropped. A 60ms timer is coarser than a frame and
+    // entirely sufficient: the CSS transition does the smoothing, this
+    // only decides when to start it.
+    const request = () => {
+      if (queued) return;
+      queued = true;
+      window.setTimeout(check, 60);
+    };
+
+    window.addEventListener("scroll", request, { passive: true });
+    window.addEventListener("resize", request, { passive: true });
+    check();   // whatever is already on screen at load
+
+    // A slow poll alongside the scroll listener, because .reveal sets
+    // opacity:0 and anything the listener misses stays permanently
+    // invisible - a failure that looks like an empty section rather
+    // than like a bug, which is the hardest kind to notice.
+    //
+    // It also covers scrolling this listener cannot see: anchor jumps,
+    // find-in-page, a container that scrolls instead of the window.
+    // Three checks a second costs one bounding box per hidden element
+    // and stops entirely once they are all shown.
+    const poll = window.setInterval(() => {
+      if (!pending.length) {
+        window.clearInterval(poll);
+        return;
+      }
+      check();
+    }, 350);
+
+    // Last resort. If nothing has revealed after fifteen seconds then
+    // the geometry check is wrong about this page in some way I did not
+    // anticipate, and showing the content unanimated is obviously
+    // better than never showing it.
+    window.setTimeout(() => {
+      pending.forEach((el) => el.classList.add("is-visible"));
+      pending = [];
+      window.clearInterval(poll);
+    }, 15000);
+  }
+
+  /* ---- cursor-following glow ---- */
+  if (!reduced && window.matchMedia("(hover: hover)").matches) {
+    const cards = document.querySelectorAll(".card, .price-card");
+    cards.forEach((card) => {
+      // Listener on the card, not the document: this only needs to run
+      // while a pointer is actually over one, and a document-level
+      // mousemove would fire for the entire page.
+      card.addEventListener("pointermove", (e) => {
+        const r = card.getBoundingClientRect();
+        card.style.setProperty("--mx", `${e.clientX - r.left}px`);
+        card.style.setProperty("--my", `${e.clientY - r.top}px`);
+      });
+    });
+  }
+})();

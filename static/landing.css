@@ -51,13 +51,23 @@ html {
   scroll-behavior: smooth;
 }
 
+/* overflow-x lives on html, not body.
+   Setting it on body promotes the body element into its own scrolling
+   box: the viewport then stops scrolling, window scroll events stop
+   firing, and documentElement.scrollTop stays pinned at 0. The scroll
+   progress bar and the back-to-top button both read that value, so both
+   were silently dead - and any scroll-driven effect added later would
+   have been too, for a reason that looks nothing like its cause. */
+html {
+  overflow-x: hidden;
+}
+
 body {
   margin: 0;
   background: var(--ink-0);
   color: var(--text);
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
-  overflow-x: hidden;
 }
 
 /* Ambient glow behind the top of the page. Fixed and non-interactive
@@ -870,5 +880,203 @@ p {
     content: " (" attr(href) ")";
     font-size: 11px;
     color: #555;
+  }
+}
+
+/* ================================================================ */
+/* Motion                                                            */
+/*                                                                   */
+/* Everything here animates transform and opacity only. Those are    */
+/* the two properties a browser can hand to the compositor, so they  */
+/* run without recalculating layout or repainting - which is the     */
+/* difference between animation that feels expensive and animation   */
+/* that drops frames on the mid-range phone most visitors are on.    */
+/*                                                                   */
+/* The whole file is disabled under prefers-reduced-motion at the    */
+/* bottom. Not softened - off. For someone with vestibular disorder  */
+/* a gentler version of the thing that makes them ill is still the   */
+/* thing that makes them ill.                                        */
+/* ================================================================ */
+
+/* ---- scroll reveal ---------------------------------------------- */
+/* Applied by landing.js, never in the markup: if the script fails to
+   load, nothing gets marked hidden and the page reads normally rather
+   than appearing blank. */
+.reveal {
+  opacity: 0;
+  transform: translate3d(0, 22px, 0);
+  transition:
+    opacity 0.6s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+
+.reveal.is-visible {
+  opacity: 1;
+  transform: none;
+  /* Dropped once the animation is done - a permanent will-change keeps
+     a compositor layer alive for an element that will never move
+     again, which costs memory for nothing. */
+  will-change: auto;
+}
+
+/* ---- hero entrance ---------------------------------------------- */
+/* Runs on load rather than on scroll, since the hero is already in
+   view. The stagger is what makes it read as one considered movement
+   instead of several things arriving at once. */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.hero > *:not(.hero-canvas) {
+  animation: rise-in 0.75s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+.hero .eyebrow { animation-delay: 0.05s; }
+.hero h1 { animation-delay: 0.14s; }
+.hero-sub { animation-delay: 0.24s; }
+.hero-cta { animation-delay: 0.34s; }
+.hero-note { animation-delay: 0.44s; }
+
+/* ---- headline sheen --------------------------------------------- */
+/* A slow highlight travelling across the gradient text. Long and
+   low-contrast on purpose: at this speed it registers as the surface
+   catching light, where a fast pass reads as a loading shimmer. */
+@keyframes sheen {
+  0%, 62% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+.hero h1 .grad {
+  background-size: 200% auto;
+  animation: sheen 7s ease-in-out 1.2s infinite;
+}
+
+/* ---- cards ------------------------------------------------------- */
+/* The glow follows the cursor via two custom properties set by
+   landing.js. Moving a gradient's position costs nothing; moving a
+   real element would. */
+.card,
+.price-card {
+  position: relative;
+  transition:
+    transform 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.32s ease,
+    box-shadow 0.32s ease;
+}
+
+.card::after,
+.price-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 0.32s ease;
+  pointer-events: none;
+  background: radial-gradient(
+    420px circle at var(--mx, 50%) var(--my, 50%),
+    var(--accent-glow),
+    transparent 42%
+  );
+}
+
+.card:hover,
+.price-card:hover {
+  transform: translate3d(0, -5px, 0);
+  border-color: var(--line-bright);
+}
+
+.card:hover::after,
+.price-card:hover::after {
+  opacity: 1;
+}
+
+/* ---- buttons ----------------------------------------------------- */
+/* A light sweep on hover. overflow:hidden on the button keeps the
+   sweep inside the rounded corners. */
+.btn-primary {
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-primary::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -80%;
+  width: 45%;
+  height: 100%;
+  background: linear-gradient(
+    100deg,
+    transparent,
+    rgba(255, 255, 255, 0.32),
+    transparent
+  );
+  transform: skewX(-18deg);
+  pointer-events: none;
+}
+
+.btn-primary:hover::after {
+  animation: sweep 0.75s ease;
+}
+
+@keyframes sweep {
+  to { left: 130%; }
+}
+
+.btn {
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+}
+
+.btn:hover { transform: translate3d(0, -2px, 0); }
+.btn:active { transform: translate3d(0, 0, 0); }
+
+/* ---- section headings -------------------------------------------- */
+.section-head .eyebrow {
+  display: inline-block;
+  transition: letter-spacing 0.4s ease;
+}
+
+.reveal.is-visible .section-head .eyebrow,
+.section-head.reveal.is-visible .eyebrow {
+  letter-spacing: 0.22em;
+}
+
+/* ---- off, for anyone who asked ----------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .reveal,
+  .reveal.is-visible {
+    opacity: 1;
+    transform: none;
+    transition: none;
+    will-change: auto;
+  }
+
+  .hero > *:not(.hero-canvas),
+  .hero h1 .grad,
+  .btn-primary:hover::after {
+    animation: none;
+  }
+
+  .card,
+  .price-card,
+  .btn,
+  .section-head .eyebrow {
+    transition: none;
+  }
+
+  .card:hover,
+  .price-card:hover,
+  .btn:hover,
+  .btn:active {
+    transform: none;
   }
 }
