@@ -414,10 +414,10 @@
     </div>
 
     <script src="{{ asset('landing.js') }}"></script>
-    <!-- cloud-render defines window.RGCloudRender, which hero-physics and
-         scroll-scene both read at load. It has to come first. -->
-    <script src="{{ asset('cloud-render.js') }}"></script>
-    <script src="{{ asset('hero-physics.js') }}"></script>
+    <!-- desert-render defines window.RGDesert, which both scenes read at
+         load. It has to come first. -->
+    <script src="{{ asset('desert-render.js') }}"></script>
+    <script src="{{ asset('hero-desert.js') }}"></script>
     <script src="{{ asset('scroll-scene.js') }}"></script>
   </body>
 </html>

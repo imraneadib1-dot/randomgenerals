@@ -4,8 +4,8 @@
  * scrolled through the section becomes a 0..1 progress value, which
  * moves a cloudscape and decides which caption is lit.
  *
- * The art comes from cloud-render.js, the same module the hero uses, so
- * the two cannot drift apart.
+ * The art comes from desert-render.js, the same module the hero uses,
+ * so the two cannot drift apart.
  *
  * WHY NOT IntersectionObserver OR requestAnimationFrame
  * Neither fired reliably when this page was tested. IO never reported at
@@ -23,10 +23,10 @@
 
   const section = document.getElementById("scene");
   const canvas = document.getElementById("sceneCanvas");
-  if (!section || !canvas || !window.RGCloudRender) return;
+  if (!section || !canvas || !window.RGDesert) return;
 
   const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const { makeCumulus, drawCloud, drawMoon } = window.RGCloudRender;
+  const D = window.RGDesert;
   const ctx = canvas.getContext("2d", { alpha: true });
   if (!ctx) return;
 
@@ -55,52 +55,22 @@
   }
 
   /* ---- the cast ---------------------------------------------------- */
-  // Positions are fractions of the canvas, resolved in layout(), so a
-  // resize rearranges the scene instead of leaving it in the old shape.
-  const CLOUDS = [
-    { fx: 0.16, fy: 0.80, r: 0.150, depth: 1.00, part: -0.16 },
-    { fx: 0.40, fy: 0.90, r: 0.115, depth: 0.72, part: -0.08 },
-    { fx: 0.62, fy: 0.84, r: 0.170, depth: 1.00, part: 0.14 },
-    { fx: 0.86, fy: 0.92, r: 0.130, depth: 0.66, part: 0.22 },
-    { fx: 0.28, fy: 1.02, r: 0.100, depth: 0.45, part: -0.05 },
-    { fx: 0.74, fy: 1.05, r: 0.120, depth: 0.45, part: 0.10 },
+  // Back to front. Distant dunes are lighter and less saturated because
+  // atmosphere washes out contrast with distance; reproducing that is
+  // most of what makes a layer read as far away rather than just higher.
+  const dunes = [
+    D.makeDune({ base: 0.60, scale: 0.75, depth: 0.10, hue: 28, sat: 30, light: 26 }),
+    D.makeDune({ base: 0.70, scale: 0.95, depth: 0.26, hue: 26, sat: 36, light: 21 }),
+    D.makeDune({ base: 0.81, scale: 1.15, depth: 0.52, hue: 24, sat: 42, light: 16 }),
+    D.makeDune({ base: 0.94, scale: 1.35, depth: 1.00, hue: 22, sat: 46, light: 11 }),
   ];
 
-  const MOONS = [
-    // Rises through the whole scroll.
-    { fx: 0.78, from: 1.06, to: 0.24, r: 0.075, hue: 44, at: 0.00 },
-    // Second moon appears in the back half. Kept to the right of
-    // centre and high: at fx 0.20 it rose directly through the
-    // headline, which reads as a rendering bug rather than as art.
-    { fx: 0.63, from: 1.10, to: 0.17, r: 0.048, hue: 48, at: 0.45 },
-  ];
-
-  const clouds = CLOUDS.map((c) => ({
-    kind: "cloud",
-    x: 0, y: 0, r: 10,
-    hue: 14 + Math.random() * 18,
-    angle: 0,
-    puffs: makeCumulus(),
-    spec: c,
-  }));
-
-  const moons = MOONS.map((m) => ({
-    kind: "moon",
-    x: 0, y: 0, r: 10,
-    hue: m.hue,
-    spec: m,
-  }));
+  const stars = D.makeStars(90);
 
   function layout() {
-    // Radius scales with the smaller axis so the scene keeps its
-    // proportions on a tall phone as well as a wide monitor.
-    const unit = Math.min(width, height);
-    for (const c of clouds) {
-      c.r = Math.max(26, c.spec.r * unit);
-      c.ext = null;        // extents are radius-derived; force a re-measure
-      c.sprite = null;     // and a re-render of the cached sprite
-    }
-    for (const m of moons) m.r = Math.max(14, m.spec.r * unit);
+    // Nothing size-dependent to precompute: dune curves are evaluated in
+    // canvas units at draw time, so a resize needs no rebuild. Kept as a
+    // function because resize() calls it and a later layer may need it.
   }
 
   /* ---- progress ---------------------------------------------------- */
@@ -123,58 +93,40 @@
 
   /* ---- drawing ----------------------------------------------------- */
   function paint(p) {
-    // Night at the top, dawn at the bottom. Interpolating two stops is
-    // enough; a gradient per frame is cheap, a new canvas is not.
     const warm = ease(p);
-    const g = ctx.createLinearGradient(0, 0, 0, height);
-    // Desert night into desert dawn: deep indigo overhead falling to a
-    // burnt-orange horizon, which is the colour a sunrise actually makes
-    // over sand.
-    g.addColorStop(0, `hsl(${252 - warm * 18}, ${34 + warm * 4}%, ${6 + warm * 3}%)`);
-    g.addColorStop(1, `hsl(${26 - warm * 4}, ${34 + warm * 32}%, ${8 + warm * 14}%)`);
-    ctx.fillStyle = g;
+    const t = performance.now() / 1000;
+
+    ctx.fillStyle = D.skyGradient(ctx, width, height, warm);
     ctx.fillRect(0, 0, width, height);
 
-    for (const m of moons) {
-      const s = m.spec;
-      // Each moon has its own start point in the scroll, so they do not
-      // rise in lockstep.
-      const local = clamp01((p - s.at) / (1 - s.at));
-      m.x = s.fx * width;
-      m.y = (s.from + (s.to - s.from) * ease(local)) * height;
-      // Fades in as it clears the horizon rather than popping into view.
-      const alpha = clamp01(local * 2.2);
-      if (alpha <= 0.01) continue;
-      ctx.save();
-      ctx.globalAlpha = alpha;
-      drawMoon(ctx, m);
-      ctx.restore();
+    // Stars fade as the sun comes up. Squared so they linger through
+    // early dawn and then go quickly, which is how it actually looks.
+    D.drawStars(ctx, stars, width, height, Math.pow(1 - warm, 2) * 0.75, t);
+
+    // The sun crosses and climbs: it enters low on the left and ends
+    // high on the right, so the scene has direction rather than a disc
+    // rising straight up out of the middle.
+    const sunX = width * (0.18 + 0.62 * p);
+    const sunY = height * (1.02 - 0.72 * ease(p));
+    D.drawSun(ctx, sunX, sunY, Math.max(18, Math.min(width, height) * 0.062), {
+      hue: 30 + warm * 8,
+      alpha: 1,
+    });
+
+    for (const d of dunes) {
+      // Parallax across the scroll. Near dunes travel several times as
+      // far as distant ones - the whole depth illusion is this one line.
+      const shift = p * 0.09 * d.depth;
+      D.drawDune(ctx, d, width, height, shift, warm);
     }
 
-    for (const c of clouds) {
-      const s = c.spec;
-      // Parting: clouds slide outward from centre as the scroll advances,
-      // then ease back in at the end so the scene closes as it opened.
-      const part = Math.sin(warm * Math.PI);
-      // Parallax: nearer clouds (higher depth) travel further.
-      const lift = warm * height * 0.16 * s.depth;
-      c.x = (s.fx + s.part * part) * width;
-      c.y = s.fy * height - lift;
-      c.angle = 0;
-      ctx.save();
-      ctx.globalAlpha = 0.92;
-      drawCloud(ctx, c);
-      ctx.restore();
-    }
-
-    // Scrim behind the caption column. The clouds drift wherever the
-    // physics of the layout put them, so at some scroll positions the
-    // body text was landing on a bright white cloud and becoming
-    // genuinely hard to read. A one-sided gradient fixes that without
-    // dimming the half of the frame the scene is actually in.
+    // Scrim behind the caption column. Sunlit dune crests get bright
+    // enough that body text on top of them stops being readable; a
+    // one-sided gradient fixes it without dimming the half of the frame
+    // the scene actually lives in.
     const scrim = ctx.createLinearGradient(0, 0, width * 0.62, 0);
-    scrim.addColorStop(0, "rgba(18, 13, 10, 0.82)");
-    scrim.addColorStop(0.55, "rgba(18, 13, 10, 0.45)");
+    scrim.addColorStop(0, "rgba(18, 13, 10, 0.84)");
+    scrim.addColorStop(0.55, "rgba(18, 13, 10, 0.46)");
     scrim.addColorStop(1, "rgba(18, 13, 10, 0)");
     ctx.fillStyle = scrim;
     ctx.fillRect(0, 0, width * 0.62, height);
