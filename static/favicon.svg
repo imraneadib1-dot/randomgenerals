@@ -1,24 +1,30 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <!-- Tab icon: the same crescent-and-cloud the hero animates, reduced
-       to something that still reads at 16x16. Detail is deliberately
-       minimal - anything finer turns to mush at favicon size. -->
+  <!-- Tab icon: a sun setting behind two dunes, which is the whole
+       scene reduced to what still reads at 16x16. Anything finer -
+       stars, a third dune, texture - turns to mush at favicon size. -->
   <defs>
     <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#0f0a0e"/>
-      <stop offset="1" stop-color="#241722"/>
+      <stop offset="0" stop-color="#1a1430"/>
+      <stop offset="1" stop-color="#3a2418"/>
     </linearGradient>
-    <linearGradient id="puff" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="1" stop-color="#f2d9dd"/>
+    <linearGradient id="far" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8a6242"/>
+      <stop offset="1" stop-color="#6b4a32"/>
     </linearGradient>
+    <linearGradient id="near" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5a3c28"/>
+      <stop offset="1" stop-color="#3a2618"/>
+    </linearGradient>
+    <clipPath id="frame">
+      <rect width="64" height="64" rx="14"/>
+    </clipPath>
   </defs>
-  <rect width="64" height="64" rx="14" fill="url(#sky)"/>
-  <circle cx="41" cy="23" r="11" fill="#ffd08a"/>
-  <circle cx="36" cy="20" r="10" fill="#0f0a0e"/>
-  <g fill="url(#puff)">
-    <circle cx="23" cy="44" r="11"/>
-    <circle cx="34" cy="45" r="9"/>
-    <circle cx="43" cy="47" r="7"/>
-    <rect x="23" y="45" width="20" height="9" rx="4"/>
+  <g clip-path="url(#frame)">
+    <rect width="64" height="64" fill="url(#sky)"/>
+    <circle cx="40" cy="37" r="9" fill="#f0b45c"/>
+    <path d="M0 40 C 12 32, 22 40, 34 37 C 46 34, 54 40, 64 36 L64 64 L0 64 Z"
+          fill="url(#far)"/>
+    <path d="M0 50 C 14 44, 26 52, 40 48 C 52 45, 58 50, 64 47 L64 64 L0 64 Z"
+          fill="url(#near)"/>
   </g>
 </svg>
