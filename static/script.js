@@ -371,6 +371,7 @@ function updateEmptyState() {
   emptyTitle.textContent = meta.title;
   emptySub.textContent = meta.sub;
   emptyHints.innerHTML = meta.hints;
+  if (typeof renderGreeting === "function") renderGreeting();
 }
 
 function showEmptyState() {
@@ -2017,6 +2018,117 @@ async function boot() {
 
   bootScreen.classList.add("boot-done");
   setTimeout(() => (bootScreen.hidden = true), 500);
+}
+
+/* ----------------------------------------------------------------
+   Collapsible sidebar
+   ---------------------------------------------------------------- */
+const sidebarCollapseBtn = document.getElementById("sidebarCollapse");
+const appShell = document.querySelector(".app");
+const SIDEBAR_KEY = "sidebarCollapsed";
+
+function applySidebarCollapsed(collapsed) {
+  if (!appShell || !sidebarCollapseBtn) return;
+  appShell.classList.toggle("sidebar-collapsed", collapsed);
+  // The accessible name stays constant and the state is carried by
+  // aria-expanded, which is what a screen reader announces. A label
+  // that flips between "Collapse" and "Expand" reads as two different
+  // controls appearing in the same place.
+  sidebarCollapseBtn.setAttribute("aria-expanded", String(!collapsed));
+  sidebarCollapseBtn.title = collapsed ? "Expand sidebar" : "Collapse sidebar";
+  writePref(SIDEBAR_KEY, collapsed ? "1" : "0");
+}
+
+if (sidebarCollapseBtn) {
+  // Restored before first paint would be better, but the preference
+  // lives in localStorage and this script is deferred, so the width
+  // transition is suppressed for the initial application to avoid the
+  // sidebar visibly sliding shut on every load.
+  const saved = readPref(SIDEBAR_KEY) === "1";
+  if (saved) {
+    appShell.style.transition = "none";
+    applySidebarCollapsed(true);
+    // Two frames: one for the class to apply, one for the browser to
+    // finish laying out before transitions are allowed back.
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        appShell.style.transition = "";
+      }),
+    );
+  }
+  sidebarCollapseBtn.addEventListener("click", () => {
+    applySidebarCollapsed(!appShell.classList.contains("sidebar-collapsed"));
+  });
+}
+
+/* ----------------------------------------------------------------
+   Greeting
+   ---------------------------------------------------------------- */
+const NAME_KEY = "displayName";
+
+function greetingFor(hour) {
+  if (hour < 5) return "Still up";
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+function renderGreeting() {
+  if (!emptyState) return;
+  let host = document.getElementById("greetingHost");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "greetingHost";
+    // Above the eyebrow, so the greeting is the first thing read rather
+    // than an afterthought under the bay title.
+    emptyState.insertBefore(host, emptyState.firstChild);
+  }
+  host.replaceChildren();
+
+  const name = (readPref(NAME_KEY) || "").trim();
+  if (!name) {
+    const h = document.createElement("h2");
+    h.className = "greeting";
+    h.textContent = "What should I call you?";
+    const row = document.createElement("div");
+    row.className = "name-prompt";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.maxLength = 40;
+    input.placeholder = "Your name";
+    input.setAttribute("aria-label", "Your name");
+    const save = document.createElement("button");
+    save.type = "button";
+    save.textContent = "Save";
+    const commit = () => {
+      const v = input.value.trim();
+      if (!v) return;
+      writePref(NAME_KEY, v);
+      renderGreeting();
+    };
+    save.addEventListener("click", commit);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") commit();
+    });
+    row.append(input, save);
+    host.append(h, row);
+    return;
+  }
+
+  const h = document.createElement("h2");
+  h.className = "greeting";
+  // textContent, never innerHTML - this string is whatever the user
+  // typed, and it is re-rendered on every empty state.
+  h.textContent = `${greetingFor(new Date().getHours())}, ${name}`;
+  const edit = document.createElement("button");
+  edit.type = "button";
+  edit.className = "greeting-edit";
+  edit.textContent = "not you?";
+  edit.addEventListener("click", () => {
+    writePref(NAME_KEY, "");
+    renderGreeting();
+  });
+  host.append(h, edit);
 }
 
 /* ---------------------------------------------------------------- */

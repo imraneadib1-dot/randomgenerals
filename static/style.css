@@ -63,8 +63,13 @@
   /* Channel colors — one per provider, never blended */
   --c-ollama: #34d399;
   --c-ollama-soft: rgba(52, 211, 153, 0.14);
-  --c-groq: #fbbf24;
-  --c-groq-soft: rgba(251, 191, 36, 0.14);
+  /* One per provider, and the name must match the provider id: the
+     channel button sets --btn-color to var(--c-<id>) at runtime, so a
+     provider with no token here renders with an undefined colour and
+     the button comes out unstyled. That is what happened when the old
+     provider's token was deleted and the new one's was not added. */
+  --c-gemini: #fbbf24;
+  --c-gemini-soft: rgba(251, 191, 36, 0.14);
   --c-imagegen: #a78bfa;
   --c-imagegen-soft: rgba(167, 139, 250, 0.14);
 
@@ -2636,4 +2641,164 @@ html.time-night .night-moon {
     height: 44px;
     font-size: 20px;
   }
+}
+
+/* ---------------------------------------------------------------- */
+/* Collapsible sidebar                                               */
+/*                                                                   */
+/* Collapses to a narrow rail rather than to nothing. At zero width  */
+/* the control that reopens it would be inside the thing it hides,   */
+/* so it would need a second button floating somewhere else - a rail */
+/* keeps one button in one place, which is easier to find and less   */
+/* to maintain.                                                      */
+/* ---------------------------------------------------------------- */
+.sidebar-collapse {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-faint);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.sidebar-collapse:hover {
+  background: var(--surface-raised);
+  border-color: var(--border);
+  color: var(--ink);
+}
+
+.sidebar-collapse:focus-visible {
+  outline: 2px solid var(--deck);
+  outline-offset: 2px;
+}
+
+/* Width is animated, not display - display cannot transition, and the
+   sidebar snapping between two sizes reads as a layout glitch rather
+   than an intentional control. */
+.sidebar {
+  transition: width 0.18s ease, padding 0.18s ease;
+}
+
+.app.sidebar-collapsed .sidebar {
+  width: 56px;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+/* Everything except the toggle goes. visibility, not just opacity, so
+   hidden controls cannot still be reached by Tab. */
+.app.sidebar-collapsed .sidebar > *:not(.sidebar-top),
+.app.sidebar-collapsed .sidebar-top > *:not(.sidebar-collapse) {
+  display: none;
+}
+
+.app.sidebar-collapsed .sidebar-top {
+  justify-content: center;
+  padding: 0 0 12px;
+}
+
+/* The icon flips to point the other way, so the button reads as
+   "reopen" rather than as the same control doing nothing. */
+.app.sidebar-collapsed .sidebar-collapse svg {
+  transform: scaleX(-1);
+}
+
+@media (max-width: 860px) {
+  /* The sidebar is already a slide-over drawer at this width, with its
+     own toggle in the topbar. A second collapse control inside it would
+     be two mechanisms for one job. */
+  .sidebar-collapse {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------- */
+/* Greeting on the empty state                                       */
+/* ---------------------------------------------------------------- */
+.greeting {
+  font-family: var(--font-display);
+  font-size: clamp(1.6rem, 3.6vw, 2.3rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin: 0 0 6px;
+  background: linear-gradient(100deg, var(--ink) 30%, var(--deck));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.name-prompt {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin: 14px 0 0;
+}
+
+.name-prompt input {
+  width: min(240px, 60vw);
+  padding: 9px 12px;
+  font: inherit;
+  font-size: 0.95rem;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+}
+
+.name-prompt input:focus-visible {
+  outline: 2px solid var(--deck);
+  outline-offset: 1px;
+}
+
+.name-prompt button {
+  padding: 9px 16px;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: var(--deck);
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.name-prompt button:hover {
+  filter: brightness(1.08);
+}
+
+/* Small, quiet, and only reachable once a name is set. */
+.greeting-edit {
+  margin-top: 4px;
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--ink-faint);
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.greeting-edit:hover {
+  color: var(--ink-soft);
+  text-decoration: underline;
+}
+
+/* The greeting is its own block above the bay copy, so it needs the
+   separation an <h2> would normally get - without it the eyebrow reads
+   as a caption belonging to the name field. */
+#greetingHost {
+  margin-bottom: 26px;
+}
+
+#greetingHost:empty {
+  margin-bottom: 0;
 }
