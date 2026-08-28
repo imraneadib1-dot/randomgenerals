@@ -125,6 +125,57 @@
         </p>
       </section>
 
+      <!-- Scroll-driven scene.
+           The canvas is decorative and aria-hidden; every word here is
+           real text so it is selectable, translatable and readable by a
+           screen reader.
+
+           The beats are visible by default and JS adds .scene-live to
+           the section to take over. If the script never runs this stays
+           a plain stacked list rather than going blank - the failure the
+           reveal animation hit earlier today. -->
+      <section class="scene" id="scene">
+        <div class="scene-sticky">
+          <canvas class="scene-canvas" id="sceneCanvas" aria-hidden="true"></canvas>
+          <div class="scene-beats">
+            <article class="scene-beat" data-beat="0">
+              <span class="eyebrow">01 — On your machine</span>
+              <h2>The model runs on your hardware</h2>
+              <p>
+                Not a rented API. The weights sit on the computer serving
+                this page, so a prompt never leaves the device.
+              </p>
+            </article>
+            <article class="scene-beat" data-beat="1">
+              <span class="eyebrow">02 — Code</span>
+              <h2>Ask for code, get code that runs</h2>
+              <p>
+                A sandboxed Python runner is built in. Press Run on any
+                block and see the real output, without leaving the chat.
+              </p>
+            </article>
+            <article class="scene-beat" data-beat="2">
+              <span class="eyebrow">03 — Everything else</span>
+              <h2>Images, voice, and memory that carries over</h2>
+              <p>
+                Generate pictures, speak instead of typing, and say
+                &ldquo;remember&hellip;&rdquo; once for it to stick across
+                separate conversations.
+              </p>
+            </article>
+            <article class="scene-beat" data-beat="3">
+              <span class="eyebrow">04 — When the lights go out</span>
+              <h2>If the machine sleeps, the cloud answers</h2>
+              <p>
+                Local first, always. When local models cannot be reached
+                the reply comes from the cloud instead &mdash; and it says
+                so, rather than quietly sending your prompt elsewhere.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
       <section class="features" id="features">
         <div class="section-head">
           <span class="eyebrow">Capabilities</span>
@@ -363,6 +414,10 @@
     </div>
 
     <script src="{{ asset('landing.js') }}"></script>
+    <!-- cloud-render defines window.RGCloudRender, which hero-physics and
+         scroll-scene both read at load. It has to come first. -->
+    <script src="{{ asset('cloud-render.js') }}"></script>
     <script src="{{ asset('hero-physics.js') }}"></script>
+    <script src="{{ asset('scroll-scene.js') }}"></script>
   </body>
 </html>

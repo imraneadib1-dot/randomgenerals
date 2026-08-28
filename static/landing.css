@@ -1080,3 +1080,159 @@ p {
     transform: none;
   }
 }
+
+/* ================================================================ */
+/* Scroll-driven scene                                               */
+/*                                                                   */
+/* A tall section with a pinned viewport inside it. Scrolling past    */
+/* the section drives a 0..1 progress value, which moves the canvas  */
+/* scene and swaps which caption is lit.                             */
+/*                                                                   */
+/* Everything below the .scene-live guard is the enhanced state. The */
+/* section without that class - script failed, script not loaded     */
+/* yet, reduced motion - is a plain stacked list of the four beats,  */
+/* which is a perfectly good way to read them.                       */
+/* ================================================================ */
+.scene {
+  position: relative;
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.scene-beats {
+  display: grid;
+  gap: 56px;
+}
+
+.scene-beat h2 {
+  font-family: var(--font-display);
+  font-size: clamp(1.5rem, 3.2vw, 2.1rem);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  margin: 10px 0 10px;
+}
+
+.scene-beat p {
+  color: var(--text-soft);
+  max-width: 46ch;
+  line-height: 1.65;
+  margin: 0;
+}
+
+/* ---- enhanced ---------------------------------------------------- */
+/* 400vh gives four screens of scroll, one per beat. */
+.scene.scene-live {
+  height: 400vh;
+  padding: 0;
+  max-width: none;
+}
+
+.scene.scene-live .scene-sticky {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+.scene.scene-live .scene-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* Decorative and behind the text. pointer-events:none for the same
+     reason as the hero canvas - it covers the whole pinned area and
+     would otherwise swallow every click and text selection in it. */
+  pointer-events: none;
+  z-index: 0;
+}
+
+.scene.scene-live .scene-beats {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: min(var(--maxw), 100%);
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* Beats stack on top of each other and cross-fade. Absolute rather
+   than display:none so the height does not jump between beats of
+   different lengths. */
+.scene.scene-live .scene-beat {
+  position: absolute;
+  top: 50%;
+  left: 24px;
+  right: 24px;
+  transform: translate3d(0, calc(-50% + 16px), 0);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.45s ease,
+    transform 0.45s cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0s linear 0.45s;
+  max-width: 620px;
+}
+
+.scene.scene-live .scene-beat.is-active {
+  opacity: 1;
+  visibility: visible;
+  transform: translate3d(0, -50%, 0);
+  transition-delay: 0s;
+}
+
+/* ---- narrow screens ---------------------------------------------- */
+@media (max-width: 720px) {
+  /* Four screens of scroll is a long time to hold someone on one
+     image on a phone. */
+  .scene.scene-live {
+    height: 260vh;
+  }
+
+  .scene.scene-live .scene-beat {
+    max-width: none;
+  }
+
+  .scene-beat p {
+    max-width: none;
+  }
+}
+
+/* ---- reduced motion ---------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  /* No pinning and no scrubbing: the section reverts to the plain
+     stacked list, with the canvas showing a single static frame. */
+  .scene.scene-live {
+    height: auto;
+    padding: 0 24px;
+    max-width: var(--maxw);
+  }
+
+  .scene.scene-live .scene-sticky {
+    position: static;
+    height: auto;
+    display: block;
+  }
+
+  .scene.scene-live .scene-canvas {
+    position: relative;
+    height: 240px;
+    margin-bottom: 32px;
+  }
+
+  .scene.scene-live .scene-beats {
+    display: grid;
+    gap: 56px;
+    padding: 0;
+  }
+
+  .scene.scene-live .scene-beat {
+    position: static;
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+    transition: none;
+  }
+}
