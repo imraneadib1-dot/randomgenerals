@@ -1,6 +1,7 @@
 from flask import (Flask, render_template, request, Response, jsonify,
                    session, stream_with_context, redirect, url_for)
 from dotenv import load_dotenv
+import hmac
 import json
 import os
 import re
@@ -32,6 +33,7 @@ import codeexec  # noqa: E402  sandboxed Python execution - see codeexec.py
 import moderation  # noqa: E402  content filtering - see moderation.py
 import features  # noqa: E402  per-tier feature flags - see features.py
 import gemini  # noqa: E402  cloud fallback for when this machine is off
+import openai_api  # noqa: E402  OpenAI-compatible API - see openai_api.py
 import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
 
 # The one AI this app talks to: Ollama, running locally (llama3.2 pulled
@@ -1101,6 +1103,154 @@ def paddle_webhook():
     save_users()
 
     return jsonify({"received": True, "handled": True})
+
+
+# ---------------------------------------------------------------- #
+# OpenAI-compatible API
+#
+# Lets Cursor, VS Code extensions and anything else that speaks the
+# OpenAI protocol use this app as their model provider. See
+# openai_api.py for why this shape rather than a per-editor plugin.
+# ---------------------------------------------------------------- #
+
+def _api_error(message, code=400, err_type="invalid_request_error"):
+    """Flask wants (body, status). openai_api.error returns that pair, and
+    jsonify(*pair) silently serialises the status code into the body and
+    answers 200 - so a rejected key looked like a successful response
+    containing an error object, which every client would then fail to
+    parse as a completion."""
+    body, status = openai_api.error(message, code, err_type)
+    return jsonify(body), status
+
+
+def _api_user():
+    """The account behind the bearer key, or None.
+
+    Every request is authenticated. Without this the endpoint is an open
+    relay on a public URL: a stranger could spend the owner's Gemini
+    quota, and on a machine with Ollama running, occupy their GPU.
+    """
+    raw = openai_api.key_from_request(request.headers)
+    if not raw:
+        return None
+    digest = openai_api.hash_key(raw)
+    for u in USERS.values():
+        # Constant-time compare: a plain == leaks how much of the hash
+        # matched through timing, one byte at a time.
+        if u.get("api_key_hash") and hmac.compare_digest(
+                u["api_key_hash"], digest):
+            return u
+    return None
+
+
+@app.route("/v1/models", methods=["GET"])
+def openai_models():
+    if not _api_user():
+        return _api_error(
+            "Invalid API key. Create one in the app under Settings.",
+            401, "invalid_request_error")
+    ids = list(ollama_provider().get("models") or [])
+    if gemini.configured():
+        ids += gemini.models()
+    return jsonify(openai_api.model_list(ids or ["randomgenerals"]))
+
+
+@app.route("/v1/chat/completions", methods=["POST"])
+def openai_chat_completions():
+    user = _api_user()
+    if not user:
+        return _api_error(
+            "Invalid API key. Create one in the app under Settings.",
+            401, "invalid_request_error")
+
+    payload = request.get_json(force=True, silent=True) or {}
+    history = openai_api.to_history(payload.get("messages"))
+    if not history:
+        return _api_error("messages must not be empty")
+
+    # Pick a provider from the requested model name. An unknown name
+    # falls back rather than erroring - editors send their own defaults
+    # ("gpt-4o", "claude-3-5-sonnet") and refusing those would make the
+    # integration look broken when it is only mislabelled.
+    requested = (payload.get("model") or "").strip()
+    local = list(ollama_provider().get("models") or [])
+    cloud = gemini.models() if gemini.configured() else []
+
+    if requested in local:
+        provider, model = "ollama", requested
+    elif requested in cloud:
+        provider, model = "gemini", requested
+    elif local and ollama_reachable():
+        provider, model = "ollama", (
+            next((m for m in local if "coder" in m), local[0]))
+    elif cloud:
+        provider, model = "gemini", _best_cloud_model("code", cloud)
+    else:
+        return _api_error(
+            "No model is available right now: the local AI is not running "
+            "and no cloud fallback is configured.", 503, "server_error")
+
+    opts = openai_api.options_from(payload)
+    opts["num_ctx"] = 16384
+    streamer = PROVIDER_STREAMERS[provider]
+    pieces = streamer(model, history, options=opts)
+
+    if payload.get("stream"):
+        return Response(
+            stream_with_context(openai_api.stream_sse(pieces, model)),
+            mimetype="text/event-stream",
+            headers={
+                # Same reason as the chat stream: without this an nginx
+                # in front buffers the whole reply and the editor shows
+                # nothing until it is finished.
+                "X-Accel-Buffering": "no",
+                "Cache-Control": "no-cache, no-transform",
+            },
+        )
+
+    text = "".join(pieces)
+    # Rough, but present: clients divide by these and some render NaN if
+    # the block is missing. ~4 chars per token is close enough to be
+    # useful and is clearly documented as an estimate.
+    prompt_chars = sum(len(m.get("content") or "") for m in history)
+    return jsonify(openai_api.completion(
+        text, model,
+        prompt_tokens=prompt_chars // 4,
+        completion_tokens=len(text) // 4))
+
+
+@app.route("/api/account/api-key", methods=["POST"])
+def create_api_key():
+    """Issue a key for the signed-in account, replacing any existing one.
+
+    Returned exactly once. Only the hash is kept, so it cannot be shown
+    again - which is the point: a key that can be re-read from the server
+    is one a server compromise hands out.
+    """
+    uid = session.get("user_id")
+    if not uid or uid not in USERS:
+        return jsonify({"error": "Sign in first."}), 401
+    raw, digest = openai_api.new_key()
+    USERS[uid]["api_key_hash"] = digest
+    USERS[uid]["api_key_created"] = now_iso()
+    save_users()
+    return jsonify({
+        "api_key": raw,
+        "created": USERS[uid]["api_key_created"],
+        "base_url": request.host_url.rstrip("/") + "/v1",
+        "note": "Copy this now - it is not shown again.",
+    })
+
+
+@app.route("/api/account/api-key", methods=["DELETE"])
+def revoke_api_key():
+    uid = session.get("user_id")
+    if not uid or uid not in USERS:
+        return jsonify({"error": "Sign in first."}), 401
+    USERS[uid]["api_key_hash"] = None
+    USERS[uid]["api_key_created"] = None
+    save_users()
+    return jsonify({"revoked": True})
 
 
 @app.route("/api/health", methods=["GET"])

@@ -68,17 +68,17 @@
 
   const MOONS = [
     // Rises through the whole scroll.
-    { fx: 0.78, from: 1.06, to: 0.24, r: 0.075, hue: 36, at: 0.00 },
+    { fx: 0.78, from: 1.06, to: 0.24, r: 0.075, hue: 44, at: 0.00 },
     // Second moon appears in the back half. Kept to the right of
     // centre and high: at fx 0.20 it rose directly through the
     // headline, which reads as a rendering bug rather than as art.
-    { fx: 0.63, from: 1.10, to: 0.17, r: 0.048, hue: 42, at: 0.45 },
+    { fx: 0.63, from: 1.10, to: 0.17, r: 0.048, hue: 48, at: 0.45 },
   ];
 
   const clouds = CLOUDS.map((c) => ({
     kind: "cloud",
     x: 0, y: 0, r: 10,
-    hue: 8 + Math.random() * 18,
+    hue: 14 + Math.random() * 18,
     angle: 0,
     puffs: makeCumulus(),
     spec: c,
@@ -127,8 +127,11 @@
     // enough; a gradient per frame is cheap, a new canvas is not.
     const warm = ease(p);
     const g = ctx.createLinearGradient(0, 0, 0, height);
-    g.addColorStop(0, `hsl(${262 - warm * 24}, ${38 + warm * 6}%, ${5 + warm * 3}%)`);
-    g.addColorStop(1, `hsl(${18 - warm * 4}, ${30 + warm * 34}%, ${7 + warm * 12}%)`);
+    // Desert night into desert dawn: deep indigo overhead falling to a
+    // burnt-orange horizon, which is the colour a sunrise actually makes
+    // over sand.
+    g.addColorStop(0, `hsl(${252 - warm * 18}, ${34 + warm * 4}%, ${6 + warm * 3}%)`);
+    g.addColorStop(1, `hsl(${26 - warm * 4}, ${34 + warm * 32}%, ${8 + warm * 14}%)`);
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, width, height);
 
@@ -170,9 +173,9 @@
     // genuinely hard to read. A one-sided gradient fixes that without
     // dimming the half of the frame the scene is actually in.
     const scrim = ctx.createLinearGradient(0, 0, width * 0.62, 0);
-    scrim.addColorStop(0, "rgba(10, 7, 9, 0.82)");
-    scrim.addColorStop(0.55, "rgba(10, 7, 9, 0.45)");
-    scrim.addColorStop(1, "rgba(10, 7, 9, 0)");
+    scrim.addColorStop(0, "rgba(18, 13, 10, 0.82)");
+    scrim.addColorStop(0.55, "rgba(18, 13, 10, 0.45)");
+    scrim.addColorStop(1, "rgba(18, 13, 10, 0)");
     ctx.fillStyle = scrim;
     ctx.fillRect(0, 0, width * 0.62, height);
   }
