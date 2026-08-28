@@ -258,7 +258,11 @@ section {
 }
 
 /* Hero content sits above the canvas. */
-.hero > *:not(.hero-canvas) {
+/* Every hero child EXCEPT the background layers. The canvas, the video
+   and its scrim are all absolutely positioned behind the text; pulling
+   them into normal flow here put the video in the document flow and
+   pushed the headline down the page. */
+.hero > *:not(.hero-canvas):not(.hero-video):not(.hero-video-scrim) {
   position: relative;
   z-index: 1;
 }
@@ -935,7 +939,7 @@ p {
   }
 }
 
-.hero > *:not(.hero-canvas) {
+.hero > *:not(.hero-canvas):not(.hero-video):not(.hero-video-scrim) {
   animation: rise-in 0.75s cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
 .hero .eyebrow { animation-delay: 0.05s; }
@@ -1060,7 +1064,7 @@ p {
     will-change: auto;
   }
 
-  .hero > *:not(.hero-canvas),
+  .hero > *:not(.hero-canvas):not(.hero-video):not(.hero-video-scrim),
   .hero h1 .grad,
   .btn-primary:hover::after {
     animation: none;
@@ -1234,5 +1238,67 @@ p {
     visibility: visible;
     transform: none;
     transition: none;
+  }
+}
+
+/* ---- hero video --------------------------------------------------- */
+/* Sits over the drawn dune scene. The canvas underneath is the fallback:
+   if the video is blocked, unsupported, or still loading, there is
+   already a finished-looking hero behind it rather than a black box. */
+.hero-video {
+  position: absolute;
+  /* Full-bleed, not inset:0. The hero sits inside the page's max-width
+     container, so filling its box left the footage as a letterboxed
+     panel with dark bars either side. Anchoring to the viewport centre
+     and taking 100vw breaks it out of that container without having to
+     restructure the markup around it. */
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  /* Two transforms on one property: the centring, then a small zoom that
+     crops the generator's watermark out of the top-left. Written as one
+     declaration because a second `transform` would simply replace the
+     first and drop the centring. */
+  transform: translateX(-50%) scale(1.08) translate(1.5%, 0.6%);
+  width: 100vw;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0;
+  transition: opacity 0.9s ease;
+}
+
+/* Faded in only once there are actual frames to show, so a slow load
+   never flashes a black rectangle over the canvas scene. */
+.hero-video.is-ready {
+  opacity: 1;
+}
+
+/* Footage this bright would leave the headline unreadable. Darker at the
+   top where the text sits, clearing toward the bottom so the dunes stay
+   visible. */
+.hero-video-scrim {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100vw;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    linear-gradient(180deg,
+      rgba(18, 13, 10, 0.86) 0%,
+      rgba(18, 13, 10, 0.66) 42%,
+      rgba(18, 13, 10, 0.34) 78%,
+      rgba(18, 13, 10, 0.52) 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The poster frame instead of moving footage. A looping video is
+     exactly the kind of continuous motion this setting exists to stop. */
+  .hero-video {
+    display: none;
   }
 }

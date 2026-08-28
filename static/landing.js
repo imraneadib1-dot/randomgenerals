@@ -254,3 +254,59 @@ document
     });
   }
 })();
+
+/* ----------------------------------------------------------------
+   Hero video
+   ----------------------------------------------------------------
+   Only revealed once it is genuinely playing. The element starts at
+   opacity 0 over the drawn dune scene, so a slow or failed load leaves
+   the canvas showing rather than flashing a black rectangle over it.
+
+   Autoplay is refused in more situations than people expect - data
+   saver, battery saver, some corporate policies - and the promise
+   rejects rather than throwing. Unhandled, that is a console error and
+   a permanently invisible video.
+   ---------------------------------------------------------------- */
+(function heroVideo() {
+  const v = document.getElementById("heroVideo");
+  if (!v) return;
+
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduced) return;   // CSS hides it; do not fetch the file either
+
+  const reveal = () => v.classList.add("is-ready");
+
+  // playing fires on the first real frame. canplay is the fallback for
+  // browsers that seek differently, and both are one-shot.
+  v.addEventListener("playing", reveal, { once: true });
+  v.addEventListener("canplay", () => {
+    if (v.currentTime > 0 || !v.paused) reveal();
+  }, { once: true });
+
+  const attempt = v.play();
+  if (attempt && typeof attempt.catch === "function") {
+    attempt.catch(() => {
+      // Autoplay refused. The canvas scene is already behind it and
+      // looks complete, so this needs no message - it just stays hidden.
+    });
+  }
+
+  // Pause off-screen. A looping video decoding behind three screens of
+  // other content is pure battery cost.
+  let queued = false;
+  function sync() {
+    const r = v.getBoundingClientRect();
+    const onScreen = r.bottom > 0 && r.top < window.innerHeight;
+    if (onScreen && !document.hidden) {
+      if (v.paused) v.play().catch(() => {});
+    } else if (!v.paused) {
+      v.pause();
+    }
+  }
+  window.addEventListener("scroll", () => {
+    if (queued) return;
+    queued = true;
+    window.setTimeout(() => { queued = false; sync(); }, 150);
+  }, { passive: true });
+  document.addEventListener("visibilitychange", sync);
+})();

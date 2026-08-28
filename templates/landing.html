@@ -99,13 +99,43 @@
 
     <main id="main">
       <section class="hero">
-        <!-- Sits behind the hero text (z-index/pointer-events in CSS) so
-             it can never intercept a click on the CTA buttons. -->
+        <!-- Both sit behind the hero text (z-index/pointer-events in
+             CSS) so neither can intercept a click on the CTA buttons.
+
+             The canvas is the floor, not a decoration: if the video
+             cannot play - a codec the browser refuses, a blocked
+             request, data-saver mode - the drawn dune scene is already
+             behind it and the hero still looks finished rather than
+             going black.
+
+             muted + playsinline are what actually allow autoplay;
+             without both, browsers refuse and the first frame just sits
+             there.
+
+             No poster attribute on purpose. A poster paints before the
+             video decodes, and the one generated here came out solid
+             black - which would have covered the canvas with exactly the
+             black rectangle the fade-in exists to avoid. With no poster
+             the element is transparent until it has frames, so the
+             drawn scene shows through. -->
         <canvas
           class="hero-canvas"
           id="heroCanvas"
           aria-hidden="true"
         ></canvas>
+        <video
+          class="hero-video"
+          id="heroVideo"
+          src="{{ asset('video/hero.mp4') }}"
+          autoplay
+          muted
+          loop
+          playsinline
+          preload="auto"
+          aria-hidden="true"
+          tabindex="-1"
+        ></video>
+        <div class="hero-video-scrim" aria-hidden="true"></div>
         <span class="eyebrow">Runs on real hardware, not a rented API</span>
         <h1>
           Your own AI assistant.<br />
