@@ -57,6 +57,17 @@ FEATURES = {
         # that a heavy user notices the ceiling.
         "max_memories": 25,
         "max_upload_mb": 20,
+        # --- video bay ---
+        # These are the honest ones. A render pins a core for its whole
+        # duration, and on a two-core VM that is the scarcest resource
+        # here - so the limits are set by what the machine can actually
+        # sustain rather than picked to make Pro look better.
+        "video_max_output_seconds": 60,
+        "video_max_quality": "standard",
+        # --- image bay ---
+        # The widest shapes are ~25% more pixels, so they cost ~25% more
+        # to generate. Free gets the three everyday shapes.
+        "image_sizes": ("square", "portrait", "landscape"),
         # --- desktop ---
         "terminal_unrestricted": False,   # allow-list only
         "terminal_timeout_seconds": 60,
@@ -77,6 +88,11 @@ FEATURES = {
         "voice": True,
         "max_memories": None,       # unlimited
         "max_upload_mb": 100,
+        # --- video bay ---
+        "video_max_output_seconds": 180,
+        "video_max_quality": "max",
+        # --- image bay ---
+        "image_sizes": ("square", "portrait", "landscape", "wide", "tall"),
         "terminal_unrestricted": True,
         "terminal_timeout_seconds": 1800,
         "external_connectors": True,
@@ -167,4 +183,32 @@ def public_flags(plan):
         "external_connectors": f["external_connectors"],
         "max_output_tokens_code": f["max_output_tokens_code"],
         "pro_model_families": sorted(PRO_MODELS),
+        "video_max_output_seconds": f["video_max_output_seconds"],
+        "video_max_quality": f["video_max_quality"],
+        "image_sizes": list(f["image_sizes"]),
     }
+
+
+# Encoder presets in ascending cost, so a tier ceiling can be compared
+# against a request without the caller knowing the ordering.
+_QUALITY_ORDER = ("draft", "standard", "high", "max")
+
+
+def clamp_video_quality(plan, requested):
+    """The best encoder preset this plan may ask for.
+
+    Clamping beats refusing: someone on Free who asks for a max-quality
+    export gets a standard one and a render they can use, rather than an
+    error about a setting they probably did not choose deliberately.
+    """
+    ceiling = get(plan, "video_max_quality", "standard")
+    try:
+        want = _QUALITY_ORDER.index(requested)
+    except ValueError:
+        return ceiling
+    return _QUALITY_ORDER[min(want, _QUALITY_ORDER.index(ceiling))]
+
+
+def image_size_allowed(plan, size):
+    """Whether this plan may generate at this shape."""
+    return size in get(plan, "image_sizes", ())

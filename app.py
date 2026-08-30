@@ -410,6 +410,48 @@ CHAT_SYSTEM_PROMPT = (
     "it's actually warranted. Don't force markdown structure (headers, "
     "bullet lists) onto answers that read fine as plain prose. If code "
     "would genuinely help, use a fenced code block.\n\n"
+
+    # Maths gets its own section because the default failure mode is
+    # specific and fixable. A language model asked for an answer produces
+    # the shape of one immediately - fluent, confident, and wrong about a
+    # sign or a carry - because nothing asked it to do the work first.
+    # Every instruction below targets one identified way that goes wrong.
+    "MATHS\n"
+    "Work it out before answering. Do the algebra or arithmetic step by "
+    "step in the reply, then state the result - never open with the "
+    "answer and reconstruct the reasoning after it, which is how a wrong "
+    "one gets dressed up as a right one.\n"
+    "Then check it, and show the check. Substitute the solution back "
+    "into the original equation, differentiate the antiderivative, "
+    "confirm the count sums to the total. If the check fails, say so and "
+    "redo it rather than shipping the first attempt.\n"
+    "Sanity-check magnitude and sign before you commit: a probability "
+    "outside 0-1, a negative length, an answer that is a factor of a "
+    "thousand off, all mean something went wrong earlier.\n"
+    "Keep exact forms - 1/3, sqrt(2), pi/4, 22/7 - and only give a "
+    "decimal if it was asked for or the context is genuinely numeric. "
+    "Never round mid-working; round once, at the end, and say to what.\n"
+    "State assumptions when a question is underspecified (radians or "
+    "degrees, real or complex, inclusive or exclusive bounds) instead of "
+    "silently picking one.\n"
+    "For word problems, define what each variable means before using it. "
+    "Most wrong answers to word problems are right answers to a "
+    "different question.\n"
+    "Arithmetic is the weakest link, not the reasoning. Break multi-digit "
+    "multiplication, long division and big sums into steps you can see "
+    "rather than doing them in one jump - and where a calculation is "
+    "long or fiddly, say that running it in the Code bay would be more "
+    "reliable than doing it in your head.\n"
+    "Notation: this chat renders plain text, not LaTeX. Write x^2, "
+    "sqrt(x), <=, >=, !=, integral from 0 to 1, sum over i, and use a "
+    "fenced block for anything that needs alignment. Emitting "
+    "\\\\frac{a}{b} here produces literal backslashes on screen, not a "
+    "fraction.\n"
+    "If a problem is beyond what you can reliably do - a hard integral, "
+    "a large prime factorisation, anything needing real computation - say "
+    "so plainly and offer the method, rather than producing a confident "
+    "wrong number.\n\n"
+
     + moderation.CONTENT_POLICY_NUDGE
 )
 
@@ -428,43 +470,117 @@ DEFAULT_MODE = "code"
 # Guests (not signed in) get the free plan's allowance too, tracked in the
 # shared credits.json so the app still works without an account.
 # ----------------------------------------------------------------------
-CREDIT_COST_CHAT = 1  # floor cost, and the pre-flight "any balance at all" gate
-CREDIT_COST_IMAGE = 20  # flat - there's no output-length signal like token count here
-# Gemini costs the app owner real money past their free API quota, unlike
-# the local model which only costs CPU time - priced higher to reflect
-# that, not arbitrarily.
-CREDIT_COST_IMAGE_GEMINI = 40
+# WHAT A REQUEST COSTS
+#
+# The four bays do genuinely different amounts of work, and charging them
+# the same made the counter meaningless - a one-line chat reply and a
+# three-minute video render both moved it by the same amount, so nobody
+# could form any intuition about what anything costs.
+#
+# Each entry is calibrated to roughly what the work costs the machine
+# serving it, not to what feels expensive:
+#
+#   chat   cheapest. Short replies, small context, and the reply length
+#          is already known from the token count, so it can be metered
+#          exactly rather than guessed at.
+#   code   the same metering, weighted heavier: the code bay runs a
+#          larger context window and a much higher output ceiling, so an
+#          average request genuinely costs more to serve.
+#   image  a flat base scaled by pixel count. A 1344x768 is about 1.25x
+#          the work of a 1024 square, and pricing it identically would
+#          make the largest option the obvious free lunch.
+#   video  the expensive one, and the only one whose cost is real CPU on
+#          this box rather than someone else's GPU. Priced by output
+#          seconds and by the encoder preset, because those are exactly
+#          what determine how long a core is pinned.
+CREDIT_COST_CHAT = 1  # floor, and the pre-flight "any balance at all" gate
 
-# Real cost scales with how much the model actually had to generate -
-# Ollama reports the real token count per reply, so a one-line answer and
-# a 900-line refactor don't cost the same. 40 tokens/credit is a rough
-# calibration, not a real compute-cost measurement; adjust freely.
-CREDIT_TOKENS_PER_UNIT = 40
+# Tokens per credit, per bay. Higher number = cheaper.
+CREDIT_TOKENS_PER_UNIT = 60          # chat
+CREDIT_TOKENS_PER_UNIT_CODE = 35     # code - bigger context, longer output
+
+CREDIT_COST_IMAGE = 12               # base, before the size multiplier
+CREDIT_IMAGE_SIZE_MULTIPLIER = {
+    "square": 1.0,
+    "portrait": 1.15,
+    "landscape": 1.15,
+    "wide": 1.25,
+    "tall": 1.25,
+}
+
+CREDIT_COST_VIDEO = 15               # base, before duration and quality
+CREDIT_VIDEO_PER_SECOND = 1.5
+CREDIT_VIDEO_QUALITY_MULTIPLIER = {
+    "draft": 0.7,
+    "standard": 1.0,
+    "high": 1.6,
+    "max": 2.4,
+}
 
 
-def usage_based_cost(eval_count):
+def usage_based_cost(eval_count, mode="chat"):
+    """What a completed reply costs, from the tokens it actually produced.
+
+    Metered after the fact rather than estimated up front, because the
+    only honest signal for "how much work was that" is how much the model
+    actually generated - and that is not knowable until it has.
+    """
+    per_unit = (CREDIT_TOKENS_PER_UNIT_CODE if mode == "code"
+                else CREDIT_TOKENS_PER_UNIT)
     if not eval_count:
         return CREDIT_COST_CHAT
-    return max(CREDIT_COST_CHAT, round(eval_count / CREDIT_TOKENS_PER_UNIT))
+    return max(CREDIT_COST_CHAT, round(eval_count / per_unit))
 
 
+def image_cost(size):
+    """Flat base times a size multiplier. No token count exists here, so
+    pixels are the only honest proxy for work done."""
+    mult = CREDIT_IMAGE_SIZE_MULTIPLIER.get(size, 1.0)
+    return max(1, round(CREDIT_COST_IMAGE * mult))
+
+
+def video_cost(out_seconds, quality="standard"):
+    """Base + per-second, scaled by encoder preset.
+
+    A slower preset is not a surcharge for its own sake: -preset slow
+    genuinely occupies a core several times longer than veryfast for the
+    same footage, and on a two-core VM that is the scarcest thing here.
+    """
+    mult = CREDIT_VIDEO_QUALITY_MULTIPLIER.get(quality, 1.0)
+    seconds = max(0.0, float(out_seconds or 0))
+    return max(1, round((CREDIT_COST_VIDEO
+                         + seconds * CREDIT_VIDEO_PER_SECOND) * mult))
+
+
+# The gap between the tiers is throughput, and it is deliberately wide:
+# 2,500 credits an hour on Free against 25,000 on Pro. Ten to one sounds
+# aggressive until you price it - Pro is $1.99, so the question is not
+# whether the ratio is generous but whether Free is usable on its own,
+# and 5,000 credits is roughly 80 chat replies, 400 images, or a couple
+# of dozen video renders per two-hour window.
+#
+# Refill is a reset to the cap, not a trickle. That is the behaviour
+# people can actually reason about: "full again at half past" beats
+# working out an accrual rate.
 PLANS = {
     "free": {
         "label": "Free",
         "price": "$0",
-        "cap": 4000,
-        "refill_seconds": 60 * 60,  # 1 hour
-        "blurb": "4,000 credits hourly. Fast chat model, coding model, "
-                 "image generation, code execution, web search.",
+        "cap": 5000,
+        "refill_seconds": 2 * 60 * 60,  # 2 hours
+        "blurb": "5,000 credits, refilling every 2 hours. Fast chat and "
+                 "coding models, image generation, code execution, the "
+                 "video bay, and web search.",
     },
     "pro": {
         "label": "Pro",
         "price": "$1.99/mo",
-        "cap": 10000,
-        "refill_seconds": 15 * 60,  # 15 minutes
-        "blurb": "Everything in Free, plus the advanced 7B model, image "
-                 "understanding (vision), unlimited memory, long-form "
-                 "code past 1,000 lines, and 10,000 credits every 15 min.",
+        "cap": 25000,
+        "refill_seconds": 60 * 60,  # 1 hour
+        "blurb": "25,000 credits every hour - ten times the throughput. "
+                 "Plus the 7B model, vision, unlimited memory, long-form "
+                 "code, every image shape, and 3-minute max-quality video "
+                 "renders.",
     },
 }
 STARTING_CREDITS = PLANS["free"]["cap"]
@@ -2008,9 +2124,15 @@ def generate_image_route():
         backend = "flux"
     size = payload.get("size") or imagegen.DEFAULT_SIZE
     style = payload.get("style") or imagegen.DEFAULT_STYLE
+    # The widest shapes are ~25% more pixels and cost ~25% more to make,
+    # so they are a Pro shape. Falling back to square beats an error for
+    # a setting most people will not have chosen deliberately.
+    if not features.image_size_allowed(
+            current_account()[0].get("plan"), size):
+        size = imagegen.DEFAULT_SIZE
     # The hosted model is the better one and costs this app nothing, so it
     # is no longer the pricier option it was when hosted meant Imagen.
-    cost = CREDIT_COST_IMAGE
+    cost = image_cost(size)
 
     thread = THREADS.get(tid)
     if not thread or thread.get("owner_id") != current_owner_id():
@@ -2297,6 +2419,19 @@ def video_edit():
 
     ops, source, skipped, err = videoedit.plan(
         prompt, info["duration"], complete=_video_planner())
+
+    # A slower encoder preset pins a core for several times longer at the
+    # same footage length, and on a two-core VM that is the scarcest
+    # resource here - so the ceiling is a real capacity limit, not a
+    # paywall bolted onto a setting. Clamped rather than refused: someone
+    # on Free who says "best quality" gets a standard render they can
+    # use, not an error about an option they did not know they picked.
+    plan_name = current_account()[0].get("plan")
+    if ops:
+        for op in ops:
+            if op["op"] == "quality":
+                op["args"]["level"] = features.clamp_video_quality(
+                    plan_name, op["args"]["level"])
     if err or not ops:
         return jsonify({
             "error": err or "Nothing in that maps to an edit I can do.",
@@ -2535,7 +2670,8 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                 # user anything. Cost otherwise scales with what Ollama
                 # reports it actually generated, not a flat per-message fee.
                 if not flagged and not full_reply.startswith("["):
-                    spend_credits(usage_based_cost(usage.get("eval_count")))
+                    spend_credits(
+                        usage_based_cost(usage.get("eval_count"), mode))
 
     # stream_with_context keeps the request context alive for as long as the
     # generator is running. Without it Flask tears the context down as soon

@@ -837,6 +837,25 @@
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+    <!-- KaTeX, for maths.
+
+         The chat prompt asks for plain-text notation, and the model
+         mostly complies - but it still reaches for $x$ and \times for
+         inline symbols, because that is how it was trained and no
+         instruction reliably beats that. Printing those raw means
+         literal dollar signs and backslashes in front of the user.
+
+         Rendering them is the fix that works with the model rather than
+         against it: plain text still reads fine, and anything that does
+         arrive as LaTeX comes out typeset. Loaded after highlight.js and
+         used the same way - a pass over each finished bubble. -->
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css"
+    />
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
     <script src="{{ asset('script.js') }}"></script>
   </body>
 </html>

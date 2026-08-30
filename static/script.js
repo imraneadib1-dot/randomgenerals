@@ -531,6 +531,38 @@ imageQualityToggle.addEventListener("click", () => {
       : "Local Stable Diffusion - private, runs on this machine.";
 });
 
+/**
+ * Typeset any maths in a finished message.
+ *
+ * Runs over the bubble after its parts are in the DOM, never over
+ * streaming text: re-parsing a half-written formula on every token both
+ * costs real time and renders garbage from an expression that is not
+ * finished arriving yet.
+ *
+ * ignoredTags keeps it away from code. A shell command containing $PATH
+ * or a regex with $ is not maths, and letting KaTeX loose on a code
+ * block turns working code into a rendering error.
+ */
+function renderMath(el) {
+  if (!el || !window.renderMathInElement) return;
+  try {
+    window.renderMathInElement(el, {
+      delimiters: [
+        { left: "$$", right: "$$", display: true },
+        { left: "\\[", right: "\\]", display: true },
+        { left: "$", right: "$", display: false },
+        { left: "\\(", right: "\\)", display: false },
+      ],
+      ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
+      // A malformed expression shows as the original text in red rather
+      // than throwing and taking the rest of the message with it.
+      throwOnError: false,
+    });
+  } catch (e) {
+    /* maths is a nicety; a failure here must not lose the reply */
+  }
+}
+
 /* ----------------------------------------------------------------
    HTML preview
    ----------------------------------------------------------------
@@ -1115,6 +1147,13 @@ function renderContent(bubble, text) {
       bubble.appendChild(span);
     }
   });
+
+  // Last, once every part is in the DOM. renderContent is also called
+  // repeatedly while a reply streams, and KaTeX is happy to render a
+  // half-arrived expression as an error - but each call rebuilds the
+  // bubble from scratch, so the final one always renders the finished
+  // text and overwrites anything the earlier passes got wrong.
+  renderMath(bubble);
 }
 
 /* ----------------------------------------------------------------
