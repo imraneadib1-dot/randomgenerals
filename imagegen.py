@@ -1,30 +1,32 @@
-"""Text-to-image generation - two backends, one local and free, one
-cloud and optional.
+"""Text-to-image generation - two backends, one hosted and one local.
 
-**local** (the default, always available): a small diffusion model
-(stabilityai/sd-turbo, a distilled few-step model chosen specifically so
-CPU inference doesn't need the usual 20-50 steps) run on CPU deliberately,
-not GPU - this machine's ~8GB of VRAM is already mostly claimed by the
-Ollama models (see `ollama ps`), and fighting them for the same memory
-would just crash both. Slower (expect maybe 10-60s per image) but free,
-private, and reliable. Downloaded from Hugging Face the first time an
-image is actually requested, not at server startup - a few GB, one-time,
-cached under the usual Hugging Face cache directory afterward.
+**flux** (the default): FLUX.1 through Pollinations, which serves it over
+a plain GET with no account, no key and no signup. That combination is
+what makes it the right default here: this app is deployed on a free
+Oracle VM with no GPU, and every keyed alternative would mean either a
+credential to manage or a card on file for a feature people try once.
 
-**gemini** (opt-in, only if GEMINI_API_KEY is set in .env): calls
-Google's Imagen 3 through the Gemini API for noticeably higher image
-quality, at the cost of reintroducing a cloud dependency this app
-otherwise deliberately avoids (see app.py) and Google's own usage-based
-pricing past their free quota. Never the default - a user has to
-explicitly ask for it, and it silently isn't offered at all if no key is
-configured (see gemini_configured() below), same pattern as Google
-sign-in.
+It replaced Google's Imagen, which was the only hosted option before.
+Imagen needed GEMINI_API_KEY, and quality aside, tying image generation
+to the same key that answers chat meant one revoked key took out two
+unrelated features.
+
+**local** (opt-in): Stable Diffusion via diffusers, on this machine. Free
+and private, but it needs torch and realistically a GPU - on CPU a single
+picture takes minutes. It stays because "runs on your own hardware" is
+the point of this product, and because a local GPU beats any free hosted
+tier for turnaround and for not being rate-limited.
+
+Nothing here has a hard dependency on torch. It is imported inside
+_load_pipeline() so a deployment that skips the ~2.3GB of wheels still
+imports this module fine and simply reports the local backend as
+unavailable.
 """
-import base64
 import importlib.util
 import io
 import os
 import threading
+import urllib.parse
 import uuid
 
 import requests
@@ -32,194 +34,223 @@ import requests
 GENERATED_DIR = os.path.join("static", "generated")
 os.makedirs(GENERATED_DIR, exist_ok=True)
 
+# The local model. sd-turbo rather than full SD: it produces something
+# usable in 1-4 steps instead of 30-50, which is the difference between
+# "slow" and "unusable" on the hardware this is likely to meet.
 MODEL_ID = "stabilityai/sd-turbo"
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_IMAGE_MODEL = "imagen-3.0-generate-002"
-GEMINI_PREDICT_URL = (
-    f"https://generativelanguage.googleapis.com/v1beta/models/"
-    f"{GEMINI_IMAGE_MODEL}:predict"
-)
+# The hosted one.
+FLUX_MODEL = "flux"
+FLUX_URL = "https://image.pollinations.ai/prompt/"
+
+# Sizes offered to the UI. Kept to a small set of known-good shapes
+# rather than free numbers: diffusion models are trained at particular
+# resolutions and drift badly off them, and an arbitrary 1000x333 comes
+# back as a smeared mess rather than a wide picture.
+SIZES = {
+    "square": (1024, 1024),
+    "portrait": (896, 1152),
+    "landscape": (1152, 896),
+    "wide": (1344, 768),
+    "tall": (768, 1344),
+}
+DEFAULT_SIZE = "square"
+
+# Named looks, appended to the prompt. Data rather than code because this
+# is the part most likely to be tuned by eye.
+STYLES = {
+    "none": "",
+    "photo": ("photorealistic, 85mm lens, natural light, shallow depth "
+              "of field, high detail"),
+    "cinematic": ("cinematic still, dramatic lighting, anamorphic, film "
+                  "grain, colour graded"),
+    "art": "digital painting, painterly brushwork, rich colour, artstation",
+    "anime": "anime illustration, clean linework, cel shading, vibrant",
+    "3d": "3d render, octane, soft studio lighting, subsurface scattering",
+    "minimal": "minimal flat vector illustration, bold shapes, limited palette",
+}
+DEFAULT_STYLE = "none"
+
+_pipeline = None
+_pipeline_lock = threading.Lock()
+_local_error = ""
 
 
-def gemini_configured():
-    return bool(GEMINI_API_KEY)
-
-_pipe = None
-_pipe_lock = threading.Lock()
-_load_error = None
-
-
+# ------------------------------------------------------------------ local
 def _load_pipeline():
-    global _pipe, _load_error
-    if _pipe is not None or _load_error is not None:
-        return _pipe
-    with _pipe_lock:
-        if _pipe is None and _load_error is None:
-            try:
-                import torch
-                # pyright flags this as a private import and suggests
-                # diffusers.pipelines.auto_pipeline instead. That is the
-                # actual private path; this top-level name is what the
-                # diffusers docs tell you to use, and it works - it just
-                # arrives through a lazy module that pyright can't see
-                # into. Taking pyright's advice would couple this to
-                # diffusers' internal layout to silence a false positive.
-                from diffusers import AutoPipelineForText2Image  # type: ignore[reportPrivateImportUsage]  # noqa: E501
+    """Import torch and build the pipeline, once. -> (pipeline, error).
 
-                pipe = AutoPipelineForText2Image.from_pretrained(
-                    MODEL_ID, torch_dtype=torch.float32,
-                )
-                pipe.to("cpu")
-                _pipe = pipe
-            except Exception as e:
-                _load_error = str(e)
-    return _pipe
+    Everything heavy happens in here rather than at module scope so the
+    cloud build - which deliberately ships without torch - still imports
+    this file.
+    """
+    global _pipeline, _local_error
+    if _pipeline is not None or _local_error:
+        return _pipeline, _local_error
 
+    with _pipeline_lock:
+        if _pipeline is not None or _local_error:
+            return _pipeline, _local_error
+        try:
+            import torch
+            from diffusers import AutoPipelineForText2Image  # type: ignore
 
-def preload():
-    """Optional warm-up so the first real request isn't the one paying
-    for the download/load time - safe to call from a background thread
-    at startup, a no-op if it's already loaded or already failed."""
-    _load_pipeline()
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            dtype = torch.float16 if device == "cuda" else torch.float32
+            pipe = AutoPipelineForText2Image.from_pretrained(
+                MODEL_ID, torch_dtype=dtype, safety_checker=None)
+            pipe = pipe.to(device)
+            _pipeline = pipe
+        except Exception as e:                    # noqa: BLE001 - reported
+            _local_error = "Local image model unavailable: %s" % e
+    return _pipeline, _local_error
 
 
 def local_available():
-    """Can the local pipeline plausibly run here? Cheap enough to call
-    per request.
+    """Whether the local backend could run, without paying to find out.
 
-    Deliberately does NOT load the model. Loading takes around a minute
-    cold, and this gets called while deciding which tools to advertise
-    to the model - a decision that has to be instant. Checking that
-    torch and diffusers are importable is enough to tell a GPU box apart
-    from a cloud host that installed requirements-cloud.txt, which is
-    the distinction that actually matters.
-
-    If a load has already been attempted, its outcome is authoritative.
+    Checks that torch is importable rather than importing it: the import
+    itself costs seconds and hundreds of megabytes of RAM, which is a
+    silly price for answering a question about a button's enabled state.
     """
-    if _pipe is not None:
-        return True
-    if _load_error is not None:
-        return False
-    return (importlib.util.find_spec("torch") is not None
-            and importlib.util.find_spec("diffusers") is not None)
+    return importlib.util.find_spec("torch") is not None
+
+
+def preload():
+    """Warm the local pipeline in the background at startup, so the first
+    request does not pay the whole model-load cost."""
+    if local_available():
+        _load_pipeline()
 
 
 def available():
-    """True if image generation can work at all, by any backend."""
-    return gemini_configured() or local_available()
+    """True if image generation can work at all, by any backend.
+
+    The hosted backend needs no credentials, so this is effectively
+    always true - which is the point of choosing a keyless provider.
+    """
+    return True
 
 
-def _save_png_bytes(raw_bytes):
-    filename = f"{uuid.uuid4().hex[:12]}.png"
-    path = os.path.join(GENERATED_DIR, filename)
-    with open(path, "wb") as f:
-        f.write(raw_bytes)
-    url_dir = GENERATED_DIR.replace(os.sep, "/")
-    return f"/{url_dir}/{filename}"
+# ------------------------------------------------------------------ shared
+def _save_bytes(raw, ext="png"):
+    name = "%s.%s" % (uuid.uuid4().hex[:16], ext)
+    path = os.path.join(GENERATED_DIR, name)
+    with open(path, "wb") as fh:
+        fh.write(raw)
+    return "/static/generated/" + name
 
 
-QUALITY_SUFFIX = ", highly detailed, sharp focus, professional photography"
+def build_prompt(prompt, style=DEFAULT_STYLE):
+    """The prompt actually sent to the model.
+
+    A style is appended rather than substituted so the person's own words
+    stay first and keep their weight - diffusion models attend most to
+    the front of a prompt, so prefixing a style would quietly outrank
+    what they asked for.
+    """
+    prompt = (prompt or "").strip()
+    extra = STYLES.get(style, "")
+    return prompt + ", " + extra if extra else prompt
 
 
-def _enhance_prompt(prompt):
-    """sd-turbo is small enough that it leans heavily on descriptive
-    cues - a bare 'a cat' gives a much vaguer image than the same
-    prompt with quality/detail hints appended. Skipped when the user
-    already wrote a detailed prompt (their own wording should win) or
-    asked for a specific non-photographic style, where forcing
-    'professional photography' actively fights what they asked for."""
-    lowered = prompt.lower()
-    style_words = ("painting", "drawing", "sketch", "cartoon", "anime",
-                   "illustration", "watercolor", "pixel art", "3d render",
-                   "logo", "diagram", "comic")
-    if len(prompt) > 120 or any(w in lowered for w in style_words):
-        return prompt
-    return prompt + QUALITY_SUFFIX
+def _dimensions(size):
+    return SIZES.get(size, SIZES[DEFAULT_SIZE])
 
 
-def generate_image_local(prompt):
-    """-> (url, error). Exactly one of the two is set."""
-    pipe = _load_pipeline()
-    if pipe is None:
-        return None, f"Image model isn't available: {_load_error}"
+# ------------------------------------------------------------------ hosted
+def generate_image_flux(prompt, size=DEFAULT_SIZE, style=DEFAULT_STYLE,
+                        seed=None):
+    """FLUX.1 via Pollinations. -> (url, error)."""
+    width, height = _dimensions(size)
+    full = build_prompt(prompt, style)
+
+    # The prompt travels in the PATH, so it has to be percent-encoded with
+    # nothing left safe - a slash or question mark in someone's prompt
+    # would otherwise end the path or start the query string.
+    url = FLUX_URL + urllib.parse.quote(full, safe="")
+    params = {
+        "width": width,
+        "height": height,
+        "model": FLUX_MODEL,
+        "nologo": "true",
+        # Without this the service may return a previously generated image
+        # for the same prompt, so two people asking for "a cat" get the
+        # same cat.
+        "seed": seed if seed is not None else uuid.uuid4().int % 2_000_000_000,
+    }
 
     try:
-        # 2 steps, guidance 0.0 is not a shortcut - it's what sd-turbo is
-        # distilled for. Measured on this machine at 2/4/8 steps from the
-        # same seed: 4 and 8 came out *worse*, adding oversaturation and
-        # crosshatch artifacts, for roughly double the time. Raising this
-        # looks like an obvious quality win and isn't one.
-        result = pipe(
-            prompt=_enhance_prompt(prompt)[:400],
-            num_inference_steps=2,
-            guidance_scale=0.0,
-        )
-        image = result.images[0]
-    except Exception as e:
-        return None, f"Image generation failed: {e}"
+        r = requests.get(url, params=params, timeout=120)
+    except requests.exceptions.RequestException as e:
+        return None, "Could not reach the image service: %s" % e
+
+    if r.status_code != 200:
+        return None, ("The image service returned %d. It is free and "
+                      "unmetered, so this is usually load rather than "
+                      "anything wrong with the prompt - try again."
+                      % r.status_code)
+
+    ctype = (r.headers.get("Content-Type") or "").lower()
+    if not ctype.startswith("image/"):
+        return None, "The image service returned %s, not an image." % (
+            ctype or "nothing")
+    if len(r.content) < 1024:
+        return None, "The image service returned an empty image."
+
+    ext = "jpg" if "jpeg" in ctype or "jpg" in ctype else "png"
+    return _save_bytes(r.content, ext), None
+
+
+# ------------------------------------------------------------------ local
+def generate_image_local(prompt, size=DEFAULT_SIZE, style=DEFAULT_STYLE):
+    """Stable Diffusion on this machine. -> (url, error)."""
+    if not local_available():
+        return None, ("The local image model needs torch and diffusers, "
+                      "which are not installed here.")
+
+    pipe, err = _load_pipeline()
+    if err or pipe is None:
+        return None, err or "Local image model unavailable."
+
+    width, height = _dimensions(size)
+    # sd-turbo is trained at 512 and degrades badly above it, so the
+    # requested shape is honoured as an aspect ratio rather than as
+    # pixels. Rounded to a multiple of 8, which the VAE requires.
+    scale = 512.0 / max(width, height)
+    w = max(256, int(width * scale) // 8 * 8)
+    h = max(256, int(height * scale) // 8 * 8)
+
+    try:
+        image = pipe(
+            prompt=build_prompt(prompt, style),
+            num_inference_steps=4,
+            guidance_scale=0.0,     # turbo models are trained without it
+            width=w,
+            height=h,
+        ).images[0]
+    except Exception as e:                        # noqa: BLE001 - reported
+        return None, "Local image generation failed: %s" % e
 
     buf = io.BytesIO()
     image.save(buf, format="PNG")
-    return _save_png_bytes(buf.getvalue()), None
+    return _save_bytes(buf.getvalue(), "png"), None
 
 
-def generate_image_gemini(prompt):
+# ------------------------------------------------------------------ entry
+def generate_image(prompt, backend="flux", size=DEFAULT_SIZE,
+                   style=DEFAULT_STYLE, seed=None):
     """-> (url, error). Exactly one of the two is set.
 
-    Calls Google's Imagen 3 via the Gemini API's :predict endpoint. This
-    app has no way to test this against a real key (none is configured
-    in dev), so it's built to match Google's documented request/response
-    shape as closely as possible, with error handling specific enough
-    that a shape mismatch shows up as a clear message rather than a
-    silent crash - worth double-checking against Google's current docs
-    if this errors out, since REST API response shapes do shift.
+    `backend` is "flux" (hosted, the default, always available) or
+    "local" (this machine, only where torch is installed).
     """
-    if not GEMINI_API_KEY:
-        return None, "Gemini isn't configured (no GEMINI_API_KEY in .env)."
-
-    try:
-        r = requests.post(
-            GEMINI_PREDICT_URL,
-            params={"key": GEMINI_API_KEY},
-            json={
-                "instances": [{"prompt": prompt[:480]}],
-                "parameters": {"sampleCount": 1},
-            },
-            timeout=60,
-        )
-        r.raise_for_status()
-        data = r.json()
-        predictions = data.get("predictions") or []
-        if not predictions:
-            return None, "Gemini returned no image - the prompt may have been filtered."
-        b64_image = predictions[0].get("bytesBase64Encoded")
-        if not b64_image:
-            return None, "Unexpected response shape from Gemini's image API."
-        raw_bytes = base64.b64decode(b64_image)
-    except requests.exceptions.HTTPError as e:
-        detail = ""
-        try:
-            detail = e.response.json().get("error", {}).get("message", "")
-        except Exception:
-            pass
-        return None, f"Gemini image generation failed: {detail or e}"
-    except Exception as e:
-        return None, f"Gemini image generation failed: {e}"
-
-    return _save_png_bytes(raw_bytes), None
-
-
-def generate_image(prompt, backend="local"):
-    """-> (url, error). Exactly one of the two is set. `backend` is
-    "local" (default, always available) or "gemini" (only if
-    gemini_configured())."""
     prompt = (prompt or "").strip()
     if not prompt:
         return None, "Describe what you want to see."
+    if len(prompt) > 900:
+        return None, "That description is too long. Try a shorter one."
 
-    if backend == "gemini":
-        if not gemini_configured():
-            return None, "Gemini isn't configured on this server."
-        return generate_image_gemini(prompt)
-    return generate_image_local(prompt)
+    if backend == "local":
+        return generate_image_local(prompt, size, style)
+    return generate_image_flux(prompt, size, style, seed)

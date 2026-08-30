@@ -112,7 +112,25 @@ const imageModeControls = document.getElementById("imageModeControls");
 const imageQualityToggle = document.getElementById("imageQualityToggle");
 const imageModeNote = document.getElementById("imageModeNote");
 let geminiConfigured = false;
-let imageBackend = "local";
+// FLUX by default: it needs no key, so it is the one backend guaranteed
+// to work everywhere this app runs. Local is opt-in and only offered
+// where torch is actually installed.
+let imageBackend = "flux";
+let imageSize = "square";
+let imageStyle = "none";
+
+const imageSizeSelect = document.getElementById("imageSizeSelect");
+const imageStyleSelect = document.getElementById("imageStyleSelect");
+if (imageSizeSelect) {
+  imageSizeSelect.addEventListener("change", () => {
+    imageSize = imageSizeSelect.value;
+  });
+}
+if (imageStyleSelect) {
+  imageStyleSelect.addEventListener("change", () => {
+    imageStyle = imageStyleSelect.value;
+  });
+}
 
 const modelSelect = document.getElementById("modelSelect");
 const channelRow = document.getElementById("channelRow");
@@ -497,17 +515,111 @@ bayButtons.forEach((btn) =>
   btn.addEventListener("click", () => selectBay(btn.dataset.bay)),
 );
 
+// The toggle picks where the picture is made. It only appears at all if
+// a local model exists (see loadProviders) - on a host without torch
+// there is nothing to toggle between, so offering the choice would be
+// offering a broken option.
 imageQualityToggle.addEventListener("click", () => {
-  imageBackend = imageBackend === "local" ? "gemini" : "local";
+  imageBackend = imageBackend === "flux" ? "local" : "flux";
   imageQualityToggle.setAttribute(
     "aria-checked",
-    String(imageBackend === "gemini"),
+    String(imageBackend === "flux"),
   );
   imageModeNote.textContent =
-    imageBackend === "gemini"
-      ? "Gemini - higher quality, via Google's API, costs more credits."
-      : "Local generation - free, runs on this machine.";
+    imageBackend === "flux"
+      ? "FLUX - hosted, higher quality, no key needed."
+      : "Local Stable Diffusion - private, runs on this machine.";
 });
+
+/* ----------------------------------------------------------------
+   HTML preview
+   ----------------------------------------------------------------
+   Renders a generated page in a sandboxed iframe.
+
+   srcdoc plus a sandbox that grants scripts but NOT same-origin. That
+   combination is what makes this safe to offer: the page runs, so a
+   generated site with tabs or a menu actually works, but it is in an
+   opaque origin - it cannot read this document, cannot touch cookies or
+   localStorage, and cannot call the API with the visitor's session.
+
+   allow-scripts together with allow-same-origin would undo all of that,
+   which is why they are never both listed.
+   ---------------------------------------------------------------- */
+function isPreviewable(lang, content) {
+  if (!content) return false;
+  const l = (lang || "").toLowerCase();
+  if (l !== "html" && l !== "htm") return false;
+  // A fragment is not a page. Previewing one shows a bare line of text
+  // on white and looks broken, so the button only appears for something
+  // that is actually a document.
+  return /<html[\s>]|<!doctype html/i.test(content);
+}
+
+function downloadHtml(content) {
+  const blob = new Blob([content], { type: "text/html" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "page.html";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoked on a timer rather than immediately: Chrome cancels an
+  // in-flight download if the blob URL is released too early.
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+
+function openPreview(content) {
+  const existing = document.getElementById("htmlPreview");
+  if (existing) existing.remove();
+
+  const wrap = document.createElement("div");
+  wrap.className = "html-preview";
+  wrap.id = "htmlPreview";
+
+  const bar = document.createElement("div");
+  bar.className = "html-preview-bar";
+
+  const title = document.createElement("span");
+  title.textContent = "Preview";
+  bar.appendChild(title);
+
+  const spacer = document.createElement("span");
+  spacer.style.flex = "1";
+  bar.appendChild(spacer);
+
+  const openBtn = document.createElement("button");
+  openBtn.className = "copy-btn";
+  openBtn.textContent = "Open in tab";
+  openBtn.onclick = () => {
+    const blob = new Blob([content], { type: "text/html" });
+    window.open(URL.createObjectURL(blob), "_blank", "noopener");
+  };
+  bar.appendChild(openBtn);
+
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "copy-btn";
+  closeBtn.textContent = "Close";
+  closeBtn.onclick = () => wrap.remove();
+  bar.appendChild(closeBtn);
+
+  const frame = document.createElement("iframe");
+  frame.className = "html-preview-frame";
+  frame.setAttribute("sandbox", "allow-scripts allow-forms allow-popups");
+  frame.setAttribute("referrerpolicy", "no-referrer");
+  frame.srcdoc = content;
+
+  wrap.appendChild(bar);
+  wrap.appendChild(frame);
+  document.body.appendChild(wrap);
+
+  const onKey = (e) => {
+    if (e.key === "Escape") {
+      wrap.remove();
+      document.removeEventListener("keydown", onKey);
+    }
+  };
+  document.addEventListener("keydown", onKey);
+}
 
 /* ----------------------------------------------------------------
    Channel (provider) picker
@@ -960,6 +1072,26 @@ function renderContent(bubble, text) {
       };
       header.appendChild(copyBtn);
 
+      // A page you can look at, not just read the source of.
+      //
+      // This is the difference between "here is some HTML" and "here is
+      // your website". The model is asked for one self-contained file
+      // precisely so this works: no missing stylesheet, no broken script
+      // path, nothing to assemble before it renders.
+      if (isPreviewable(part.lang, part.content)) {
+        const previewBtn = document.createElement("button");
+        previewBtn.className = "copy-btn";
+        previewBtn.textContent = "Preview";
+        previewBtn.onclick = () => openPreview(part.content);
+        header.appendChild(previewBtn);
+
+        const saveBtn = document.createElement("button");
+        saveBtn.className = "copy-btn";
+        saveBtn.textContent = "Save .html";
+        saveBtn.onclick = () => downloadHtml(part.content);
+        header.appendChild(saveBtn);
+      }
+
       const pre = document.createElement("pre");
       const code = document.createElement("code");
       if (part.lang && part.lang !== "plaintext") {
@@ -1216,7 +1348,7 @@ async function sendImagePrompt(text) {
     "assistant",
     "",
     "imagegen",
-    imageBackend === "gemini" ? "Gemini" : "Local",
+    imageBackend === "flux" ? "FLUX" : "Local",
   );
   const msgEl = bubble.parentElement;
   msgEl.classList.add("streaming");
@@ -1238,6 +1370,8 @@ async function sendImagePrompt(text) {
         thread_id: currentThreadId,
         prompt: text,
         backend: imageBackend,
+        size: imageSize,
+        style: imageStyle,
       }),
     });
     const data = await res.json().catch(() => ({}));

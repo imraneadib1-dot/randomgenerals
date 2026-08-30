@@ -2841,6 +2841,68 @@ html.time-night .night-moon {
 /* ---------------------------------------------------------------- */
 /* Video bay                                                         */
 /* ---------------------------------------------------------------- */
+/* The image bay's shape and look pickers. Matched to the model select
+   above them rather than styled fresh - they sit in the same column and
+   do the same kind of job, so looking different would imply they work
+   differently. */
+/* The HTML preview overlay. Fixed and centred over the app rather than
+   inline in the transcript: a rendered page needs room, and a 300px-tall
+   iframe wedged between two chat bubbles shows nobody anything. */
+.html-preview {
+  position: fixed;
+  inset: 5vh 5vw;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  background: var(--panel);
+  box-shadow: var(--shadow-card);
+}
+
+.html-preview-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* White, not the app's dark ground. The page inside is somebody else's
+   design and most pages assume a white canvas; showing it on dark would
+   misrepresent what they built. */
+.html-preview-frame {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  background: #fff;
+}
+
+.image-select {
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.image-select:focus-visible {
+  outline: 2px solid var(--bay);
+  outline-offset: 1px;
+}
+
 .video-bay {
   flex: 1;
   min-height: 0;

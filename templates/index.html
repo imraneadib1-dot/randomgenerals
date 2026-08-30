@@ -194,24 +194,46 @@
           </div>
 
           <div id="imageModeControls" hidden>
-            <div class="patch-bay-label">Image quality</div>
+            <div class="patch-bay-label">Shape</div>
+            <select class="image-select" id="imageSizeSelect">
+              <option value="square">Square &middot; 1024</option>
+              <option value="portrait">Portrait &middot; 4:5</option>
+              <option value="landscape">Landscape &middot; 5:4</option>
+              <option value="wide">Wide &middot; 16:9</option>
+              <option value="tall">Tall &middot; 9:16</option>
+            </select>
+
+            <div class="patch-bay-label">Look</div>
+            <select class="image-select" id="imageStyleSelect">
+              <option value="none">Straight &middot; no styling</option>
+              <option value="photo">Photographic</option>
+              <option value="cinematic">Cinematic</option>
+              <option value="art">Digital painting</option>
+              <option value="anime">Anime</option>
+              <option value="3d">3D render</option>
+              <option value="minimal">Minimal vector</option>
+            </select>
+
+            <!-- Only shown when a local model actually exists. On a host
+                 without torch there is nothing to switch between, so the
+                 control stays hidden rather than offering a dead option. -->
             <button
               type="button"
               class="mode-toggle"
               id="imageQualityToggle"
               role="switch"
-              aria-checked="false"
-              title="Local: free, private, runs on this machine. Gemini: higher quality via Google's API."
+              aria-checked="true"
+              title="FLUX: hosted, higher quality, no key needed. Local: private, runs on this machine, needs a GPU to be quick."
               hidden
             >
               <span class="mode-toggle-label">Local</span>
               <span class="mode-toggle-track" aria-hidden="true">
                 <span class="mode-toggle-thumb"></span>
               </span>
-              <span class="mode-toggle-label">Gemini</span>
+              <span class="mode-toggle-label">FLUX</span>
             </button>
             <div class="channel-note" id="imageModeNote">
-              Local generation - free, runs on this machine.
+              FLUX - hosted, higher quality, no key needed.
             </div>
           </div>
 

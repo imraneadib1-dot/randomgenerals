@@ -324,7 +324,43 @@ CODING_SYSTEM_PROMPT = (
     "and make sure it's complete and runnable, not pseudocode, unless "
     "the user asked for an outline. Prefer concise explanations over "
     "long prose. Ask a clarifying question only if the request is "
-    "genuinely ambiguous."
+    "genuinely ambiguous.\n\n"
+
+    # Websites get their own brief, because a general "write good code"
+    # instruction produces a page that is valid and looks like 2003:
+    # unstyled headings, Times New Roman, everything flush left. Nothing
+    # in a correctness-focused prompt says anything about design, so the
+    # model optimises for the thing it was asked about. Every line below
+    # names one specific difference between a page that works and a page
+    # someone would actually ship.
+    "WHEN ASKED FOR A WEBSITE, PAGE, OR LANDING PAGE\n"
+    "Return ONE complete ```html block containing the whole thing - "
+    "<!doctype html>, a <style> block, and a <script> block if it needs "
+    "one. One file, so it can be previewed and saved directly. Do not "
+    "split it across separate html/css/js blocks unless asked, and never "
+    "link to a stylesheet or script that does not exist.\n"
+    "Make it finished, not a skeleton:\n"
+    "- Real content. Write actual headlines and copy about their subject. "
+    "Never ship lorem ipsum, 'Your text here', or empty placeholder "
+    "sections - a page full of placeholders is not a draft, it is homework "
+    "for the person who asked.\n"
+    "- A deliberate palette of 3-4 colours as CSS custom properties at the "
+    "top, so the page can be re-themed by editing one block. Never leave "
+    "it on browser defaults.\n"
+    "- Web fonts from Google Fonts via <link>, with a real fallback stack. "
+    "Type is most of the reason a page reads as designed or doesn\'t.\n"
+    "- Responsive: grid or flex, relative units, and at least one "
+    "breakpoint so it does not fall apart on a phone.\n"
+    "- Generous whitespace, a clear type scale, and states on everything "
+    "interactive - including :focus-visible, not only :hover.\n"
+    "- Semantic HTML (header, nav, main, section, footer) and alt text on "
+    "every image.\n"
+    "- For photos use https://picsum.photos/seed/<word>/<width>/<height>, "
+    "which returns a real image. Never invent an image URL.\n"
+    "- Motion only where it earns its place: a hover transition, a quiet "
+    "reveal. No carousels nobody asked for.\n"
+    "Then say in one line what you built and which custom properties to "
+    "edit to re-theme it. Do not narrate the code."
     # No CONTENT_POLICY_NUDGE here on purpose - adding it caused
     # qwen2.5-coder to false-positive refuse completely benign requests
     # (verified: a Flask CRUD API for a library system got refused with
@@ -1463,7 +1499,12 @@ def list_providers():
         })
     return jsonify({
         "providers": providers,
-        "gemini_configured": imagegen.gemini_configured(),
+        # Kept under its old name because the frontend reads it to decide
+        # whether to offer a second image backend at all. It now means
+        # "is there a local model as well", the hosted one being always on.
+        "gemini_configured": imagegen.local_available(),
+        "image_sizes": list(imagegen.SIZES),
+        "image_styles": list(imagegen.STYLES),
     })
 
 
@@ -1947,19 +1988,29 @@ def save_instructions_route():
 
 
 # ----------------------------------------------------------------------
-# Image generation - a small local diffusion model (see imagegen.py),
-# not Ollama - Ollama only serves LLMs. Runs on CPU so it never fights
-# the chat models for the GPU's limited VRAM; slower, but reliable.
+# Image generation - see imagegen.py, not Ollama, which only serves LLMs.
+#
+# Two backends: FLUX hosted (the default, needs no key and so works on a
+# GPU-less host) and Stable Diffusion locally where torch is installed.
+# Google's Imagen used to be the hosted option; it was dropped because it
+# needed the same key as chat, so revoking one key took out two features.
 # ----------------------------------------------------------------------
 @app.route("/api/generate-image", methods=["POST"])
 def generate_image_route():
     payload = request.get_json(force=True, silent=True) or {}
     tid = payload.get("thread_id")
     prompt = (payload.get("prompt") or "").strip()
-    backend = "gemini" if payload.get("backend") == "gemini" else "local"
-    if backend == "gemini" and not imagegen.gemini_configured():
-        backend = "local"
-    cost = CREDIT_COST_IMAGE_GEMINI if backend == "gemini" else CREDIT_COST_IMAGE
+    backend = "local" if payload.get("backend") == "local" else "flux"
+    # Asking for local on a host without torch is a request that cannot be
+    # served; falling back beats an error for something the person did not
+    # choose and probably cannot see.
+    if backend == "local" and not imagegen.local_available():
+        backend = "flux"
+    size = payload.get("size") or imagegen.DEFAULT_SIZE
+    style = payload.get("style") or imagegen.DEFAULT_STYLE
+    # The hosted model is the better one and costs this app nothing, so it
+    # is no longer the pricier option it was when hosted meant Imagen.
+    cost = CREDIT_COST_IMAGE
 
     thread = THREADS.get(tid)
     if not thread or thread.get("owner_id") != current_owner_id():
@@ -1986,7 +2037,8 @@ def generate_image_route():
     if thread["title"] == "New chat":
         thread["title"] = prompt[:40]
 
-    url, error = imagegen.generate_image(prompt, backend=backend)
+    url, error = imagegen.generate_image(
+        prompt, backend=backend, size=size, style=style)
 
     if error:
         thread["updated"] = now_iso()
@@ -1998,7 +2050,7 @@ def generate_image_route():
         "content": url,
         "type": "image",
         "provider": "imagegen",
-        "model": imagegen.GEMINI_IMAGE_MODEL if backend == "gemini" else imagegen.MODEL_ID,
+        "model": imagegen.FLUX_MODEL if backend == "flux" else imagegen.MODEL_ID,
     })
     thread["updated"] = now_iso()
     save_threads()
@@ -2181,7 +2233,7 @@ def video_upload():
         os.remove(path)
         return jsonify({
             "error": f"That file is {size / 1048576:.0f}MB. "
-                     f"The limit is {limit_mb}MB."
+            f"The limit is {limit_mb}MB."
         }), 400
 
     info, err = videoedit.probe(path)
@@ -2192,7 +2244,7 @@ def video_upload():
         os.remove(path)
         return jsonify({
             "error": f"That clip is {info['duration'] / 60:.0f} minutes long. "
-                     f"The limit is {videoedit.MAX_INPUT_SECONDS // 60}."
+            f"The limit is {videoedit.MAX_INPUT_SECONDS // 60}."
         }), 400
 
     info.update({
