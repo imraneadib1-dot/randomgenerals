@@ -17,3 +17,10 @@ python-docx==1.2.0
 # Production WSGI server. Flask's built-in server is single-process and
 # explicitly not for public traffic; Render runs this instead.
 gunicorn==23.0.0
+
+# Symbolic maths, for the code sandbox. codeexec.py grants this one
+# package by name (see the note there) so generated maths can actually be
+# computed rather than reasoned about - which means it has to be present
+# on the server, not only on a developer machine. ~40MB with mpmath, and
+# pure Python, so it adds no build step on ARM.
+sympy==1.14.0

@@ -12,8 +12,16 @@ What this actually protects against:
     not broken.
   - Third-party packages: runs with -I -S (isolated mode, site module
     skipped), so nothing pip-installed for this app (flask, torch,
-    diffusers, ...) is importable - only the standard library is
-    available to the code being run.
+    diffusers, ...) is importable - only the standard library, plus
+    sympy, is available to the code being run.
+
+    sympy is the single exception, and it is granted by NAME rather than
+    by relaxing the flags. It earns that because it is what makes the
+    maths real: a model doing symbolic integration in its head is
+    guessing with good grammar, while the same model writing three lines
+    of sympy and running them is computing. sympy is also pure Python
+    with no network or filesystem behaviour of its own, so it widens what
+    executed code can calculate without widening what it can reach.
   - A throwaway temp directory as its working directory, deleted
     immediately after, so it isn't casually reading/writing this
     project's real files.
@@ -174,6 +182,65 @@ def _apply_job_object_limit(pid):
         return None
 
 
+# Where sympy actually lives, resolved from this process's own imports
+# rather than guessed at. If it is not installed the list is empty, the
+# prelude is empty, and executed code simply cannot import it.
+def _math_paths():
+    paths = []
+    for name in ("sympy", "mpmath"):
+        try:
+            module = __import__(name)
+        except ImportError:
+            continue
+        f = getattr(module, "__file__", None)
+        if not f:
+            continue
+        parent = os.path.dirname(os.path.dirname(os.path.abspath(f)))
+        if parent not in paths:
+            paths.append(parent)
+    return paths
+
+
+MATH_PATHS = _math_paths()
+
+# WHY A FINDER RATHER THAN sys.path
+#
+# sympy lives in site-packages, so its parent directory IS
+# site-packages. Prepending that to sys.path puts flask, requests, torch
+# and everything else back within reach - precisely what -I -S exists to
+# prevent. The first version of this did exactly that, and `import
+# requests` started succeeding inside the sandbox.
+#
+# A meta_path finder answers for sympy and mpmath only and returns None
+# for every other name, so everything else falls through to the normal
+# finders, which still cannot see site-packages at all.
+_HOOK_SRC = (
+    "import sys, importlib.machinery as _m\n"
+    "_allow = {'sympy', 'mpmath'}\n"
+    "_roots = %r\n"
+    "class _MathOnly:\n"
+    "    def find_spec(self, name, path=None, target=None):\n"
+    "        if name.split('.')[0] not in _allow:" "\n"
+    "            return None\n"
+    "        return _m.PathFinder.find_spec("
+    "name, list(path) if path else _roots, target)\n"
+    "sys.meta_path.insert(0, _MathOnly())\n"
+)
+
+
+def _prelude():
+    """Setup prepended to every script, as ONE physical line.
+
+    exec of a source string rather than the source itself, so a
+    traceback's line numbers still match what the user wrote - a
+    multi-line prelude shifts every number and makes every error message
+    point at the wrong line.
+    """
+    if not MATH_PATHS:
+        return ""
+    return "exec(%r)\n" % (_HOOK_SRC % (MATH_PATHS,))
+
+
 def run_python(code):
     """-> {stdout, stderr, timed_out, error}. `error` is only set for
     problems on this app's side (e.g. couldn't create the temp dir);
@@ -188,7 +255,7 @@ def run_python(code):
     proc = None
     try:
         with open(script_path, "w", encoding="utf-8") as f:
-            f.write(code)
+            f.write(_prelude() + code)
 
         # -I: isolated mode (ignores env vars, no user site dir).
         # -S: skips site.py entirely - this is the flag that actually
