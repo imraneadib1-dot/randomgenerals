@@ -316,20 +316,22 @@ h3 {
   justify-content: space-between;
   gap: 24px;
   width: 100%;
-  padding: 18px max(24px, calc((100% - var(--maxw)) / 2 + 24px));
+  /* Full bleed, not centred in the max-width column. The brand sits at
+     the edge of the screen rather than floating in from it, which is
+     what stops the bar reading as a boxed-in panel laid over the page. */
+  padding: 18px clamp(20px, 3vw, 40px);
   box-sizing: border-box;
-  -webkit-backdrop-filter: blur(14px) saturate(120%);
-  backdrop-filter: blur(14px) saturate(120%);
-  /* A veil of the page's own ground, not a dark bar. It is strongest
-     at the top edge, where the links sit, and thins downward so the
-     footage still reads through the bottom of it - the blur behind is
-     what keeps the links legible over whatever is passing underneath. */
-  background: linear-gradient(
-    180deg,
-    rgb(var(--ground) / 0.86) 0%,
-    rgb(var(--ground) / 0.58) 100%
-  );
+  /* Blur without a fill. The bar is transparent over the hero so the
+     footage runs behind it uninterrupted - the blur alone is what keeps
+     the links readable, by softening whatever is passing underneath
+     rather than by covering it. */
+  -webkit-backdrop-filter: blur(16px) saturate(120%);
+  backdrop-filter: blur(16px) saturate(120%);
+  background: transparent;
   border-bottom: 1px solid transparent;
+  /* The links and brand still need to survive a bright frame with no
+     panel behind them, so they carry their own shadow instead. */
+  text-shadow: 0 1px 12px rgb(var(--shade) / 0.65);
   transition:
     padding 0.28s cubic-bezier(0.22, 1, 0.36, 1),
     background 0.28s ease,
@@ -344,6 +346,8 @@ h3 {
   padding-bottom: 11px;
   background: rgb(var(--ground) / 0.94);
   border-bottom-color: var(--line);
+  /* No shadow needed once there is a solid bar behind the type. */
+  text-shadow: none;
 }
 .nav-brand {
   display: flex;
@@ -484,9 +488,9 @@ section {
      which is not the same thing as being impressive. A serif this large
      also starts competing with the footage behind it instead of sitting
      on it. */
-  font-size: clamp(32px, 4.4vw, 56px);
+  font-size: clamp(26px, 3.3vw, 42px);
   font-weight: 500;
-  line-height: 1.08;
+  line-height: 1.1;
   /* Serifs at display size want their letters closer than the metrics
      ship with, and no negative tracking beyond that - tightening a high
      contrast serif collapses the thin strokes into the thick ones. */
@@ -1864,7 +1868,12 @@ body::before {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  /* Lifted off dead centre. Optically centred text in a full-height box
+     sits low, because the eye reads the middle of a block as being above
+     its geometric centre - and here it also left the headline competing
+     with the horizon in the footage rather than sitting above it. */
   justify-content: center;
+  padding-bottom: clamp(60px, 12vh, 140px);
 }
 
 /* The strip's last screen dissolves into the page rather than stopping
@@ -1910,15 +1919,33 @@ body::before {
 /* The crest catches a little of the same light the vine does; the foot
    is the page's own ground, so the shapes dissolve into the section
    below instead of sitting on top of it as two cut-outs. */
+/* Sand, not page-blue. The old fill was two steps of the ground colour,
+   which is why the shapes read as abstract curves - nothing about them
+   said desert. These are the dune tones from the footage above: warm
+   grey-brown catching the last of the light at the ridge, falling
+   through a cooler mid into the page's own ground at the foot. */
 .dune-pass {
-  --dune-crest: #22384a;
+  --dune-lit: #a68a63;
+  --dune-mid: #3a3f4c;
   --dune-foot: #182a3a;
 }
 
+/* The lee slope. Darker than the body and semi-transparent so it reads
+   as the same sand in shadow rather than as a separate object. */
+.dune-face {
+  fill: rgb(var(--shade) / 0.62);
+}
+
+/* The lit edge of the crest. Brighter than before and warmer, because
+   this is the one line in the whole shape that says "the sun is over
+   there" - at 0.5 opacity it read as a drawn outline instead. */
 .dune-rim {
-  stroke: rgb(var(--accent-rgb) / 0.5);
-  stroke-width: 1.25;
+  stroke: rgb(var(--accent-rgb) / 0.85);
+  stroke-width: 1.5;
   vector-effect: non-scaling-stroke;
+  /* A soft bloom along the ridge, the way a lit sand edge actually
+     behaves against a dark sky. */
+  filter: drop-shadow(0 0 6px rgb(var(--accent-rgb) / 0.4));
 }
 
 /* The parting. scroll-scene.js writes --open from 0 to 1 across the last
