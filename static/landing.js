@@ -23,12 +23,19 @@ function writePref(key, value) {
 const scrollProgress = document.getElementById("scrollProgress");
 const scrollTopBtn = document.getElementById("scrollTop");
 
+const nav = document.querySelector(".nav");
+
 function onScroll() {
   const doc = document.documentElement;
   const max = doc.scrollHeight - doc.clientHeight;
   const pct = max > 0 ? (doc.scrollTop / max) * 100 : 0;
   scrollProgress.style.width = `${pct}%`;
   scrollTopBtn.hidden = doc.scrollTop < 300;
+  // Over the hero the bar is a veil on moving footage and wants to stay
+  // out of the way; past it there is text underneath, and a half-
+  // transparent bar over a paragraph is just hard to read. So it
+  // condenses once the first screen is behind you.
+  if (nav) nav.classList.toggle("is-condensed", doc.scrollTop > 80);
 }
 
 // rAF-throttled: scroll fires far more often than the screen repaints,
@@ -195,16 +202,24 @@ document
       }
     };
 
-    // setTimeout rather than requestAnimationFrame. rAF is the usual
-    // choice and pauses politely in background tabs, but it did not run
-    // at all under test here, so every throttled check after the first
-    // was silently dropped. A 60ms timer is coarser than a frame and
-    // entirely sufficient: the CSS transition does the smoothing, this
-    // only decides when to start it.
+    // rAF, with the poll below as the safety net rather than the engine.
+    //
+    // This used to be a 60ms timer, on the grounds that rAF had been
+    // seen not running here at all - and a dropped callback leaves
+    // `queued` stuck true, so every later request returns early against
+    // a frame that is never coming, and the sections stay at opacity 0.
+    // That is a real failure and worth designing around, but a timer is
+    // not the way: it means an element can sit an eighth of a second
+    // past its trigger point before it starts moving, which is exactly
+    // long enough to read as the page lagging behind the scroll.
+    //
+    // So rAF starts the reveal, and the poll clears `queued` if a frame
+    // never arrives. Fast when frames work, self-healing when they do
+    // not.
     const request = () => {
       if (queued) return;
       queued = true;
-      window.setTimeout(check, 60);
+      requestAnimationFrame(check);
     };
 
     window.addEventListener("scroll", request, { passive: true });
@@ -225,6 +240,9 @@ document
         window.clearInterval(poll);
         return;
       }
+      // Clearing the flag is the half that matters: without it a single
+      // dropped animation frame would wedge `request` permanently.
+      queued = false;
       check();
     }, 350);
 

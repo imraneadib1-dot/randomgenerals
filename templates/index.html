@@ -81,7 +81,6 @@
         role="tablist"
         aria-label="Workspace"
       >
-        <span class="bay-puck" id="bayPuck" aria-hidden="true"></span>
         <button
           class="bay-btn"
           data-bay="code"
@@ -108,6 +107,16 @@
         >
           <span class="bay-icon">✺</span>
           <span>Image</span>
+        </button>
+        <button
+          type="button"
+          class="bay-btn"
+          data-bay="video"
+          role="tab"
+          aria-selected="false"
+        >
+          <span class="bay-icon">▶</span>
+          <span>Video</span>
         </button>
       </div>
 
@@ -238,6 +247,112 @@
             delete
           </button>
         </header>
+
+        <!-- Video bay. A separate panel rather than a message thread:
+             trimming is a form with a preview, not a conversation, and
+             forcing it into the chat log would mean inventing a message
+             type for a range slider. -->
+        <section class="video-bay" id="videoBay" hidden aria-label="Video">
+          <div class="video-inner">
+            <div class="video-drop" id="videoDrop" tabindex="0" role="button"
+                 aria-label="Choose a video file">
+              <input type="file" id="videoFile" accept="video/*" hidden />
+              <div class="video-drop-icon" aria-hidden="true">▶</div>
+              <p class="video-drop-title">Drop a clip, or click to choose one</p>
+              <p class="video-drop-sub" id="videoLimits">MP4, MOV, WebM, MKV or AVI</p>
+            </div>
+
+            <div class="video-work" id="videoWork" hidden>
+              <video class="video-preview" id="videoPreview" controls
+                     playsinline disablepictureinpicture
+                     controlslist="nodownload noremoteplayback"></video>
+
+              <div class="video-meta" id="videoMeta"></div>
+
+              <!-- The prompt is the control. The sliders below still
+                   work and are better for finding an exact frame, so
+                   they stay - folded away, because reaching for them is
+                   the exception now. -->
+              <form class="video-ask" id="videoAsk">
+                <label class="video-ask-label" for="videoPrompt">
+                  Describe the edit
+                </label>
+                <textarea
+                  id="videoPrompt"
+                  class="video-prompt"
+                  rows="3"
+                  maxlength="600"
+                  placeholder="Write it however you'd say it out loud &mdash; as many changes as you want, in one go. &quot;Cut the first 4 seconds, make it vertical for tiktok on a blurred background, warm moody grade, yellow caption 'day one' over the first 3 seconds, then fade out.&quot;"
+                ></textarea>
+                <p class="video-ask-hint">
+                  Cutting, speed, reframing, cropping, colour, captions with
+                  their own timing, grain, stabilising, audio, fades, GIFs.
+                  Ask for several at once &mdash; anything it can't do gets
+                  named back to you rather than quietly dropped.
+                </p>
+                <div class="video-examples" id="videoExamples">
+                  <span class="video-examples-lead">Try</span>
+                  <button type="button" data-ex="vertical for tiktok with a blurred background">vertical + blur</button>
+                  <button type="button" data-ex="moody teal and orange grade with a slow zoom in">colour grade</button>
+                  <button type="button" data-ex="yellow caption &quot;YOUR TEXT&quot; over the first 3 seconds">timed caption</button>
+                  <button type="button" data-ex="crop to the left half and pad it to 16:9 with black bars">crop + bars</button>
+                  <button type="button" data-ex="cut out 5 to 10 seconds">cut the middle</button>
+                  <button type="button" data-ex="boomerang it and export as a gif">boomerang GIF</button>
+                  <button type="button" data-ex="stabilize the shaky footage, denoise it, and even out the audio">clean it up</button>
+                  <button type="button" data-ex="slow motion, film grain, fade out, export in high quality">slow-mo + grain</button>
+                </div>
+                <button type="submit" class="video-go" id="videoRun">
+                  Apply
+                </button>
+              </form>
+
+              <details class="video-manual">
+                <summary>Or set the range by hand</summary>
+                <div class="video-range">
+                  <div class="video-range-row">
+                    <label for="videoStart">Start</label>
+                    <input type="range" id="videoStart" min="0" max="100"
+                           step="0.1" value="0" />
+                    <output id="videoStartOut">0:00</output>
+                  </div>
+                  <div class="video-range-row">
+                    <label for="videoEnd">End</label>
+                    <input type="range" id="videoEnd" min="0" max="100"
+                           step="0.1" value="100" />
+                    <output id="videoEndOut">0:00</output>
+                  </div>
+                </div>
+                <div class="video-actions">
+                  <label class="video-size">
+                    Size
+                    <select id="videoScale">
+                      <option value="">Keep original</option>
+                      <option value="1080">1080p</option>
+                      <option value="720">720p</option>
+                      <option value="480">480p</option>
+                    </select>
+                  </label>
+                  <span class="video-selection" id="videoSelection"></span>
+                  <button type="button" class="video-go video-go-quiet" id="videoGo">
+                    Trim and export
+                  </button>
+                </div>
+              </details>
+
+              <div class="video-plan" id="videoPlan" hidden></div>
+              <div class="video-status" id="videoStatus" hidden></div>
+
+              <div class="video-result" id="videoResult" hidden>
+                <video class="video-preview" id="videoOut" controls playsinline
+                       disablepictureinpicture
+                       controlslist="noremoteplayback"></video>
+                <a class="video-download" id="videoDownload" download>
+                  Download MP4
+                </a>
+              </div>
+            </div>
+          </div>
+        </section>
 
         <main class="chat-shell">
           <div class="chat-log" id="chatLog">

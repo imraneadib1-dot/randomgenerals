@@ -4,30 +4,99 @@
    Deliberately its own stylesheet, not an extension of style.css:
    the app is a dense, functional workspace and this is a wide,
    airy marketing page. They share a palette (see the tokens below,
-   which style.css mirrors for its dark theme) but almost no
+   which style.css states again in its own names) but almost no
    components, so sharing a file would mean two sets of rules
    constantly guarding against each other.
 
-   Dark charcoal ground, neon cyan accent, generous vertical
-   rhythm. Everything is one accent colour away from being
-   re-themed.
+   Dark navy ground, peach type, terracotta on everything you act
+   on, generous vertical rhythm. Dark is not a mode here - there is
+   no light variant to switch to, because the page sits on desert
+   footage shot at dusk and a light ground has nothing to offer it.
+   Everything below is expressed in tokens, so the palette is the
+   only thing that has to change to re-theme the page.
    ============================================================ */
 :root {
-  --ink-0: #120d0a;
-  --ink-1: #1a130e;
-  --ink-2: #241a14;
-  --ink-3: #33251b;
-  --line: rgba(226, 190, 150, 0.11);
-  --line-bright: rgba(224, 164, 88, 0.32);
+  /* Same five colours as the app (static/style.css), same roles: navy
+     ground, peach text, terracotta as the thing you act on. The names
+     differ because this stylesheet predates the app's, and renaming
+     them across both files would be churn for no gain - the values are
+     what have to agree, and they do. */
+  /* THE PALETTE
+     Five colours, and the contrast maths decides which does what rather
+     than which looks nicest as a swatch. Measured against the ground:
 
-  --text: #f3e7d6;
-  --text-soft: #c0ab92;
-  --text-faint: #8f7d68;
+       Burlywood          #D6BB80   7.88:1  -> accent, and readable as type
+       Yankees Blue       #182A3A     --    -> the ground itself
+       Deep Space Sparkle #425B6F   2.07:1  -> surfaces and edges only
+       Dark Tan           #A08348   4.08:1  -> accent surfaces, not type
+       Smoke              #7A7E74   3.54:1  -> the quietest labels
 
-  --accent: #c2673d;
-  --accent-2: #e0a458;
-  --accent-glow: rgba(194, 103, 61, 0.20);
+     The two that cannot carry body text are the two doing structural
+     work, which is what makes this set hang together: the golds separate
+     into a light one you can read and a dark one you sit on, and the
+     blues separate into a ground and a raised surface. Nothing is asked
+     to do a job its luminance cannot support.
 
+     Body copy is Smoke lifted along its own hue rather than faded to
+     white - it keeps the warm-grey cast that ties the type to the sand
+     instead of introducing a sixth colour. */
+
+  /* Grounds. ink-0 is Yankees Blue; the steps climb toward Deep Space
+     Sparkle, which is ink-3 exactly. */
+  --ink-0: #182a3a;
+  --ink-1: #1e3346;
+  --ink-2: #2a4155;
+  --ink-3: #425b6f;
+
+  /* Hairlines are Burlywood at low alpha. At 18% nobody reads a colour,
+     they read that the edges are warm against a cool ground. */
+  --line: rgba(214, 187, 128, 0.2);
+  --line-bright: rgba(214, 187, 128, 0.52);
+
+  /* Smoke, lifted twice for reading and left as itself for labels. */
+  --text: #dfe2dc;
+  --text-soft: #a9ada5;
+  --text-faint: #7a7e74;
+
+  /* On a gold surface the type has to be the ground colour: Yankees Blue
+     on Burlywood is 7.9:1, and on Dark Tan still clears large-text AA.
+     Light type on Dark Tan is 2.75:1 and would fail outright. */
+  --on-accent: #182a3a;
+
+  /* Burlywood is the gold you can read. It is the only one used as text. */
+  --accent-ink: #d6bb80;
+
+  /* Dark Tan is the gold you sit on - fills, not letters. */
+  --accent: #a08348;
+  --accent-2: #7a6335;
+  --accent-glow: rgba(160, 131, 72, 0.3);
+
+  /* Deep Space Sparkle, as its own accent for the cool notes. */
+  --cool: #425b6f;
+
+  /* Washes that lift the ground use the body-text grey, so a raised
+     surface reads as lit rather than as gilded. */
+  --tint: 223 226 220;
+
+  /* Shadows and backdrops go down from a ground that is already dark. */
+  --shade: 8 15 21;
+
+  /* The same colours as bare channels, for rgb(... / alpha). */
+  --ground: 24 42 58;
+  --accent-rgb: 160 131 72;
+  --accent-2-rgb: 122 99 53;
+  --cool-rgb: 66 91 111;
+
+  /* Three faces, three jobs.
+
+     The serif carries the big display type only - the headline and the
+     section headings. A high-contrast serif at 60px next to gold is the
+     whole "premium" effect; the same face at 15px is thin and hard to
+     read, which is why it is not the body font and not the UI font.
+
+     Sora keeps the chrome - brand, buttons, small headings - because
+     those need to hold at 14px where the serif would not. */
+  --font-serif: "Cormorant Garamond", "Iowan Old Style", Georgia, serif;
   --font-display: "Sora", sans-serif;
   --font-body: "Inter", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
@@ -80,17 +149,17 @@ body {
   background:
     radial-gradient(
       620px 420px at 50% -8%,
-      rgba(194, 103, 61, 0.15),
+      rgb(var(--accent-rgb) / 0.15),
       transparent 70%
     ),
     radial-gradient(
       520px 380px at 88% 8%,
-      rgba(224, 164, 88, 0.10),
+      rgb(var(--accent-2-rgb) / 0.10),
       transparent 70%
     ),
     radial-gradient(
       480px 360px at 6% 22%,
-      rgba(99, 102, 241, 0.1),
+      rgb(var(--cool-rgb) / 0.12),
       transparent 70%
     );
 }
@@ -115,8 +184,14 @@ h3 {
   margin: 0;
 }
 
-/* ---- buttons ---- */
+/* ---- buttons ----
+   One shape, two weights, and every state built from the same three
+   moves: lift, brighten, and a ring that grows out of the edge. Doing
+   hover as a scale or a colour swap is what makes buttons feel cheap -
+   the thing that reads as expensive is a small, fast, consistent
+   response that resolves rather than pops. */
 .btn {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -124,41 +199,103 @@ h3 {
   font-family: var(--font-body);
   font-weight: 600;
   font-size: 14px;
-  padding: 10px 18px;
+  letter-spacing: 0.005em;
+  padding: 11px 20px;
   border-radius: 999px;
   border: 1px solid transparent;
   cursor: pointer;
+  /* Contains the sheen, and stops the ring from bleeding a square
+     corner past the pill. */
+  isolation: isolate;
+  /* Two different speeds on purpose: the lift is quick so the button
+     feels attached to the cursor, the light is slower so it reads as
+     something warming up rather than switching on. */
   transition:
-    transform 0.15s ease,
-    box-shadow 0.2s ease,
-    background 0.2s ease,
-    border-color 0.2s ease;
+    transform 0.18s cubic-bezier(0.34, 1.4, 0.64, 1),
+    box-shadow 0.32s cubic-bezier(0.16, 1, 0.3, 1),
+    background 0.28s ease,
+    border-color 0.28s ease,
+    color 0.2s ease;
   white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
 }
+
+/* The ring. Drawn outside the border with a spread shadow so it costs no
+   layout and cannot shift the text by a pixel on hover - which is the
+   usual way an "expanding border" goes wrong. */
+.btn::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: 0 0 0 0 rgb(var(--accent-rgb) / 0.4);
+  transition: box-shadow 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn:hover::before {
+  box-shadow: 0 0 0 5px rgb(var(--accent-rgb) / 0.16);
+}
+
+.btn:active {
+  /* Straight back down, fast, with no overshoot. A springy press reads
+     as a toy; a flat one reads as a switch. */
+  transform: translate3d(0, 0, 0) scale(0.985);
+  transition-duration: 0.06s;
+}
+
+.btn:focus-visible {
+  outline: none;
+}
+
+.btn:focus-visible::before {
+  box-shadow:
+    0 0 0 2px rgb(var(--ground) / 1),
+    0 0 0 4px var(--accent-ink);
+}
+
 .btn-lg {
-  font-size: 15px;
-  padding: 14px 26px;
+  font-size: 15.5px;
+  padding: 15px 30px;
 }
 .btn-block {
   width: 100%;
 }
+
 .btn-primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  color: #04141a;
-  box-shadow: 0 8px 30px var(--accent-glow);
+  /* Lit from the top left, which is where every other highlight on the
+     page comes from. A flat fill of the same gold looks painted on. */
+  background:
+    linear-gradient(135deg, #e4cd9c 0%, var(--accent-ink) 44%, var(--accent) 100%);
+  color: var(--on-accent);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.28),
+    0 6px 20px rgb(var(--accent-rgb) / 0.24),
+    0 1px 2px rgb(var(--shade) / 0.5);
 }
 .btn-primary:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 12px 40px var(--accent-glow);
+  transform: translate3d(0, -2px, 0);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.36),
+    0 14px 36px rgb(var(--accent-rgb) / 0.36),
+    0 2px 4px rgb(var(--shade) / 0.5);
 }
+
 .btn-ghost {
-  background: rgba(255, 255, 255, 0.03);
-  border-color: var(--line);
+  /* Enough of a panel to read as a button over footage. At 5% on a
+     bright frame this was an outline around nothing, and the label was
+     white text on pale sand. */
+  background: rgb(var(--ground) / 0.42);
+  border-color: rgb(var(--tint) / 0.22);
   color: var(--text);
+  -webkit-backdrop-filter: blur(12px) saturate(120%);
+  backdrop-filter: blur(12px) saturate(120%);
 }
 .btn-ghost:hover {
+  transform: translate3d(0, -2px, 0);
   border-color: var(--line-bright);
-  background: rgba(255, 255, 255, 0.06);
+  background: rgb(var(--ground) / 0.6);
+  color: #fff;
 }
 
 /* ---- nav ---- */
@@ -183,12 +320,30 @@ h3 {
   box-sizing: border-box;
   -webkit-backdrop-filter: blur(14px) saturate(120%);
   backdrop-filter: blur(14px) saturate(120%);
+  /* A veil of the page's own ground, not a dark bar. It is strongest
+     at the top edge, where the links sit, and thins downward so the
+     footage still reads through the bottom of it - the blur behind is
+     what keeps the links legible over whatever is passing underneath. */
   background: linear-gradient(
     180deg,
-    rgba(12, 9, 8, 0.62) 0%,
-    rgba(12, 9, 8, 0.34) 100%
+    rgb(var(--ground) / 0.86) 0%,
+    rgb(var(--ground) / 0.58) 100%
   );
-  border-bottom: 1px solid rgba(226, 190, 150, 0.07);
+  border-bottom: 1px solid transparent;
+  transition:
+    padding 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    background 0.28s ease,
+    border-color 0.28s ease;
+}
+
+/* Past the hero the bar sits over text rather than footage, so it stops
+   being a veil and becomes a surface: tighter, opaque, with a real edge
+   under it. */
+.nav.is-condensed {
+  padding-top: 11px;
+  padding-bottom: 11px;
+  background: rgb(var(--ground) / 0.94);
+  border-bottom-color: var(--line);
 }
 .nav-brand {
   display: flex;
@@ -205,10 +360,10 @@ h3 {
   height: 30px;
   border-radius: 9px;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  color: #04141a;
+  color: var(--on-accent);
 }
 .nav-dot {
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 .nav-links {
   display: flex;
@@ -233,19 +388,36 @@ section {
 .eyebrow {
   display: inline-block;
   font-family: var(--font-mono);
-  font-size: 11.5px;
-  letter-spacing: 0.14em;
+  /* Deliberately large for a label. At 11.5px this read as a caption
+     apologising for being there; at this size and tracking it reads as
+     a section marker, which is what it is. */
+  font-size: clamp(11px, 1vw, 13px);
+  letter-spacing: 0.32em;
   text-transform: uppercase;
-  color: var(--accent);
-  margin-bottom: 14px;
+  color: var(--accent-ink);
+  margin-bottom: 24px;
 }
 .section-head {
   text-align: center;
-  margin-bottom: 48px;
+  /* Most of the calm on the reference site is this number. A heading
+     sitting 48px above its content belongs to the block; one sitting
+     this far above introduces it. */
+  margin-bottom: clamp(56px, 7vw, 104px);
+  max-width: 780px;
+  margin-left: auto;
+  margin-right: auto;
 }
 .section-head h2 {
-  font-size: clamp(28px, 4vw, 40px);
-  font-weight: 700;
+  font-family: var(--font-serif);
+  font-size: clamp(36px, 5.6vw, 66px);
+  font-weight: 500;
+  line-height: 1.05;
+  letter-spacing: -0.005em;
+  /* text-wrap: balance would even out the last line, but it is unsupported
+     below Chrome 114 and purely cosmetic - the heading wraps correctly
+     either way. Dropped rather than shipped as a property most browsers
+     in the wild still ignore. */
+  margin: 0;
 }
 
 /* ---- hero ---- */
@@ -255,47 +427,80 @@ section {
   padding-top: 88px;
   padding-bottom: 72px;
 }
+/* Readability over the footage, bought without dimming it.
 
-/* The interactive moons/clouds layer.
-   pointer-events:none is load-bearing, not decoration: without it the
-   canvas covers the hero and swallows clicks on "Start free". Input is
-   read from window-level listeners in hero-physics.js instead, which
-   lets the shapes be dragged while every button underneath still works. */
-.hero-canvas {
-  position: absolute;
-  /* Full-bleed, matching .hero-video exactly. The video is masked at its
-     edges, so wherever it is transparent the canvas shows through - and
-     while the canvas was confined to the page's max-width container that
-     appeared as a brighter rectangle with hard vertical edges down both
-     sides of the hero. Two layers occupying different boxes is what read
-     as the page being cut into panels. */
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 100vw;
-  height: 100%;
-  z-index: 0;
-  pointer-events: none;
+   The old answer was a scrim across the whole frame, which is what
+   "don't hide the video" was about. A shadow does the same job for the
+   text and costs the picture nothing: it darkens a few pixels around
+   each glyph rather than a whole screen of desert. The hero opens on a
+   bright sunset, so without this the eyebrow and the small print sit
+   gold-on-gold and effectively vanish. */
+.hero-sub,
+.hero-note {
+  text-shadow:
+    0 1px 2px rgb(var(--shade) / 0.9),
+    0 2px 14px rgb(var(--shade) / 0.75);
 }
 
-/* Hero content sits above the canvas. */
-/* Every hero child EXCEPT the background layers. The canvas, the video
-   and its scrim are all absolutely positioned behind the text; pulling
-   them into normal flow here put the video in the document flow and
-   pushed the headline down the page. */
-.hero > *:not(.hero-canvas):not(.hero-video):not(.hero-video-scrim) {
-  position: relative;
-  z-index: 1;
+/* The credit line sits lowest in the hero, which is where the footage is
+   brightest sand. --text-faint is 3.5:1 on the ground and far less than
+   that here, so it steps up a level rather than relying on the shadow
+   alone to rescue it. */
+.hero-note {
+  color: var(--text-soft);
+  text-shadow:
+    0 1px 2px rgb(var(--shade) / 0.95),
+    0 2px 16px rgb(var(--shade) / 0.85);
 }
+
+/* The hero eyebrow becomes a badge rather than loose text.
+
+   A shadow is enough for the sub and the small print, which sit over
+   sand. It is not enough for this line: the clip opens with the sun
+   directly behind it, and gold letters on a blown-out white sun have no
+   contrast to rescue. A small panel is the honest fix - it guarantees
+   the line is readable on every frame of an eight-second shot instead of
+   on most of them. */
+.hero .eyebrow {
+  /* The hero is a flex column, so a child stretches to full width by
+     default and `display: inline-block` is blockified away. Harmless
+     while this was bare text; the moment it got a background it became
+     a bar across the whole page. */
+  align-self: center;
+  padding: 7px 16px;
+  border-radius: 999px;
+  border: 1px solid rgb(var(--accent-rgb) / 0.28);
+  background: rgb(var(--ground) / 0.55);
+  -webkit-backdrop-filter: blur(12px) saturate(120%);
+  backdrop-filter: blur(12px) saturate(120%);
+  text-shadow: none;
+}
+
 .hero h1 {
-  font-size: clamp(38px, 6.4vw, 68px);
-  font-weight: 800;
-  line-height: 1.06;
-  margin-bottom: 22px;
+  text-shadow: 0 2px 18px rgb(var(--shade) / 0.55);
+  font-family: var(--font-serif);
+  /* Sized to be read, not to fill the screen. At clamp(46px, 8vw, 92px)
+     this ran to 92px on a desktop and took most of the hero on its own -
+     which is not the same thing as being impressive. A serif this large
+     also starts competing with the footage behind it instead of sitting
+     on it. */
+  font-size: clamp(32px, 4.4vw, 56px);
+  font-weight: 500;
+  line-height: 1.08;
+  /* Serifs at display size want their letters closer than the metrics
+     ship with, and no negative tracking beyond that - tightening a high
+     contrast serif collapses the thin strokes into the thick ones. */
+  letter-spacing: -0.005em;
+  margin-bottom: 24px;
 }
 .grad {
-  background: linear-gradient(100deg, var(--accent), var(--accent-2) 52%, #f0cf94);
+  /* Runs up into peach, not down into brick. On a dark ground the ramp
+     has to end on the brightest value in the set or the last word of
+     the headline falls away, which is exactly what brick did here.
+     Starting on the lightened tint rather than on terracotta itself
+     keeps the first word legible too - both ends are read against navy,
+     so both ends have to clear it. */
+  background: linear-gradient(100deg, var(--accent), var(--accent-ink) 45%, #ecdcb8 95%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -323,38 +528,44 @@ section {
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 18px;
+  /* Wide gaps, because the gap is now the only thing separating one
+     card from the next. 18px was fine between bordered boxes and far
+     too tight without them. */
+  column-gap: clamp(32px, 4vw, 64px);
+  row-gap: clamp(48px, 6vw, 80px);
 }
 .card {
   position: relative;
-  padding: 28px 26px;
-  border-radius: var(--radius);
-  background: linear-gradient(160deg, var(--ink-2), var(--ink-1));
-  border: 1px solid var(--line);
-  transition:
-    border-color 0.2s ease,
-    transform 0.2s ease;
+  /* No border, no fill. A bordered gradient rectangle around every
+     paragraph is exactly what made this page read as a stack of panels,
+     and no amount of spacing between the boxes fixed that - the boxes
+     were the problem. A hairline above each one carries the same
+     grouping at a fraction of the visual weight. */
+  padding: 30px 0 0;
+  border-top: 1px solid var(--line);
+  transition: border-color 0.25s ease;
 }
 .card:hover {
   border-color: var(--line-bright);
-  transform: translateY(-3px);
 }
 .card-num {
   font-family: var(--font-mono);
   font-size: 12px;
-  color: var(--accent);
+  color: var(--accent-ink);
   letter-spacing: 0.1em;
 }
 .card h3 {
-  font-size: 19px;
+  font-size: clamp(19px, 1.7vw, 23px);
   font-weight: 600;
-  margin: 12px 0 10px;
+  letter-spacing: -0.01em;
+  margin: 14px 0 12px;
 }
 .card p {
   margin: 0;
-  font-size: 14.5px;
-  line-height: 1.65;
+  font-size: 15px;
+  line-height: 1.75;
   color: var(--text-soft);
+  max-width: 42ch;
 }
 
 /* ---- steps ---- */
@@ -364,14 +575,14 @@ section {
   padding: 0;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 20px;
+  column-gap: clamp(32px, 4vw, 64px);
+  row-gap: clamp(48px, 6vw, 80px);
   counter-reset: step;
 }
 .steps li {
-  padding: 26px 24px;
-  border-radius: var(--radius);
-  border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.02);
+  /* Boxless, like .card - see the note there. */
+  padding: 30px 0 0;
+  border-top: 1px solid var(--line);
 }
 .step-num {
   display: grid;
@@ -382,20 +593,22 @@ section {
   font-family: var(--font-display);
   font-weight: 700;
   font-size: 15px;
-  color: #04141a;
+  color: var(--on-accent);
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   margin-bottom: 14px;
 }
 .steps h3 {
-  font-size: 17px;
+  font-size: clamp(18px, 1.6vw, 22px);
   font-weight: 600;
-  margin-bottom: 8px;
+  letter-spacing: -0.01em;
+  margin-bottom: 10px;
 }
 .steps p {
   margin: 0;
-  font-size: 14px;
-  line-height: 1.6;
+  font-size: 15px;
+  line-height: 1.75;
   color: var(--text-soft);
+  max-width: 40ch;
 }
 
 /* ---- pricing ---- */
@@ -417,7 +630,7 @@ section {
 }
 .price-card-pro {
   border-color: var(--line-bright);
-  box-shadow: 0 0 0 1px rgba(194, 103, 61, 0.09), 0 20px 60px rgba(194, 103, 61, 0.09);
+  box-shadow: 0 0 0 1px rgb(var(--accent-rgb) / 0.09), 0 20px 60px rgb(var(--accent-rgb) / 0.09);
 }
 .price-badge {
   position: absolute;
@@ -427,7 +640,7 @@ section {
   font-size: 10.5px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #04141a;
+  color: var(--on-accent);
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   padding: 4px 10px;
   border-radius: 999px;
@@ -468,7 +681,7 @@ section {
   content: "✓";
   position: absolute;
   left: 0;
-  color: var(--accent);
+  color: var(--accent-ink);
   font-weight: 700;
 }
 .price-card strong {
@@ -486,7 +699,7 @@ section {
 .faq-list details {
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.02);
+  background: rgb(var(--tint) / 0.03);
   padding: 0 20px;
   transition: border-color 0.2s ease;
 }
@@ -510,7 +723,7 @@ section {
 }
 .faq-list summary::after {
   content: "+";
-  color: var(--accent);
+  color: var(--accent-ink);
   font-size: 20px;
   font-weight: 400;
   flex-shrink: 0;
@@ -532,13 +745,16 @@ section {
   border-bottom: 1px solid var(--line);
   background: radial-gradient(
     600px 200px at 50% 50%,
-    rgba(194, 103, 61, 0.09),
+    rgb(var(--accent-rgb) / 0.09),
     transparent 70%
   );
 }
 .cta-band h2 {
-  font-size: clamp(28px, 4vw, 40px);
-  margin-bottom: 10px;
+  font-family: var(--font-serif);
+  font-size: clamp(34px, 4.6vw, 52px);
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  margin-bottom: 14px;
 }
 .cta-band p {
   color: var(--text-soft);
@@ -575,7 +791,7 @@ section {
   align-items: flex-start;
 }
 .footer-links a:hover {
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 @media (max-width: 720px) {
@@ -671,7 +887,7 @@ p {
   top: 0;
   z-index: 100;
   background: var(--accent);
-  color: #04141a;
+  color: var(--on-accent);
   font-weight: 600;
   font-size: 14px;
   padding: 12px 20px;
@@ -689,7 +905,10 @@ p {
   height: 3px;
   width: 0;
   z-index: 60;
-  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  /* Runs up into the lightened tint rather than down into brick. A 3px
+     bar of terracotta-into-brick on this ground is two dark warm values
+     on a dark cool one, which at that height is no bar at all. */
+  background: linear-gradient(90deg, var(--accent), var(--accent-ink));
   transition: width 0.1s linear;
 }
 
@@ -703,10 +922,10 @@ p {
   height: 44px;
   border-radius: 50%;
   border: 1px solid var(--line-bright);
-  background: rgba(17, 23, 37, 0.9);
+  background: rgb(var(--ground) / 0.9);
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
-  color: var(--accent);
+  color: var(--accent-ink);
   font-size: 18px;
   cursor: pointer;
   transition:
@@ -715,7 +934,7 @@ p {
 }
 .scroll-top:hover {
   transform: translateY(-2px);
-  background: rgba(194, 103, 61, 0.15);
+  background: rgb(var(--accent-rgb) / 0.15);
 }
 
 /* ---- Hamburger + mobile drawer ---- */
@@ -729,7 +948,7 @@ p {
   padding: 0 8px;
   border-radius: 10px;
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.03);
+  background: rgb(var(--tint) / 0.04);
   cursor: pointer;
 }
 .hamburger span {
@@ -756,7 +975,7 @@ p {
   position: fixed;
   inset: 0;
   z-index: 70;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgb(var(--shade) / 0.62);
   -webkit-backdrop-filter: blur(2px);
   backdrop-filter: blur(2px);
 }
@@ -811,10 +1030,10 @@ p {
   padding: 16px 20px;
   border-radius: 14px;
   border: 1px solid var(--line-bright);
-  background: rgba(17, 23, 37, 0.96);
+  background: rgb(var(--ground) / 0.96);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 18px 50px rgb(var(--shade) / 0.55);
 }
 .cookie-banner p {
   flex: 1;
@@ -839,6 +1058,31 @@ p {
   }
   .nav-actions .btn-ghost {
     display: none;
+  }
+
+  /* The dots stay on the vine - that effect survives a narrow screen
+     fine. The copy column does not: at 46vw it would be a sliver, so it
+     spans the width and sits low in the frame instead, which is where a
+     phone wants a caption anyway. */
+  .scene.scene-live .scene-beat {
+    left: 12px;
+    right: 12px;
+    top: auto;
+    bottom: 20px;
+    width: auto;
+    transform: translate3d(0, 14px, 0);
+  }
+
+  .scene.scene-live .scene-beat.is-active {
+    transform: translate3d(0, 0, 0);
+  }
+
+  .scene.scene-live .beat-card {
+    padding: 18px 20px;
+  }
+
+  .scene.scene-live .beat-card h2 {
+    font-size: 1.5rem;
   }
 }
 
@@ -930,16 +1174,20 @@ p {
    than appearing blank. */
 .reveal {
   opacity: 0;
-  transform: translate3d(0, 22px, 0);
+  /* A little further, a little slower, and scaled a hair under 1. The
+     scale is what stops this reading as a list of things sliding up: a
+     card that grows very slightly as it arrives reads as coming toward
+     you, and the eye takes that as depth rather than as movement. */
+  transform: translate3d(0, 26px, 0) scale(0.985);
   transition:
-    opacity 0.6s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+    opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
   will-change: opacity, transform;
 }
 
 .reveal.is-visible {
   opacity: 1;
-  transform: none;
+  transform: translate3d(0, 0, 0) scale(1);
   /* Dropped once the animation is done - a permanent will-change keeps
      a compositor layer alive for an element that will never move
      again, which costs memory for nothing. */
@@ -961,9 +1209,13 @@ p {
   }
 }
 
-.hero > *:not(.hero-canvas):not(.hero-video):not(.hero-video-scrim) {
-  animation: rise-in 0.75s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+/* Every hero child. It used to have to exclude the canvas, the video and
+   its scrim by name; those live in .filmstrip-media now, so the
+   exclusions went with them. */
+.hero > * {
+  animation: rise-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
+
 .hero .eyebrow { animation-delay: 0.05s; }
 .hero h1 { animation-delay: 0.14s; }
 .hero-sub { animation-delay: 0.24s; }
@@ -997,7 +1249,6 @@ p {
     box-shadow 0.32s ease;
 }
 
-.card::after,
 .price-card::after {
   content: "";
   position: absolute;
@@ -1013,13 +1264,11 @@ p {
   );
 }
 
-.card:hover,
 .price-card:hover {
   transform: translate3d(0, -5px, 0);
   border-color: var(--line-bright);
 }
 
-.card:hover::after,
 .price-card:hover::after {
   opacity: 1;
 }
@@ -1039,14 +1288,19 @@ p {
   left: -80%;
   width: 45%;
   height: 100%;
+  border-radius: inherit;
   background: linear-gradient(
     100deg,
     transparent,
-    rgba(255, 255, 255, 0.32),
+    rgb(255 255 255 / 0.42),
     transparent
   );
   transform: skewX(-18deg);
   pointer-events: none;
+  /* Behind the label. Without this the sheen washes over the text as it
+     passes, which is the tell that it is a rectangle sliding across
+     rather than light moving over a surface. */
+  z-index: -1;
 }
 
 .btn-primary:hover::after {
@@ -1062,8 +1316,11 @@ p {
     box-shadow 0.18s ease, background 0.18s ease, border-color 0.18s ease;
 }
 
-.btn:hover { transform: translate3d(0, -2px, 0); }
-.btn:active { transform: translate3d(0, 0, 0); }
+/* The lift lives on the variants above, which know what shadow goes with
+   it. This is only the fallback for a .btn with neither class. */
+.btn:not(.btn-primary):not(.btn-ghost):hover {
+  transform: translate3d(0, -2px, 0);
+}
 
 /* ---- section headings -------------------------------------------- */
 .section-head .eyebrow {
@@ -1086,7 +1343,7 @@ p {
     will-change: auto;
   }
 
-  .hero > *:not(.hero-canvas):not(.hero-video):not(.hero-video-scrim),
+  .hero > *,
   .hero h1 .grad,
   .btn-primary:hover::after {
     animation: none;
@@ -1131,12 +1388,44 @@ p {
   gap: 56px;
 }
 
+/* The resting state, before scroll-scene.js takes over and if it never
+   does. Everything above this point in the cascade assumes .scene-live;
+   these are the styles that make the section a plain, readable list of
+   four headings on its own - which is what it has to be with no JS, with
+   a failed script, or in the moment before the script runs. */
+.beat-pin {
+  display: none;
+}
+
+.beat-card {
+  display: block;
+  position: static;
+  width: auto;
+  max-width: 46rem;
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+
 .scene-beat h2 {
-  font-family: var(--font-display);
-  font-size: clamp(1.5rem, 3.2vw, 2.1rem);
-  line-height: 1.2;
-  letter-spacing: -0.02em;
-  margin: 10px 0 10px;
+  /* Same voice as the hero and the section headings. These sit directly
+     on the footage at the largest text size on the page after the
+     headline, so leaving them in the UI sans was the one place the type
+     visibly changed character mid-scroll.
+
+     Sized up from the sans it replaces: Cormorant has a small x-height
+     for its point size, so matching the old numbers would read as the
+     captions having shrunk. */
+  font-family: var(--font-serif);
+  font-weight: 500;
+  font-size: clamp(2rem, 4.2vw, 3rem);
+  line-height: 1.08;
+  letter-spacing: -0.005em;
+  margin: 12px 0 14px;
 }
 
 .scene-beat p {
@@ -1163,43 +1452,117 @@ p {
   overflow: hidden;
 }
 
-.scene.scene-live .scene-canvas {
+/* While the scene is live this stops being a text column and becomes the
+   coordinate space the pins live in: exactly the sticky viewport, with
+   no padding or centring to offset them. scroll-scene.js measures pin
+   positions against this element, so any box it does not fill would
+   shift every dot off the vine by that difference. */
+.scene.scene-live .scene-beats {
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
-  /* Decorative and behind the text. pointer-events:none for the same
-     reason as the hero canvas - it covers the whole pinned area and
-     would otherwise swallow every click and text selection in it. */
-  pointer-events: none;
-  z-index: 0;
-}
-
-.scene.scene-live .scene-beats {
-  position: relative;
   z-index: 1;
   display: block;
-  width: min(var(--maxw), 100%);
-  margin: 0 auto;
-  padding: 0 24px;
+  width: auto;
+  max-width: none;
+  margin: 0;
+  padding: 0;
 }
 
-/* Beats stack on top of each other and cross-fade. Absolute rather
-   than display:none so the height does not jump between beats of
-   different lengths. */
+/* ---- the dots ----------------------------------------------------
+   Their own layer, positioned onto the vine by scroll-scene.js. They are
+   the only part of this that follows the footage; the words below hold
+   one position, because text that moves around the frame between beats
+   is text nobody finishes reading. */
+.scene.scene-live .beat-pins {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.scene.scene-live .beat-pin {
+  /* Explicit, because the resting rule above hides these with
+     display:none and this selector never re-declared it - so the dots
+     were laid out, positioned, and then not rendered at all. Winning on
+     specificity only covers the properties a rule actually states. */
+  display: block;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  background: var(--accent-ink);
+  box-shadow:
+    0 0 0 1px rgb(var(--ground) / 0.55),
+    0 0 18px 3px rgb(var(--accent-rgb) / 0.55);
+  opacity: 0;
+  transform: scale(0.2);
+  transition:
+    opacity 0.5s ease,
+    transform 0.55s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Dropped when the window is the wrong shape to show this part of the
+   frame - see placePins(). */
+.scene.scene-live .beat-pin.is-offstage {
+  display: none;
+}
+
+/* Once a dot has appeared it stays, dimmed. The trail down the vine is
+   the point. */
+.scene.scene-live .beat-pin.has-appeared {
+  opacity: 0.7;
+  transform: scale(0.78);
+  box-shadow:
+    0 0 0 1px rgb(var(--ground) / 0.7),
+    0 0 12px 2px rgb(var(--accent-rgb) / 0.45);
+}
+
+.scene.scene-live .beat-pin.is-active {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* The ring, only on the current dot. */
+.scene.scene-live .beat-pin::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 1px solid var(--accent-ink);
+  opacity: 0;
+}
+
+.scene.scene-live .beat-pin.is-active::after {
+  animation: pin-ping 2.6s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+@keyframes pin-ping {
+  0% { opacity: 0.85; transform: scale(0.55); }
+  70% { opacity: 0; transform: scale(2.6); }
+  100% { opacity: 0; transform: scale(2.6); }
+}
+
+/* ---- the copy ----------------------------------------------------
+   One column, one position, for all four beats. They stack on top of
+   each other and cross-fade in place rather than being repositioned per
+   beat, which is what made the text feel like it was jumping around. */
 .scene.scene-live .scene-beat {
   position: absolute;
+  left: max(24px, calc((100% - var(--maxw)) / 2 + 24px));
   top: 50%;
-  left: 24px;
-  right: 24px;
-  transform: translate3d(0, calc(-50% + 16px), 0);
+  width: min(34rem, 46vw);
+  max-width: none;
+  z-index: 3;
+  transform: translate3d(0, calc(-50% + 14px), 0);
   opacity: 0;
   visibility: hidden;
   transition:
     opacity 0.45s ease,
-    transform 0.45s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.6s cubic-bezier(0.16, 1, 0.3, 1),
     visibility 0s linear 0.45s;
-  max-width: 620px;
 }
 
 .scene.scene-live .scene-beat.is-active {
@@ -1207,6 +1570,54 @@ p {
   visibility: visible;
   transform: translate3d(0, -50%, 0);
   transition-delay: 0s;
+}
+
+/* A panel only where the words are. The footage stays uncovered
+   everywhere else, which is the whole reason the full-frame scrim went
+   away - legibility is bought over the text, not over the picture. */
+.scene.scene-live .beat-card {
+  padding: 26px 28px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent-ink);
+  background: rgb(var(--ground) / 0.58);
+  -webkit-backdrop-filter: blur(18px) saturate(115%);
+  backdrop-filter: blur(18px) saturate(115%);
+  box-shadow: 0 22px 60px rgb(var(--shade) / 0.5);
+}
+
+.scene.scene-live .beat-card h2 {
+  font-size: clamp(1.4rem, 2.1vw, 1.85rem);
+  margin: 10px 0 10px;
+}
+
+/* One span per word, written by scroll-scene.js. The inline-block is
+   load-bearing: transforms do not apply to inline boxes, so without it
+   the stagger silently does nothing. */
+.scene.scene-live .beat-card h2 .w {
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: bottom;
+}
+
+.scene.scene-live .beat-card h2 .w > i {
+  display: inline-block;
+  font-style: inherit;
+  transform: translate3d(0, 105%, 0);
+  transition: transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+  /* Each word waits a little longer than the last, so the line arrives
+     left to right rather than all at once. */
+  transition-delay: calc(0.12s + var(--i) * 0.045s);
+}
+
+.scene.scene-live .scene-beat.is-active .beat-card h2 .w > i {
+  transform: translate3d(0, 0, 0);
+}
+
+.scene.scene-live .beat-card p {
+  font-size: 14.5px;
+  line-height: 1.65;
+  max-width: none;
 }
 
 /* ---- narrow screens ---------------------------------------------- */
@@ -1242,160 +1653,48 @@ p {
     display: block;
   }
 
-  .scene.scene-live .scene-canvas {
-    position: relative;
-    height: 240px;
-    margin-bottom: 32px;
-  }
-
   .scene.scene-live .scene-beats {
+    position: static;
+    inset: auto;
     display: grid;
     gap: 56px;
     padding: 0;
   }
 
+  /* position:static alone was not enough. The live rules also set
+     width:0 and height:0 - correct for an element that is only a
+     coordinate origin, and catastrophic for one that is back in normal
+     flow: the card inside inherits a zero-width container and every
+     heading wraps to one letter per line. */
   .scene.scene-live .scene-beat {
     position: static;
+    width: auto;
+    height: auto;
     opacity: 1;
     visibility: visible;
     transform: none;
     transition: none;
   }
-}
 
-/* ---- hero video --------------------------------------------------- */
-/* Sits over the drawn dune scene. The canvas underneath is the fallback:
-   if the video is blocked, unsupported, or still loading, there is
-   already a finished-looking hero behind it rather than a black box. */
-.hero-video {
-  position: absolute;
-  /* Full-bleed, not inset:0. The hero sits inside the page's max-width
-     container, so filling its box left the footage as a letterboxed
-     panel with dark bars either side. Anchoring to the viewport centre
-     and taking 100vw breaks it out of that container without having to
-     restructure the markup around it. */
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  /* Two transforms on one property: the centring, then a small zoom that
-     crops the generator's watermark out of the top-left. Written as one
-     declaration because a second `transform` would simply replace the
-     first and drop the centring. */
-  transform: translateX(-50%) scale(1.08) translate(1.5%, 0.6%);
-  width: 100vw;
-  height: 100%;
-  object-fit: cover;
-  pointer-events: none;
-  z-index: 0;
-  opacity: 0;
-  transition: opacity 0.9s ease;
-}
-
-/* Faded in only once there are actual frames to show, so a slow load
-   never flashes a black rectangle over the canvas scene. */
-.hero-video.is-ready {
-  opacity: 1;
-}
-
-/* Footage this bright would leave the headline unreadable. Darker at the
-   top where the text sits, clearing toward the bottom so the dunes stay
-   visible. */
-.hero-video-scrim {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 100vw;
-  pointer-events: none;
-  z-index: 0;
-  background:
-    linear-gradient(180deg,
-      rgba(18, 13, 10, 0.86) 0%,
-      rgba(18, 13, 10, 0.66) 42%,
-      rgba(18, 13, 10, 0.34) 78%,
-      rgba(18, 13, 10, 0.52) 100%);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  /* The poster frame instead of moving footage. A looping video is
-     exactly the kind of continuous motion this setting exists to stop. */
-  .hero-video {
-    display: none;
+  /* The card comes back to being a plain block, not a floating panel
+     hidden at opacity 0 waiting for an is-active that never arrives. */
+  .scene.scene-live .beat-card {
+    position: static;
+    width: auto;
+    max-width: 46rem;
+    padding: 0;
+    border: 0;
+    background: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    box-shadow: none;
+    opacity: 1;
+    visibility: visible;
+    transform: none;
   }
-}
 
-/* ---- scene video -------------------------------------------------- */
-/* The filmed clip replaces the drawn dunes as the visible layer here, so
-   the page is footage throughout rather than half drawn and half filmed.
-   The canvas stays underneath purely as the fallback. */
-.scene.scene-live .scene-video {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  /* Zoomed and pushed RIGHT, to carry the generator's top-right
-     watermark past the right edge of the frame.
-     
-     The direction matters and the first attempt had it backwards:
-     translating left moves the content left, which pulls more of its
-     right-hand side into view - the opposite of hiding it. Positive X
-     pushes that edge out.
-     
-     1.32 rather than 1.14 because the scale is what creates the overflow
-     the translate can spend: at 1.14 there was only ~7% of slack each
-     side and the watermark needs more than that. The zoom also crops the
-     letterboxing baked into the source. */
-  transform: scale(1.32) translate(7%, -1%);
-  pointer-events: none;
-  z-index: 0;
-  opacity: 0;
-  transition: opacity 0.9s ease;
-}
-
-.scene.scene-live .scene-video.is-ready {
-  opacity: 1;
-}
-
-/* Heavier on the left than the hero's, because the captions here are a
-   full paragraph sitting over a moving subject rather than a headline
-   over sky. */
-.scene.scene-live .scene-video-scrim {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background:
-    linear-gradient(90deg,
-      rgba(18, 13, 10, 0.92) 0%,
-      rgba(18, 13, 10, 0.78) 34%,
-      rgba(18, 13, 10, 0.42) 62%,
-      rgba(18, 13, 10, 0.30) 100%),
-    /* Near-opaque at the very top, easing off over the first third.
-       The clip opens on bright sky and the hero above it ends dark, so
-       masking alone was not enough - the two tones met at a line and the
-       eye read that as a join no matter how soft the alpha ramp was.
-       Starting this section dark and letting the sky emerge downward is
-       what actually removes the seam. */
-    linear-gradient(180deg,
-      rgba(18, 13, 10, 0.97) 0%,
-      rgba(18, 13, 10, 0.88) 12%,
-      rgba(18, 13, 10, 0.44) 34%,
-      rgba(18, 13, 10, 0.20) 55%,
-      rgba(18, 13, 10, 0.72) 92%,
-      rgba(18, 13, 10, 0.95) 100%);
-}
-
-/* Outside the scroll-driven state the section is a plain stacked list,
-   where a pinned background video makes no sense. */
-.scene:not(.scene-live) .scene-video,
-.scene:not(.scene-live) .scene-video-scrim {
-  display: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .scene-video {
+  .scene.scene-live .beat-card::before,
+  .scene.scene-live .beat-pin {
     display: none;
   }
 }
@@ -1423,89 +1722,9 @@ body::before {
   z-index: 0;
   background:
     radial-gradient(120% 80% at 72% 0%,
-      rgba(194, 103, 61, 0.10) 0%, transparent 58%),
+      rgb(var(--accent-rgb) / 0.10) 0%, transparent 58%),
     radial-gradient(90% 60% at 12% 100%,
-      rgba(224, 164, 88, 0.07) 0%, transparent 60%);
-}
-
-/* Footage fades out at top and bottom rather than ending on a line.
-   mask-image is the right tool: it fades the video's own pixels, where
-   an overlay gradient would have to guess the colour underneath and
-   would be wrong the moment the page background changed. */
-.hero-video {
-  -webkit-mask-image: linear-gradient(
-    180deg,
-    transparent 0%,
-    #000 14%,
-    #000 62%,
-    transparent 100%
-  );
-  mask-image: linear-gradient(
-    180deg,
-    transparent 0%,
-    #000 14%,
-    #000 62%,
-    transparent 100%
-  );
-}
-
-.scene.scene-live .scene-video {
-  -webkit-mask-image: linear-gradient(
-    180deg,
-    transparent 0%,
-    #000 12%,
-    #000 82%,
-    transparent 100%
-  );
-  mask-image: linear-gradient(
-    180deg,
-    transparent 0%,
-    #000 12%,
-    #000 82%,
-    transparent 100%
-  );
-}
-
-/* The scrims fade at the BOTTOM only.
-   
-   Masking their top as well was self-defeating: the scrim is what darkens
-   the top of the clip so it does not meet the section above it as a bright
-   band, and fading it to transparent there removed exactly the darkening
-   that was doing the work. The top has to stay opaque; only the tail needs
-   to dissolve so the scrim does not outlive the footage it covers. */
-.hero-video-scrim,
-.scene.scene-live .scene-video-scrim {
-  -webkit-mask-image: linear-gradient(
-    180deg,
-    #000 0%,
-    #000 74%,
-    transparent 100%
-  );
-  mask-image: linear-gradient(
-    180deg,
-    #000 0%,
-    #000 74%,
-    transparent 100%
-  );
-}
-
-/* Same for the drawn canvases underneath, which had the same hard edge. */
-.hero-canvas,
-.scene.scene-live .scene-canvas {
-  -webkit-mask-image: linear-gradient(
-    180deg,
-    transparent 0%,
-    #000 10%,
-    #000 84%,
-    transparent 100%
-  );
-  mask-image: linear-gradient(
-    180deg,
-    transparent 0%,
-    #000 10%,
-    #000 84%,
-    transparent 100%
-  );
+      rgb(var(--accent-2-rgb) / 0.07) 0%, transparent 60%);
 }
 
 /* Sections were pinned tight against each other, so even without the
@@ -1516,15 +1735,231 @@ body::before {
 .how,
 .pricing,
 .faq {
-  padding-top: clamp(72px, 9vw, 128px);
-  padding-bottom: clamp(72px, 9vw, 128px);
+  /* Generous, but measured against the viewport rather than picked.
+     At 200px each these met as 400px of nothing between the last card
+     of one section and the heading of the next - close to half a screen
+     of dead space, which does not read as luxury, it reads as the page
+     having failed to load. This lands around 264px between sections,
+     which is still airy next to the 96px it started at.
+
+     The heading inside each section already carries its own
+     clamp(56px, 7vw, 104px) below it, so the perceived gap before a
+     section's content is this plus that. */
+  padding-top: clamp(80px, 9vw, 132px);
+  padding-bottom: clamp(80px, 9vw, 132px);
+}
+
+/* ================================================================ */
+/* The filmstrip                                                     */
+/*                                                                   */
+/* Hero and scene over one continuous shot.                          */
+/*                                                                   */
+/* Before this they held a player each, showing the same file, each   */
+/* faded at its edges to disguise where it stopped. That cannot work: */
+/* two elements meeting at a boundary read as two elements however    */
+/* softly each one ends, and the dark gap between them read as a band */
+/* separating two panels - which is exactly what "it looks separated" */
+/* was pointing at.                                                   */
+/*                                                                   */
+/* One <video>, pinned for the height of both sections, has no        */
+/* boundary to disguise. Everything else here is a text layer over    */
+/* it. The only fade left is at the very bottom, where the footage    */
+/* genuinely does end and the written sections begin.                 */
+/* ================================================================ */
+.filmstrip {
+  position: relative;
+}
+
+.filmstrip-media {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow: hidden;
+  z-index: 0;
+}
+
+/* The media is first in flow so it can be sticky for the whole strip,
+   which means it also occupies a screen of layout before the hero. This
+   pulls the content back over it. Without it the page opens on a screen
+   of video with the headline below the fold. */
+.filmstrip > .hero {
+  margin-top: -100vh;
+}
+
+.film-canvas,
+.film-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Load-bearing, not decoration: these cover the whole pinned area and
+     would otherwise swallow every click on the hero buttons and every
+     attempt to select the caption text. */
+  pointer-events: none;
+}
+
+/* The drawn dunes are the floor. If the video cannot play - a codec the
+   browser refuses, a blocked request, data-saver - the scene behind it
+   is already there and the page looks finished rather than black. */
+.film-canvas {
+  z-index: 0;
+}
+
+.film-video {
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 0.9s ease;
+  /* No transform. The clip is 1920x1080 and the point is to see it, so
+     it is shown at its own framing - any scale here is throwing away
+     resolution that was paid for in the file size. The scroll-driven
+     zoom that used to live on this property is gone; the pins carry the
+     movement now. */
+}
+
+.film-video.is-ready {
+  opacity: 1;
+}
+
+.film-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  /* A vignette, not a filter.
+
+     This used to be two heavy gradients - up to 88% of the page ground
+     across the top and 82% down the left - which made the text easy and
+     the footage nearly invisible. Shipping a 1080p clip and then hiding
+     it behind that is paying for resolution twice and using neither.
+
+     What is left does only the two jobs that genuinely need doing: a
+     band at the very top so the nav has something to sit on, and a
+     gentle fade into the page at the very bottom where the strip ends.
+     The middle - the whole of the picture - is untouched. Text
+     legibility is handled where the text actually is, by the frosted
+     panel behind each card, instead of by dimming the entire frame. */
+  background:
+    linear-gradient(180deg,
+      rgb(var(--ground) / 0.72) 0%,
+      rgb(var(--ground) / 0.28) 9%,
+      rgb(var(--ground) / 0) 22%,
+      rgb(var(--ground) / 0) 74%,
+      rgb(var(--ground) / 0.34) 92%,
+      rgb(var(--ground) / 0.78) 100%),
+    /* A soft corner vignette, low enough to be felt and not seen. It
+       stops the frame ending on four hard bright edges. */
+    radial-gradient(130% 105% at 50% 45%,
+      transparent 52%, rgb(var(--shade) / 0.42) 100%);
+}
+
+/* Hero and scene are text layers over the strip. */
+.filmstrip > .hero,
+.filmstrip > .scene {
+  position: relative;
+  z-index: 1;
+}
+
+.filmstrip > .hero {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+/* The strip's last screen dissolves into the page rather than stopping
+   at a line. This is the one place footage actually ends, so it is the
+   one place that needs a fade. */
+.filmstrip::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 46vh;
+  z-index: 2;
+  pointer-events: none;
+  /* Deeper and starting higher than before. The dunes below sit on this,
+     and a crest is only legible if the sand behind it has already gone
+     dark - against bright footage the shapes read as smudges. */
+  background: linear-gradient(180deg,
+    rgb(var(--ground) / 0) 0%,
+    rgb(var(--ground) / 0.42) 46%,
+    rgb(var(--ground) / 0.82) 74%,
+    rgb(var(--ground) / 1) 100%);
+}
+
+/* ---- the dune pass ------------------------------------------------ */
+.dune-pass {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;          /* -1 so no hairline shows between svg and page */
+  height: clamp(120px, 17vw, 240px);
+  z-index: 3;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.dune-pass svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* The crest catches a little of the same light the vine does; the foot
+   is the page's own ground, so the shapes dissolve into the section
+   below instead of sitting on top of it as two cut-outs. */
+.dune-pass {
+  --dune-crest: #22384a;
+  --dune-foot: #182a3a;
+}
+
+.dune-rim {
+  stroke: rgb(var(--accent-rgb) / 0.5);
+  stroke-width: 1.25;
+  vector-effect: non-scaling-stroke;
+}
+
+/* The parting. scroll-scene.js writes --open from 0 to 1 across the last
+   screen of the strip; at rest the two dunes overlap in the middle and
+   at full open they have drawn back to either side. */
+.dune {
+  --open: 0;
+  transition: transform 0.1s linear;
+}
+
+.dune-left {
+  transform: translateX(calc(var(--open) * -7%));
+}
+
+.dune-right {
+  transform: translateX(calc(var(--open) * 7%));
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* The section is a plain stacked list here, and masking a static
-     canvas at the top of it just clips the image. */
-  .scene.scene-live .scene-canvas {
-    -webkit-mask-image: none;
-    mask-image: none;
+  /* The shape still divides the sections; it just does not move. */
+  .dune {
+    --open: 0 !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* No pinning and no scrubbing: the strip becomes an ordinary stack of
+     the hero and four captions, on the drawn scene rather than footage.
+     A looping or scroll-driven shot is the continuous motion this
+     setting exists to stop. */
+  .filmstrip-media {
+    position: relative;
+    height: 60vh;
+  }
+
+  .filmstrip > .hero {
+    margin-top: 0;
+    min-height: 0;
+  }
+
+  .film-video {
+    display: none;
   }
 }

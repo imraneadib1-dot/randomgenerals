@@ -160,7 +160,7 @@
     for (const s of stars) {
       const twinkle = 0.65 + 0.35 * Math.sin(t * s.rate + s.phase);
       ctx.globalAlpha = alpha * twinkle;
-      ctx.fillStyle = "#fff6e2";
+      ctx.fillStyle = "#ffffff";
       ctx.beginPath();
       ctx.arc(s.x * width, s.y * height, s.r, 0, Math.PI * 2);
       ctx.fill();
@@ -171,18 +171,34 @@
   /* ---- sky --------------------------------------------------------- */
 
   /**
-   * The sky gradient. `warm` 0..1 runs night to full daylight.
+   * The sky gradient. `t` 0..1 runs sunset to night.
    *
-   * Three stops rather than two: a desert sky has a distinctly different
+   * The direction is set by the footage this stands in for, which opens
+   * on a low sun over the dunes and closes on violet dark. It used to
+   * run the other way, for a clip that did.
+   *
+   * Three stops rather than two: a desert sky is a distinctly different
    * colour at the horizon than overhead, and interpolating straight
    * between the two loses the band of light that makes it read as a
    * desert rather than as a gradient.
    */
-  function skyGradient(ctx, width, height, warm) {
+  function skyGradient(ctx, width, height, t) {
+    // Overhead: deep blue at sunset drifting to violet as the light
+    // goes, which is the move the footage makes. Hue climbs past blue
+    // into purple and the lightness falls.
+    //
+    // Horizon: the band of warm light, burning at t=0 and nearly gone by
+    // t=1. This is the stop that does the work - a sunset is legible as
+    // a sunset because of the narrow bright band at the bottom, not
+    // because of anything happening overhead.
+    //
+    // Never quite reaching the page's own ground colour is deliberate.
+    // The canvas sits inside a scrim made of that colour, so a sky that
+    // matched it exactly would leave the dunes floating on nothing.
     const g = ctx.createLinearGradient(0, 0, 0, height);
-    g.addColorStop(0, `hsl(${248 - warm * 32}, ${42 - warm * 8}%, ${7 + warm * 12}%)`);
-    g.addColorStop(0.55, `hsl(${32 - warm * 4}, ${46 + warm * 20}%, ${12 + warm * 24}%)`);
-    g.addColorStop(1, `hsl(${26 + warm * 6}, ${58 + warm * 14}%, ${20 + warm * 30}%)`);
+    g.addColorStop(0, `hsl(${216 + t * 44}, ${52 + t * 6}%, ${16 - t * 7}%)`);
+    g.addColorStop(0.62, `hsl(${28 - t * 64}, ${76 - t * 26}%, ${42 - t * 26}%)`);
+    g.addColorStop(1, `hsl(${34 - t * 6}, ${72 - t * 30}%, ${52 - t * 38}%)`);
     return g;
   }
 

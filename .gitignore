@@ -56,3 +56,14 @@ logs/
 # ~/.cloudflared and are never in the repo, but there's no reason to
 # publish the rest either.
 cloudflared-config.yml
+
+# Video renders from the video bay - the same category as
+# static/generated/: output, not source, pruned on a timer by
+# videoedit.prune(), and potentially someone's actual footage.
+static/video/renders/
+
+# Editing masters. desert-vines.mp4 is committed because the page serves
+# it; the .source.mp4 it was encoded from is a working file, and putting
+# 8MB of it in git history for something the site never requests is
+# permanent weight for no benefit.
+*.source.mp4

@@ -1,0 +1,25 @@
+# Line endings.
+#
+# This repo is developed on Windows (core.autocrlf=true) and deployed to
+# Linux, which is the exact combination that produces
+#
+#   bash: $'\r': command not found
+#
+# on the server. Git normalises on clone, so `git clone` on the VM would
+# be fine - but copying a file straight across with scp would not, and
+# that is a failure with no obvious cause and no obvious fix.
+#
+# Pinning eol=lf means these files are LF in the working tree on every
+# platform, so both routes work.
+*.sh        text eol=lf
+*.yaml      text eol=lf
+*.yml       text eol=lf
+Dockerfile  text eol=lf
+*.service   text eol=lf
+
+# Video is binary; without this, autocrlf would corrupt it on checkout.
+*.mp4       binary
+*.mov       binary
+*.webm      binary
+*.png       binary
+*.jpg       binary

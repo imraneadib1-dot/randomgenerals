@@ -35,6 +35,7 @@ import features  # noqa: E402  per-tier feature flags - see features.py
 import gemini  # noqa: E402  cloud fallback for when this machine is off
 import openai_api  # noqa: E402  OpenAI-compatible API - see openai_api.py
 import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
+import videoedit  # noqa: E402  ffmpeg-backed video bay - see videoedit.py
 
 # The one AI this app talks to: Ollama, running locally (llama3.2 pulled
 # already). Runs fully on this machine - no cloud call, no API key - but
@@ -43,6 +44,48 @@ import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
 # working code. brain/ is untouched on disk; this app just isn't wired to
 # it any more.
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+
+# Ollama Cloud serves the same native API as a local install - /api/tags,
+# /api/chat and /api/generate all behave identically - at
+# https://ollama.com, authenticated with a bearer token. So running this
+# app with no machine of its own is a matter of pointing OLLAMA_URL there
+# and setting a key; not one line of the streaming or provider code below
+# knows the difference.
+#
+#   OLLAMA_URL=https://ollama.com
+#   OLLAMA_API_KEY=<from https://ollama.com/settings/keys>
+#
+# Cloud model names carry a -cloud suffix (gpt-oss:120b-cloud and the
+# like); /api/tags returns whatever the key has access to, so the picker
+# populates itself and nothing here needs a hardcoded list.
+OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY", "").strip()
+
+
+def ollama_headers():
+    """Auth for the Ollama endpoint, or nothing at all.
+
+    A local Ollama takes no credentials and rejects nothing, so sending
+    an empty Authorization header would be noise at best. Returning {}
+    keeps the local path byte-for-byte what it was.
+    """
+    if not OLLAMA_API_KEY:
+        return {}
+    return {"Authorization": f"Bearer {OLLAMA_API_KEY}"}
+
+
+def ollama_is_remote():
+    """Is the configured endpoint somebody else's machine?
+
+    This decides what the UI is allowed to claim. The whole product
+    promise is that a prompt does not leave the device, and that promise
+    is false the moment OLLAMA_URL points at a host - so the label has to
+    follow the configuration rather than the other way round.
+    """
+    url = OLLAMA_URL.lower()
+    return not (url.startswith("http://localhost")
+                or url.startswith("http://127.0.0.1")
+                or url.startswith("http://[::1]"))
+
 
 # Billing - real subscription charges via Stripe Checkout, when a Stripe
 # account is configured. Without keys, upgrading stays the old mock
@@ -168,6 +211,23 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me-in-prod")
 # overhead.
 app.config["MAX_CONTENT_LENGTH"] = 220 * 1024 * 1024
 
+# Re-read a template when its file changes, instead of compiling it once
+# and holding that copy for the life of the process.
+#
+# Jinja ties this to app.debug by default, and this app deliberately runs
+# with the Werkzeug reloader off (see the bottom of this file - torch and
+# diffusers import several hundred files lazily, and every one of them
+# triggered a restart). Those two defaults together mean an edit to a
+# template is invisible until someone restarts the server by hand, while
+# edits to CSS and JS appear immediately because they are static files.
+#
+# That combination produces the worst kind of bug report: the page is
+# served with markup from one point in time and styles from another, so
+# it looks broken in ways that match neither version of the code and
+# cannot be reproduced from a fresh start. It costs one stat() per
+# render to not have that.
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+
 # Session cookie hardening. HttpOnly keeps the login cookie away from
 # any JS that might get injected into a page; SameSite=Lax stops another
 # site silently issuing authenticated requests as this user. Secure is
@@ -206,6 +266,7 @@ if os.environ.get("TRUST_PROXY") == "1":
 def too_large(_err):
     return jsonify({"error": "That upload is too large (220MB per request)."}), 413
 
+
 GENERATED_DIR = os.path.join("static", "generated")
 os.makedirs(GENERATED_DIR, exist_ok=True)
 
@@ -232,6 +293,7 @@ def streaming_response(generator):
             "Cache-Control": "no-cache, no-transform",
         },
     )
+
 
 CODING_SYSTEM_PROMPT = (
     "If the user's message is just casual conversation - a greeting, "
@@ -730,7 +792,8 @@ def google_login():
 def google_callback():
     if not google_oauth_configured():
         return redirect("/app?auth_error=not_configured")
-    if not request.args.get("state") or request.args.get("state") != session.pop("oauth_state", None):
+    expected = session.pop("oauth_state", None)
+    if not request.args.get("state") or request.args.get("state") != expected:
         return redirect("/app?auth_error=state_mismatch")
     code = request.args.get("code")
     if not code:
@@ -1451,7 +1514,8 @@ def ollama_reachable():
     if now - _ollama_health["at"] < OLLAMA_HEALTH_TTL:
         return _ollama_health["ok"]
     try:
-        r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=2)
+        r = requests.get(f"{OLLAMA_URL}/api/tags",
+                         headers=ollama_headers(), timeout=2)
         ok = r.ok and bool(r.json().get("models"))
     except requests.exceptions.RequestException:
         ok = False
@@ -1488,27 +1552,44 @@ def _best_cloud_model(mode, available):
 
 
 def ollama_provider():
-    """The locally-hosted models. Kept as a function rather than a
+    """The Ollama-served models. Kept as a function rather than a
     hardcoded dict so /api/providers reflects reality if Ollama isn't
-    running or has no models pulled."""
+    running or has no models pulled.
+
+    The label is computed, not fixed. "On this machine" is a claim about
+    where someone's prompt goes, and it stops being true the moment
+    OLLAMA_URL points at Ollama Cloud - which is a supported way to run
+    this. Showing the old label then would be the app lying about the one
+    thing it sells itself on, so the name and the note both follow the
+    endpoint.
+    """
     models, available = [], False
     try:
-        r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
+        r = requests.get(f"{OLLAMA_URL}/api/tags",
+                         headers=ollama_headers(), timeout=3)
         r.raise_for_status()
         models = [m["name"] for m in r.json().get("models", [])]
         available = True
     except requests.exceptions.RequestException:
         pass
 
+    remote = ollama_is_remote()
+    if models:
+        note = ("Served by Ollama Cloud, so prompts leave this machine."
+                if remote else None)
+    else:
+        note = ("Ollama Cloud isn't answering - check OLLAMA_API_KEY."
+                if remote else
+                "The local models aren't running right now - cloud is "
+                "being used instead.")
+
     return {
         "id": "ollama",
-        "label": "On this machine",
+        "label": "Ollama Cloud" if remote else "On this machine",
         "available": available and bool(models),
         "models": models,
         "model_info": [describe_model(m) for m in models],
-        "note": None if models else
-        "The local models aren't running right now - cloud is being used "
-        "instead.",
+        "note": note,
     }
 
 
@@ -1608,6 +1689,7 @@ def stream_ollama(model, history, options=None, images=None, usage=None):
     with requests.post(
         f"{OLLAMA_URL}/api/chat",
         json=body,
+        headers=ollama_headers(),
         stream=True,
         timeout=120,
     ) as r:
@@ -1839,7 +1921,7 @@ def add_memory_route():
     if limit is not None and len(db.load_memories(owner_id)) >= limit:
         return jsonify({
             "error": f"Free accounts remember up to {limit} things. "
-                     "Remove one, or upgrade to Pro for unlimited memory.",
+            "Remove one, or upgrade to Pro for unlimited memory.",
             "upgrade_required": True,
         }), 402
 
@@ -1928,6 +2010,278 @@ def generate_image_route():
     # frontend re-fetches /api/credits itself right after, same as it
     # does following a normal chat reply.
     return jsonify({"url": url})
+
+
+# ----------------------------------------------------------------------
+# Video bay - upload, read the request, render.
+#
+# The prompt is the interface: someone writes what they want changed in
+# their own words, and a model turns that sentence into a list of
+# operations. What makes handing a language model a video editor safe is
+# that it never writes ffmpeg arguments. It picks op names and numbers
+# from a fixed vocabulary, and videoedit.validate() checks every one
+# against a table of types and ranges before a filter string exists. An
+# invented filter - hallucinated, or smuggled in through the prompt -
+# is not in the table and is dropped with a note.
+#
+# Everything expensive is capped inside videoedit.py, because encoding
+# saturates a core and this app is served from one laptop. The routes
+# here add only what needs a request context: who is asking, and which
+# model reads the sentence.
+# ----------------------------------------------------------------------
+VIDEO_NAME_RE = re.compile(r"^[a-f0-9]{12}-[a-f0-9]{12}\.[a-z0-9]{2,4}$")
+VIDEO_PLAN_TIMEOUT = 90
+
+# Preference order for reading an edit request locally. This is parsing
+# with a fixed output shape rather than open conversation, which is what
+# the coder-tuned model is best at; the others are here so a machine
+# with only one of them pulled still works.
+VIDEO_PLAN_MODELS = ("qwen2.5-coder", "qwen2.5", "llama3.2")
+
+
+def _video_owner_tag(owner=None):
+    """A short tag for whoever uploaded a clip, mixed into its filename.
+
+    Uploads are addressed by name in every later call, which makes the
+    name a capability: without this, one person's `name` in an /edit body
+    would reach another person's file. Signed with the app secret rather
+    than being a plain hash of the id, so it cannot be computed for
+    somebody else.
+    """
+    owner = owner or current_owner_id()
+    # secret_key is typed str | bytes | None. It is always set at import
+    # time above, but signing with a None key would silently become a
+    # forgeable tag rather than an error, so this asserts the shape it
+    # needs instead of assuming it.
+    secret = app.secret_key or ""
+    key = secret if isinstance(secret, bytes) else secret.encode("utf-8")
+    return hmac.new(key,
+                    ("video:" + owner).encode("utf-8"),
+                    "sha256").hexdigest()[:12]
+
+
+def _video_source(name):
+    """Resolve an upload name from a request body. -> (path, error).
+
+    The regex is the path-traversal defence and the tag is the ownership
+    one; neither substitutes for the other.
+    """
+    name = str(name or "")
+    if not VIDEO_NAME_RE.match(name):
+        return None, "That clip reference isn't valid. Upload the file again."
+    if not name.startswith(_video_owner_tag() + "-"):
+        return None, "That clip belongs to a different session. Upload it again."
+    path = os.path.join(videoedit.UPLOAD_DIR, name)
+    if not os.path.exists(path):
+        return None, "That clip is no longer on the server. Upload it again."
+    return path, None
+
+
+def _video_planner():
+    """A one-shot completion for reading an edit request, or None.
+
+    Local first, and not only on principle: this is a short call with a
+    fixed output shape, which is what a small local model is good at, and
+    it keeps the description of someone's footage on the machine the
+    footage is on. Gemini stands in when Ollama is not running, because a
+    missing planner is not a neutral failure - it drops the prompt box
+    back to the regex patterns, and from outside that looks like the app
+    ignoring most of what you asked for.
+    """
+    if ollama_reachable():
+        models = ollama_provider()["models"]
+        if models:
+            model = next(
+                (m for want in VIDEO_PLAN_MODELS for m in models
+                 if m.split(":")[0] == want),
+                models[0])
+
+            def complete_local(prompt):
+                r = requests.post(
+                    f"{OLLAMA_URL}/api/generate",
+                    headers=ollama_headers(),
+                    json={
+                        "model": model,
+                        "prompt": prompt,
+                        "stream": False,
+                        # Deterministic on purpose: this is parsing, not
+                        # writing. The same sentence should produce the
+                        # same edit every time someone runs it.
+                        "options": {"temperature": 0},
+                        "keep_alive": "30m",
+                    },
+                    timeout=VIDEO_PLAN_TIMEOUT,
+                )
+                r.raise_for_status()
+                return r.json().get("response") or ""
+
+            return complete_local
+
+    available = gemini.models() if gemini.configured() else []
+    if available:
+        def complete_cloud(prompt):
+            return "".join(gemini.stream_chat(
+                _best_cloud_model("chat", available),
+                [{"role": "user", "content": prompt}]))
+
+        return complete_cloud
+
+    return None
+
+
+@app.route("/api/video/status", methods=["GET"])
+def video_status():
+    # Called whenever the app page loads, which makes it the natural
+    # place to sweep stale renders: they are served as ordinary static
+    # files and nothing else would ever remove them.
+    videoedit.prune()
+    if not videoedit.available():
+        return jsonify({"available": False,
+                        "reason": videoedit.unavailable_reason()})
+    return jsonify({
+        "available": True,
+        "reason": "",
+        "max_upload_mb": videoedit.MAX_UPLOAD_BYTES // (1024 * 1024),
+        "max_input_seconds": videoedit.MAX_INPUT_SECONDS,
+        "max_output_seconds": videoedit.MAX_OUTPUT_SECONDS,
+        "captions": videoedit.captions_available(),
+        # So the UI can say the prompt box is only pattern-matching
+        # rather than letting people discover it a failed request later.
+        "planner": _video_planner() is not None,
+    })
+
+
+@app.route("/api/video/upload", methods=["POST"])
+def video_upload():
+    if not videoedit.available():
+        return jsonify({"error": videoedit.unavailable_reason()}), 503
+
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"error": "No file was sent."}), 400
+
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in videoedit.ALLOWED_EXT:
+        allowed = ", ".join(sorted(e[1:].upper()
+                                   for e in videoedit.ALLOWED_EXT))
+        return jsonify({
+            "error": f"That file type isn't supported. Use {allowed}."
+        }), 400
+
+    # The stored name is generated, never taken from the upload. It is
+    # handed back to the client and quoted in later requests, so a name
+    # the uploader chose would be a path the uploader chose.
+    name = f"{_video_owner_tag()}-{uuid.uuid4().hex[:12]}{ext}"
+    path = os.path.join(videoedit.UPLOAD_DIR, name)
+    f.save(path)
+
+    size = os.path.getsize(path)
+    limit_mb = videoedit.MAX_UPLOAD_BYTES // (1024 * 1024)
+    if size > videoedit.MAX_UPLOAD_BYTES:
+        os.remove(path)
+        return jsonify({
+            "error": f"That file is {size / 1048576:.0f}MB. "
+                     f"The limit is {limit_mb}MB."
+        }), 400
+
+    info, err = videoedit.probe(path)
+    if err or not info:
+        os.remove(path)
+        return jsonify({"error": err or "Could not read that video."}), 400
+    if info["duration"] > videoedit.MAX_INPUT_SECONDS:
+        os.remove(path)
+        return jsonify({
+            "error": f"That clip is {info['duration'] / 60:.0f} minutes long. "
+                     f"The limit is {videoedit.MAX_INPUT_SECONDS // 60}."
+        }), 400
+
+    info.update({
+        "name": name,
+        "original": f.filename[:120],
+        # Under static/, so the preview element can fetch it directly.
+        # The name is 24 hex characters of which half are unguessable,
+        # which is the same protection the generated images rely on.
+        "url": "/" + videoedit.UPLOAD_DIR.replace(os.sep, "/") + "/" + name,
+    })
+    return jsonify(info)
+
+
+@app.route("/api/video/trim", methods=["POST"])
+def video_trim():
+    payload = request.get_json(force=True, silent=True) or {}
+    path, err = _video_source(payload.get("name"))
+    if err:
+        return jsonify({"error": err}), 400
+
+    raw_scale = payload.get("scale")
+    try:
+        scale = int(raw_scale) if raw_scale else None
+    except (TypeError, ValueError):
+        scale = None
+
+    job_id, err = videoedit.start_trim(
+        current_owner_id(), path,
+        payload.get("start"), payload.get("end"), scale)
+    if err:
+        return jsonify({"error": err}), 400
+    return jsonify({"job": _video_job_view(job_id)})
+
+
+@app.route("/api/video/edit", methods=["POST"])
+def video_edit():
+    payload = request.get_json(force=True, silent=True) or {}
+    path, err = _video_source(payload.get("name"))
+    if err:
+        return jsonify({"error": err}), 400
+
+    prompt = (payload.get("prompt") or "").strip()
+    blocked = moderation.check_message(prompt)
+    if blocked is not None:
+        return jsonify({"error": blocked}), 400
+
+    info, err = videoedit.probe(path)
+    if err or not info:
+        return jsonify({"error": err or "Could not read that video."}), 400
+
+    ops, source, skipped, err = videoedit.plan(
+        prompt, info["duration"], complete=_video_planner())
+    if err or not ops:
+        return jsonify({
+            "error": err or "Nothing in that maps to an edit I can do.",
+            "skipped": skipped,
+        }), 400
+
+    job_id, err = videoedit.start_edit(current_owner_id(), path, ops)
+    if err:
+        return jsonify({"error": err, "skipped": skipped}), 400
+
+    return jsonify({
+        "job": _video_job_view(job_id),
+        "steps": [videoedit.describe(o) for o in ops],
+        "source": source,
+        # What the request asked for that this could not do. Sent even on
+        # success, because a render that quietly does four of five things
+        # is the thing that makes the feature feel arbitrarily capped.
+        "skipped": skipped,
+    })
+
+
+def _video_job_view(job_id):
+    """A job as the client should see it - without the owner id, which is
+    internal and nobody else's business."""
+    j = videoedit.job(job_id) or {}
+    j.pop("owner", None)
+    return j
+
+
+@app.route("/api/video/job/<job_id>", methods=["GET"])
+def video_job(job_id):
+    j = videoedit.job(job_id)
+    if not j or j.get("owner") != current_owner_id():
+        # The same answer for "no such job" and "not yours", so this
+        # cannot be used to find out whether an id exists.
+        return jsonify({"error": "Unknown render."}), 404
+    return jsonify({"job": _video_job_view(job_id)})
 
 
 # ----------------------------------------------------------------------
@@ -2169,7 +2523,7 @@ def chat():
     if not features.model_allowed(account_credits.get("plan"), model):
         return jsonify({
             "error": f"{model} is a Pro model. Upgrade in Settings, or "
-                     "pick one of the free models.",
+            "pick one of the free models.",
             "upgrade_required": True,
         }), 402
     apply_refill(account_credits)

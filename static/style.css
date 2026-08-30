@@ -1,83 +1,102 @@
 /* ============================================================
-   Design tokens — RandomGenerals AI, dark theme.
-   A near-black ground with a faint cyan/violet glow behind two
-   floating panels (sidebar, chat), matching the landing page at
-   static/landing.css so the marketing page and the app read as one
-   product. The topbar is a thinner strip sitting directly on that
-   ground rather than on a panel.
+   Design tokens - RandomGenerals AI.
 
-   Provider colors mark WHO answered (channel dot, message rail).
-   Bay colors mark WHERE you are (Code / Chat) and drive the app's
-   own chrome — brand mark, new-chat button, tab puck, ambient glow —
-   so each workspace has a distinct temperature without the provider
-   palette ever blending.
+   Three families, matching static/landing.css so the marketing page
+   and the app read as one product:
 
-   Type: Sora carries headings and brand. Inter carries all reading
-   and UI chrome, including the small labels that used to be mono.
-   JetBrains Mono is reserved for things that are actually code.
+     Yankees Blue        #182A3A   the ground, every surface
+     Deep Space Sparkle  #425B6F   raised surfaces and edges
+     Dark Tan            #A08348   accent surfaces - anything you act on
+     Burlywood           #D6BB80   the accent where it has to be READ
+     Smoke               #7A7E74   type, lifted along its own hue
+
+   The split between the two golds is the load-bearing part. Dark Tan is
+   4.1:1 on the ground and Burlywood is 7.9:1, so one is a surface and
+   the other is a letter, and they are never swapped.
+
+   The roles are the point. Gold is scarce on purpose: it marks the
+   send button, the active tab and the brand, and nothing else. A
+   second accent, or gold used decoratively, is what makes an
+   interface look busy rather than expensive.
+
+   Provider colours mark WHO answered (channel dot, message rail); bay
+   colours mark WHERE you are. Providers use lightened tints so the two
+   systems never read as the same thing at a glance.
+
+   Type: Sora carries headings and brand. Inter carries all reading and
+   UI chrome. JetBrains Mono is reserved for things that are code.
    ============================================================ */
 :root {
-  /* The former "cloud sky" palette, re-grounded dark to match the
-     landing page (static/landing.css). Every name below is unchanged
-     on purpose - the whole stylesheet reads these tokens, so
-     re-pointing them re-themes the app without touching the ~2400
-     lines of component rules underneath. "sky" now means the dark
-     ground the panels float on, not a blue daytime sky. */
-  --sky-top: #120d0a;
-  --sky-mid: #17100d;
-  --sky-bottom: #1f1610;
+  /* The five, by name. Everything below is expressed in terms of these,
+     so re-sampling the photograph re-themes the whole app. */
+  --tan-deep: #7a6335;
+  --tan: #a08348;
+  --smoke: #dfe2dc;
+  --sparkle-lit: #5b7f99;
+  --sparkle: #425b6f;
 
-  /* Panels are now light-on-dark rather than white glass: a barely-lit
-     surface that still reads as raised against the ground behind it. */
-  --surface: rgba(255, 255, 255, 0.04);
-  --surface-raised: rgba(255, 255, 255, 0.07);
-  --panel: rgba(36, 26, 20, 0.78);
-  --border: rgba(226, 190, 150, 0.11);
-  --border-strong: rgba(224, 164, 88, 0.28);
+  /* The ground: navy taken down until type sits comfortably on it. Not
+     black - a desaturated navy keeps the warm accents looking warm,
+     where true black makes them look muddy. */
+  --sky-top: #182a3a;
+  --sky-mid: #1e3346;
+  --sky-bottom: #2a4155;
 
-  --ink: #f3e7d6;
-  --ink-soft: #c0ab92;
-  --ink-faint: #8f7d68;
+  /* Panels are a barely-lit surface that still reads as raised. */
+  --surface: rgba(223, 226, 220, 0.05);
+  --surface-raised: rgba(223, 226, 220, 0.08);
+  --panel: rgba(20, 41, 66, 0.8);
+  --border: rgba(223, 226, 220, 0.12);
+  --border-strong: rgba(160, 131, 72, 0.34);
 
-  /* Text sitting directly on the ground (topbar), not on a panel. The
-     drop shadow that kept white text legible over a bright sky is
-     pointless over a dark one - dropped rather than left as a smudge. */
-  --ink-on-sky: #f3e7d6;
-  --ink-on-sky-soft: rgba(243, 231, 214, 0.72);
+  /* Peach, and two steps down from it. Stepping the same hue rather
+     than fading to grey keeps the text warm against the cool ground at
+     every level of emphasis. */
+  --ink: #dfe2dc;
+  --ink-soft: #a9ada5;
+  --ink-faint: #7a7e74;
+
+  --ink-on-sky: #dfe2dc;
+  --ink-on-sky-soft: rgba(223, 226, 220, 0.72);
   --sky-text-shadow: none;
 
   /* Deck chrome fallback (= Code bay accent) */
-  --deck: #c2673d;
-  --deck-soft: rgba(194, 103, 61, 0.16);
+  --deck: #a08348;
+  --deck-soft: rgba(160, 131, 72, 0.16);
 
-  /* Bay accents — one per workspace. Shifted onto the landing page's
-     cyan/blue/violet ramp so switching bays still reads as a change of
-     temperature, but all three now belong to the same family. */
-  --bay-code: #c2673d;
-  --bay-code-soft: rgba(194, 103, 61, 0.16);
-  --bay-chat: #e0a458;
-  --bay-chat-soft: rgba(224, 164, 88, 0.16);
-  --bay-image: #a8788c;
-  --bay-image-soft: rgba(168, 120, 140, 0.15);
+  /* Bay accents - one per workspace, one per palette colour. Each is
+     dark enough that white type on it clears AA at this size, which is
+     what the selected tab needs. */
+  --bay-code: #a08348;
+  --bay-code-soft: rgba(160, 131, 72, 0.16);
+  --bay-chat: #5b7f99;
+  --bay-chat-soft: rgba(91, 127, 153, 0.16);
+  --bay-image: #7a6335;
+  --bay-image-soft: rgba(122, 99, 53, 0.18);
+  --bay-video: #425b6f;
+  --bay-video-soft: rgba(66, 91, 111, 0.2);
 
-  /* Channel colors — one per provider, never blended */
-  --c-ollama: #8aa06a;
-  --c-ollama-soft: rgba(138, 160, 106, 0.14);
-  /* One per provider, and the name must match the provider id: the
-     channel button sets --btn-color to var(--c-<id>) at runtime, so a
-     provider with no token here renders with an undefined colour and
-     the button comes out unstyled. That is what happened when the old
-     provider's token was deleted and the new one's was not added. */
-  --c-gemini: #e0a458;
-  --c-gemini-soft: rgba(224, 164, 88, 0.14);
-  --c-imagegen: #a8788c;
-  --c-imagegen-soft: rgba(167, 139, 250, 0.14);
+  /* Channel colours - one per provider, and the name must match the
+     provider id: the channel button sets --btn-color to
+     var(--c-<id>) at runtime, so a provider with no token here renders
+     unstyled. Tints rather than the base colours, because these are
+     small dots and thin rails on a dark ground. */
+  --c-ollama: #7fa3bd;
+  --c-ollama-soft: rgba(127, 163, 189, 0.14);
+  --c-gemini: #d6bb80;
+  --c-gemini-soft: rgba(214, 187, 128, 0.14);
+  --c-imagegen: #c2a86f;
+  --c-imagegen-soft: rgba(194, 168, 111, 0.14);
 
-  --user-bubble: rgba(194, 103, 61, 0.11);
-  --error: #f2778d;
-  --success: #8aa06a;
-  --credit-low: #f2778d;
-  --credit-mid: #e8b64c;
+  --user-bubble: rgba(160, 131, 72, 0.12);
+
+  /* Status colours stay outside the palette on purpose. An error has to
+     read as an error before it reads as on-brand, and a red drawn from
+     a set whose warm half is already red would not. */
+  --error: #e8697a;
+  --success: #6fa287;
+  --credit-low: #e8697a;
+  --credit-mid: #d6bb80;
 
   --font-display: "Sora", sans-serif;
   --font-body: "Inter", sans-serif;
@@ -87,14 +106,19 @@
   --radius-md: 14px;
   --radius-lg: 22px;
 
-  /* Shadows do almost nothing on a dark ground - depth here comes from
-     the border and surface lightness instead, so these are pulled back
-     to a soft ambient darkening rather than the old blue-tinted lift. */
-  --shadow-card:
-    0 20px 50px rgba(0, 0, 0, 0.45), 0 2px 10px rgba(0, 0, 0, 0.3);
+  --shadow-card: 0 20px 50px rgba(0, 0, 0, 0.45), 0 2px 10px rgba(0, 0, 0, 0.3);
   --shadow-soft: 0 6px 20px rgba(0, 0, 0, 0.3);
 
-  /* Active bay — reset by JS to one of the --bay-* values above */
+  /* Active bay - reset by JS to one of the --bay-* values above */
+  /* Bare channels, for the ambient washes that need rgb(... / alpha).
+     Same reason as the landing page's --ground: a wash hardcoded to a
+     copy of a palette colour survives a palette change and stops
+     matching the thing it is meant to be a wash of. */
+  --ground: 24 42 58;
+  --tan-rgb: 160 131 72;
+  --teal-rgb: 14 106 144;
+  --tan-deep-rgb: 122 99 53;
+
   --bay: var(--bay-code);
   --bay-soft: var(--bay-code-soft);
 }
@@ -110,14 +134,14 @@
    deeper, morning lifts slightly toward blue. The clouds/moon
    decoration below still carries most of the actual difference. */
 html.time-night {
-  --sky-top: #03060c;
-  --sky-mid: #060a13;
-  --sky-bottom: #0b1020;
+  --sky-top: #101c27;
+  --sky-mid: #182a3a;
+  --sky-bottom: #23394c;
 }
 html.time-morning {
-  --sky-top: #060c18;
-  --sky-mid: #0a1223;
-  --sky-bottom: #10192e;
+  --sky-top: #1a2b3b;
+  --sky-mid: #23394c;
+  --sky-bottom: #33495c;
 }
 
 * {
@@ -148,12 +172,12 @@ body {
   background-image:
     radial-gradient(
       1100px 480px at 12% -8%,
-      rgba(194, 103, 61, 0.11) 0%,
+      rgb(var(--tan-rgb) / 0.11) 0%,
       transparent 62%
     ),
     radial-gradient(
       950px 440px at 92% -4%,
-      rgba(224, 164, 88, 0.08) 0%,
+      rgb(var(--teal-rgb) / 0.08) 0%,
       transparent 60%
     ),
     linear-gradient(
@@ -174,7 +198,7 @@ html.time-night body {
     ),
     radial-gradient(
       700px 360px at 90% 90%,
-      rgba(167, 139, 250, 0.08) 0%,
+      rgb(var(--tan-deep-rgb) / 0.08) 0%,
       transparent 62%
     ),
     linear-gradient(
@@ -219,17 +243,17 @@ html.time-night body {
   background:
     radial-gradient(
       32% 20% at 10% 18%,
-      rgba(224, 164, 88, 0.13),
+      rgb(var(--teal-rgb) / 0.13),
       transparent 72%
     ),
     radial-gradient(
       26% 16% at 78% 10%,
-      rgba(194, 103, 61, 0.11),
+      rgb(var(--tan-rgb) / 0.11),
       transparent 72%
     ),
     radial-gradient(
       34% 20% at 55% 82%,
-      rgba(167, 139, 250, 0.1),
+      rgb(var(--tan-deep-rgb) / 0.1),
       transparent 72%
     ),
     radial-gradient(24% 15% at 92% 68%, var(--bay-soft), transparent 75%),
@@ -730,33 +754,22 @@ html.time-night .night-moon {
   font-family: var(--font-body);
 }
 
-/* ---- Bay switcher (topbar) — two rack tabs with a sliding puck ---- */
+/* ---- Bay switcher (topbar) — rack tabs with a sliding puck ---- */
 .bay-switch {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* Column count is derived, not hardcoded. It was repeat(3, 1fr) and
+     adding a fourth bay silently squeezed the tabs into three columns
+     with the puck landing between them - the kind of break that only
+     shows up when someone adds a tab months later. */
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   gap: 2px;
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 3px;
   box-shadow: var(--shadow-soft);
-}
-
-.bay-puck {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: calc(33.333% - 2px);
-  height: calc(100% - 6px);
-  border-radius: 999px;
-  background: var(--bay);
-  box-shadow: 0 2px 10px var(--bay-soft);
-  transition:
-    transform 0.32s cubic-bezier(0.65, 0, 0.35, 1),
-    background 0.35s ease,
-    box-shadow 0.35s ease;
-  z-index: 0;
 }
 
 .bay-btn {
@@ -778,6 +791,8 @@ html.time-night .night-moon {
   border-radius: 999px;
   transition:
     color 0.25s ease,
+    background 0.28s ease,
+    box-shadow 0.28s ease,
     transform 0.15s ease;
 }
 
@@ -791,8 +806,24 @@ html.time-night .night-moon {
   color: var(--ink);
 }
 
+/* The active tab carries its own pill.
+
+   This replaced a single .bay-puck absolutely positioned over the tab
+   row. That puck could not be moved: with a matching, valid, higher
+   specificity rule and no competitor, `left` still resolved to its 3px
+   default, and inline styles on that one element - plain and
+   !important, `left` and `transform` - were ignored while the same
+   assignments on its sibling buttons worked. The cause was never found.
+
+   Painting the selected tab needs no geometry at all: no measuring, no
+   percentages, no second element to keep in step with the columns. It
+   cannot drift out of alignment because there is nothing to align, and
+   adding a fifth bay needs no change here. What is lost is the puck
+   sliding between tabs; the background still cross-fades. */
 .bay-btn[aria-selected="true"] {
   color: #ffffff;
+  background: var(--bay);
+  box-shadow: 0 2px 10px var(--bay-soft);
 }
 
 .bay-btn:active {
@@ -1802,7 +1833,7 @@ html.time-night .night-moon {
   font-size: 24px;
   color: #ffffff;
   background: var(--bay-code);
-  box-shadow: 0 8px 32px var(--bay-chat-soft);
+  box-shadow: 0 8px 32px var(--bay-code-soft);
   animation: bootPulse 1.8s ease-in-out infinite;
 }
 
@@ -1817,11 +1848,11 @@ html.time-night .night-moon {
   0%,
   100% {
     transform: scale(1);
-    box-shadow: 0 8px 24px var(--bay-chat-soft);
+    box-shadow: 0 8px 24px var(--bay-code-soft);
   }
   50% {
     transform: scale(1.06);
-    box-shadow: 0 10px 40px var(--bay-chat-soft);
+    box-shadow: 0 10px 40px var(--bay-code-soft);
   }
 }
 
@@ -1836,7 +1867,7 @@ html.time-night .night-moon {
   height: 100%;
   width: 40%;
   border-radius: 999px;
-  background: linear-gradient(90deg, var(--bay-chat), var(--bay-code));
+  background: linear-gradient(90deg, var(--bay-code), var(--bay-image));
   animation: bootSweep 1.1s ease-in-out infinite;
 }
 @keyframes bootSweep {
@@ -2131,7 +2162,7 @@ html.time-night .night-moon {
   font-weight: 700;
   font-size: 15px;
   color: #ffffff;
-  background: linear-gradient(135deg, var(--bay-chat), var(--bay-code));
+  background: linear-gradient(135deg, var(--bay-code), var(--bay-image));
 }
 .account-info {
   display: flex;
@@ -2665,7 +2696,9 @@ html.time-night .night-moon {
   background: transparent;
   color: var(--ink-faint);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease,
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
     border-color 0.15s ease;
 }
 
@@ -2684,7 +2717,9 @@ html.time-night .night-moon {
    sidebar snapping between two sizes reads as a layout glitch rather
    than an intentional control. */
 .sidebar {
-  transition: width 0.18s ease, padding 0.18s ease;
+  transition:
+    width 0.18s ease,
+    padding 0.18s ease;
 }
 
 .app.sidebar-collapsed .sidebar {
@@ -2801,4 +2836,460 @@ html.time-night .night-moon {
 
 #greetingHost:empty {
   margin-bottom: 0;
+}
+
+/* ---------------------------------------------------------------- */
+/* Video bay                                                         */
+/* ---------------------------------------------------------------- */
+.video-bay {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 28px 24px 40px;
+}
+
+.video-inner {
+  max-width: 760px;
+  margin: 0 auto;
+  display: grid;
+  gap: 22px;
+}
+
+.video-drop {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  padding: 52px 24px;
+  text-align: center;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease;
+}
+
+.video-drop:hover,
+.video-drop:focus-visible,
+.video-drop.is-over {
+  border-color: var(--bay);
+  background: var(--surface-raised);
+}
+
+.video-drop-icon {
+  font-size: 26px;
+  color: var(--bay);
+  line-height: 1;
+}
+
+.video-drop-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 16px;
+  margin: 0;
+  color: var(--ink);
+}
+
+.video-drop-sub {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+
+.video-preview {
+  width: 100%;
+  border-radius: var(--radius-lg);
+  background: #000;
+  display: block;
+  max-height: 46vh;
+}
+
+.video-meta {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-faint);
+  /* Digits in a row of stats should not shuffle as the numbers change. */
+  font-variant-numeric: tabular-nums;
+}
+
+.video-range {
+  display: grid;
+  gap: 10px;
+}
+
+.video-range-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 56px;
+  align-items: center;
+  gap: 12px;
+}
+
+.video-range-row label {
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.video-range-row output {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.video-range input[type="range"] {
+  width: 100%;
+  accent-color: var(--bay);
+}
+
+.video-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.video-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.video-size select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.video-selection {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+.video-go {
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  color: #fff;
+  background: var(--bay);
+  border: none;
+  border-radius: 10px;
+  padding: 10px 18px;
+  cursor: pointer;
+}
+
+.video-go:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.video-go:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.video-status {
+  font-size: 13.5px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  color: var(--ink-soft);
+}
+
+.video-status.is-error {
+  border-color: rgba(210, 112, 92, 0.4);
+  color: #e4a08e;
+}
+
+.video-result {
+  display: grid;
+  gap: 12px;
+}
+
+.video-download {
+  justify-self: start;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 10px 18px;
+  text-decoration: none;
+}
+
+.video-download:hover {
+  border-color: var(--bay);
+}
+
+/* hidden must win over the layout display these carry, or the attribute
+   is set and the element stays on screen. */
+.composer[hidden],
+.panel-header[hidden],
+.chat-shell[hidden],
+.video-bay[hidden] {
+  display: none !important;
+}
+
+/* ---- Video bay: asking for an edit in words ---- */
+
+.video-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.video-ask-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.video-prompt {
+  width: 100%;
+  resize: vertical;
+  min-height: 62px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.video-prompt::placeholder {
+  color: var(--ink-faint);
+}
+
+.video-prompt:focus-visible {
+  outline: none;
+  border-color: var(--bay);
+  box-shadow: 0 0 0 3px var(--bay-soft);
+}
+
+/* Examples teach the shape of a request. Clicking one fills the box
+   rather than running it, so the numbers can be changed first. */
+.video-examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.video-examples button {
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--ink-soft);
+  font-family: var(--font-body);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    color 0.2s ease,
+    border-color 0.2s ease,
+    background 0.2s ease;
+}
+
+.video-examples button:hover {
+  color: var(--ink);
+  border-color: var(--border-strong);
+  background: var(--surface);
+}
+
+.video-go {
+  align-self: flex-start;
+  padding: 10px 22px;
+  border: none;
+  border-radius: 999px;
+  background: var(--bay);
+  color: #fff;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: 0 4px 16px var(--bay-soft);
+  transition:
+    filter 0.2s ease,
+    transform 0.15s ease;
+}
+
+.video-go:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.video-go:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.video-go:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The manual controls are still here, just not the first thing offered. */
+.video-go-quiet {
+  background: transparent;
+  color: var(--ink-soft);
+  border: 1px solid var(--border-strong);
+  box-shadow: none;
+}
+
+.video-manual {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.video-manual > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--ink-faint);
+  list-style: none;
+}
+
+.video-manual > summary::-webkit-details-marker {
+  display: none;
+}
+
+.video-manual > summary::before {
+  content: "▸ ";
+}
+
+.video-manual[open] > summary::before {
+  content: "▾ ";
+}
+
+.video-manual > summary:hover {
+  color: var(--ink-soft);
+}
+
+/* What the sentence was understood as. Shown while the render runs, so a
+   misread prompt is caught by reading one line rather than by watching
+   the wrong video come out at the end. */
+.video-plan {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+/* The skipped list is its own line. Inline with the steps it read as one
+   long run of chips where the important half - the things that did NOT
+   happen - was indistinguishable from the things that did. */
+.video-plan-row {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.video-plan-lead {
+  color: var(--ink-faint);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.video-plan-step {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--bay-soft);
+  border: 1px solid var(--border-strong);
+  color: var(--ink);
+}
+
+.video-plan-note {
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
+.video-plan-lead-skip {
+  color: var(--credit-mid);
+}
+
+/* Deliberately not styled as an error. Nothing went wrong - part of the
+   request was not understood, which is information, not a failure, and
+   colouring it red would make every partially-read prompt look like a
+   broken render. */
+.video-plan-skip {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--border);
+  color: var(--ink-soft);
+}
+
+.video-ask-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-faint);
+  max-width: 62ch;
+}
+
+.video-examples-lead {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  align-self: center;
+  margin-right: 2px;
+}
+
+/* Once a clip is loaded the drop zone stops being the main event: it
+   shrinks to a single line that still accepts a drop and still opens the
+   file picker, but gives the panel back to the video and the prompt. */
+.video-bay.has-clip .video-drop {
+  padding: 10px 14px;
+  min-height: 0;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.video-bay.has-clip .video-drop-icon {
+  font-size: 13px;
+  margin: 0;
+}
+
+.video-bay.has-clip .video-drop-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.video-bay.has-clip .video-drop-title::after {
+  content: " — or drop another to replace it";
+  color: var(--ink-faint);
+  font-weight: 400;
+}
+
+.video-bay.has-clip .video-drop-sub {
+  display: none;
+}
+
+/* A tall source clip should not push everything else off screen. */
+.video-preview {
+  max-height: 46vh;
+  width: 100%;
+  background: #000000;
+  border-radius: var(--radius-md);
 }

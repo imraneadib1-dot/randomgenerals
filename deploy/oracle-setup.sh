@@ -5,21 +5,54 @@
 #   curl -fsSL <raw-url>/deploy/oracle-setup.sh -o setup.sh && bash setup.sh
 # or copy this file across and: bash oracle-setup.sh
 #
-# WHAT RUNS HERE VS ON THE LAPTOP
-# The VM has no GPU, so Ollama is deliberately NOT installed - a 7B model
-# on 2 ARM cores answers at roughly a word per second, which is worse
-# than useless. Chat comes from Groq instead (free tier, already wired
-# up in app.py) and image generation from a cloud API. Everything else -
-# accounts, threads, memory, credits, the code sandbox, web search -
-# runs here exactly as it does locally.
+# Optional:
+#   bash oracle-setup.sh --with-ollama    also install Ollama + a small model
 #
-# Torch and diffusers are also skipped: ~1GB of wheels for a local image
-# model that can't run acceptably here anyway.
+#
+# WHERE THE ANSWERS COME FROM
+#
+# The VM has 2 ARM cores and no GPU (Oracle halved the Always Free
+# allowance from 4/24GB to 2/12GB in June 2026). That is plenty for the
+# web app and nowhere near enough for a good model: a 7B answers at well
+# under a word a second here, which reads as broken rather than slow. So
+# by default no
+# model is installed and replies come from Gemini, which gemini.py has
+# supported all along as "the cloud fallback for when this machine is
+# off" - and this VM is precisely that case, permanently.
+#
+# --with-ollama installs Ollama and pulls llama3.2:3b anyway. A 3B on two
+# Ampere cores is slow for anything longer than a sentence. It exists so
+# the "runs on hardware you control" claim can stay literally true if
+# that matters more than speed; Gemini stays the fallback either way.
+#
+# Torch and diffusers are skipped regardless: ~1GB of wheels for a local
+# image model that cannot run acceptably on any CPU.
+#
+#
+# WHY THERE IS NO NGINX AND NO CERTBOT HERE
+#
+# Traffic arrives through a Cloudflare tunnel, which is an outbound
+# connection from this box to Cloudflare. Nothing has to listen on the
+# public internet, so there is no port to open, no certificate to renew,
+# and no reverse proxy to configure. It also sidesteps the single most
+# common way an Oracle deployment stalls: their images ship restrictive
+# iptables rules AND the tenancy has its own Security List, and a port
+# has to be opened in both before anything reaches it.
 set -euo pipefail
 
-APP_USER="${SUDO_USER:-$USER}"
+WITH_OLLAMA=0
+for arg in "$@"; do
+  case "$arg" in
+    --with-ollama) WITH_OLLAMA=1 ;;
+    *) echo "unknown option: $arg" >&2; exit 2 ;;
+  esac
+done
+
+# id -un as the last resort: under `set -u` an unset $USER aborts the
+# whole script with "unbound variable", which is a confusing way to
+# fail on a box where the login shell simply did not export it.
+APP_USER="${SUDO_USER:-${USER:-$(id -un)}}"
 APP_DIR="/opt/randomgenerals"
-PY_VERSION_MIN="3.10"
 SERVICE_NAME="randomgenerals"
 PORT=5001
 
@@ -30,23 +63,23 @@ warn() { printf '    \033[0;33m!\033[0m   %s\n' "$*"; }
 # ---------------------------------------------------------------- packages
 log "Installing system packages"
 sudo apt-get update -qq
+# ffmpeg is not optional: videoedit.py shells out to it for every render,
+# and without it the video bay correctly reports itself unavailable -
+# which looks like a broken feature rather than a missing package.
 sudo apt-get install -y -qq \
   python3 python3-venv python3-pip \
-  git curl ufw
+  git curl ufw ffmpeg
 ok "python3 $(python3 --version | cut -d' ' -f2)"
+ok "ffmpeg  $(ffmpeg -version 2>/dev/null | head -1 | cut -d' ' -f3)"
 
 # ---------------------------------------------------------------- firewall
-# Oracle's images ship with a restrictive iptables config AND the tenancy
-# has its own Security List. Both must allow the port, but since traffic
-# arrives through the Cloudflare tunnel (outbound-initiated), nothing
-# needs to be open to the internet at all - which is the safer default.
 log "Firewall"
 sudo ufw --force reset >/dev/null 2>&1 || true
 sudo ufw default deny incoming >/dev/null
 sudo ufw default allow outgoing >/dev/null
 sudo ufw allow OpenSSH >/dev/null
 sudo ufw --force enable >/dev/null
-ok "inbound denied except SSH (tunnel is outbound, so nothing else needed)"
+ok "inbound denied except SSH (the tunnel dials out, so nothing else is needed)"
 
 # ---------------------------------------------------------------- app
 log "Application"
@@ -65,32 +98,70 @@ log "Python environment"
 python3 -m venv "$APP_DIR/.venv"
 "$APP_DIR/.venv/bin/pip" install --quiet --upgrade pip
 
-# Install only what the server actually needs. requirements.txt includes
-# torch/diffusers for local image generation; those are filtered out.
-if [ -f "$APP_DIR/requirements.txt" ]; then
-  grep -viE '^(torch|diffusers|transformers|accelerate|safetensors)' \
-    "$APP_DIR/requirements.txt" > /tmp/req-cloud.txt || true
-  "$APP_DIR/.venv/bin/pip" install --quiet -r /tmp/req-cloud.txt
-  ok "installed deps (torch/diffusers skipped - no GPU here)"
+# requirements-cloud.txt rather than a filtered requirements.txt: it is
+# the list that is actually kept in step with what a GPU-less host needs,
+# and it is the only one that includes gunicorn.
+if [ -f "$APP_DIR/requirements-cloud.txt" ]; then
+  "$APP_DIR/.venv/bin/pip" install --quiet -r "$APP_DIR/requirements-cloud.txt"
+  ok "installed deps from requirements-cloud.txt (no torch/diffusers - no GPU)"
+else
+  warn "requirements-cloud.txt missing - is $APP_DIR the right checkout?"
+fi
+
+# ---------------------------------------------------------------- ollama
+if [ "$WITH_OLLAMA" = "1" ]; then
+  log "Ollama (optional, CPU-only)"
+  if ! command -v ollama >/dev/null 2>&1; then
+    curl -fsSL https://ollama.com/install.sh | sh
+  fi
+  sudo systemctl enable --now ollama >/dev/null 2>&1 || true
+  # 3B, not 7B. See the note at the top of this file.
+  ollama pull llama3.2:3b || warn "model pull failed - run it again by hand"
+  ok "ollama serving on 127.0.0.1:11434 with llama3.2:3b"
+else
+  ok "skipping Ollama - replies come from Gemini (see .env)"
 fi
 
 # ---------------------------------------------------------------- secrets
 log "Environment"
 if [ ! -f "$APP_DIR/.env" ]; then
-  cat > "$APP_DIR/.env" <<'ENVEOF'
-# Cloud deployment. Fill these in before starting the service.
-OLLAMA_URL=http://localhost:11434   # unused here; no local models
-GROQ_API_KEY=
-SECRET_KEY=
+  SECRET="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+  cat > "$APP_DIR/.env" <<ENVEOF
+# RandomGenerals AI - Oracle Always Free VM.
+
+# Signs session cookies. Generated once at install; changing it signs
+# everyone out.
+SECRET_KEY=$SECRET
+
+# The model. Without this there is nothing to answer with and every
+# prompt fails at the point of asking.
+#   https://aistudio.google.com/apikey
+GEMINI_API_KEY=
+
+# Local models. Left pointing at localhost either way: with --with-ollama
+# there is an Ollama here to answer, and without one the app finds
+# nothing, reports the local channel as unavailable, and uses Gemini -
+# which is the intended behaviour, not a failure.
+OLLAMA_URL=http://localhost:11434
+
+# Cloudflare terminates TLS at its edge and forwards over the tunnel, so
+# these two are always right here. TRUST_PROXY is what lets Flask build
+# the correct https:// redirect_uri for Google sign-in.
+FORCE_HTTPS_COOKIES=1
+TRUST_PROXY=1
+
+# Deliberately empty. Setting it turns the Pro upgrade button into a free
+# "make me Pro" switch - fine on a laptop, not on a public address.
+ALLOW_MOCK_UPGRADE=
+
+# Billing, if and when it is wired up.
 STRIPE_SECRET_KEY=
 STRIPE_PRICE_ID_PRO=
 STRIPE_WEBHOOK_SECRET=
-GEMINI_API_KEY=
-FORCE_HTTPS_COOKIES=1
-ALLOW_MOCK_UPGRADE=
 ENVEOF
   chmod 600 "$APP_DIR/.env"
-  warn "created $APP_DIR/.env - fill in GROQ_API_KEY and SECRET_KEY"
+  ok "created $APP_DIR/.env with a fresh SECRET_KEY"
+  warn "fill in GEMINI_API_KEY before starting the service"
 else
   ok ".env already present (left untouched)"
 fi
@@ -110,13 +181,31 @@ WorkingDirectory=$APP_DIR
 EnvironmentFile=$APP_DIR/.env
 Environment=PORT=$PORT
 Environment=APP_DEBUG=0
-ExecStart=$APP_DIR/.venv/bin/python $APP_DIR/app.py
+
+# gunicorn, not app.py. Flask's built-in server is single-process and
+# explicitly not for public traffic - app.py's own __main__ block says so.
+#
+# One worker, several threads, and a long timeout, for the reasons
+# documented in render.yaml: db.py holds a single module-level SQLite
+# connection that is thread-safe within one process but would become one
+# connection per process if workers scaled; a streamed reply spends its
+# life waiting on the model rather than on CPU, so threads suit it; and
+# gunicorn's 30s default would cut off any answer still being written.
+ExecStart=$APP_DIR/.venv/bin/gunicorn app:app \\
+  --bind 127.0.0.1:$PORT \\
+  --worker-class gthread \\
+  --workers 1 \\
+  --threads 8 \\
+  --timeout 300 \\
+  --access-logfile - \\
+  --error-logfile -
+
 Restart=always
 RestartSec=5
-# Oracle's free tier stops instances that look idle; a service that
-# restarts forever also keeps the box demonstrably in use.
-StandardOutput=append:$APP_DIR/app.log
-StandardError=append:$APP_DIR/app.log
+
+# journalctl rather than a file that grows until the disk is full.
+StandardOutput=journal
+StandardError=journal
 
 # Hardening - the app never needs to write outside its own directory.
 NoNewPrivileges=true
@@ -136,41 +225,46 @@ ok "service installed and enabled at boot"
 # ---------------------------------------------------------------- tunnel
 log "Cloudflare tunnel"
 if ! command -v cloudflared >/dev/null 2>&1; then
-  ARCH=$(dpkg --print-architecture)
+  ARCH=$(dpkg --print-architecture)     # arm64 on Ampere
   curl -fsSL -o /tmp/cloudflared.deb \
     "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}.deb"
   sudo dpkg -i /tmp/cloudflared.deb >/dev/null
-  ok "cloudflared installed"
+  ok "cloudflared installed ($ARCH)"
 else
   ok "cloudflared already present"
 fi
 
-cat <<'NEXTEOF'
+cat <<NEXTEOF
 
 ------------------------------------------------------------------
-Next steps (these need your credentials, so they aren't automated):
+Next steps - these need your credentials, so they are not automated.
 
-  1. Fill in secrets:
-       nano /opt/randomgenerals/.env
-     At minimum: GROQ_API_KEY, and a SECRET_KEY from
-       python3 -c "import secrets; print(secrets.token_hex(32))"
+  1. Add the model key:
+       nano $APP_DIR/.env          # set GEMINI_API_KEY
+     Get one at https://aistudio.google.com/apikey
 
-  2. Start the app:
-       sudo systemctl start randomgenerals
-       curl -s localhost:5001/api/health
+  2. Start it and check it locally:
+       sudo systemctl start $SERVICE_NAME
+       curl -s localhost:$PORT/api/health
+       journalctl -u $SERVICE_NAME -f      # if it does not come up
 
   3. Point the tunnel here instead of the laptop. On the LAPTOP, copy
      ~/.cloudflared/<tunnel-id>.json and cert.pem to this VM's
-     ~/.cloudflared/, then:
+     ~/.cloudflared/, then here:
        sudo cloudflared service install
        sudo systemctl start cloudflared
 
-     Only one machine may serve a tunnel at a time - stop the laptop's
-     tunnel first, or requests will land unpredictably on either.
+     Only one machine may serve a tunnel at a time. Stop the laptop's
+     tunnel first, or requests land unpredictably on either.
 
   4. Confirm from anywhere:
        curl -s https://randomgenerals.com/api/health
 
+  Afterwards, the laptop can be switched off. What changes: image
+  generation falls back to the hosted API, and the local-model channel
+  reports itself unavailable unless you passed --with-ollama. Chat,
+  code, the sandboxed runner, the video bay, accounts, memory, credits
+  and web search all keep working.
 ------------------------------------------------------------------
 NEXTEOF
 

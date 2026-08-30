@@ -160,7 +160,8 @@ def main(page: ft.Page):
     page.padding = 15
     page.theme_mode = ft.ThemeMode.DARK
 
-    result = ft.Text(value="0", size=40, color=ft.Colors.WHITE, selectable=True)
+    result = ft.Text(value="0", size=40,
+                     color=ft.Colors.WHITE, selectable=True)
 
     def button_click(e):
         result.value = apply_key(result.value, e.control.data)

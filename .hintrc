@@ -1,0 +1,8 @@
+{
+  "extends": ["development"],
+  "hints": {
+    "compat-api/html": ["default", {
+      "ignore": ["video[playsinline]", "video[controlslist]"]
+    }]
+  }
+}

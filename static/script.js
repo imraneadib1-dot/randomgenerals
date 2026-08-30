@@ -1,4 +1,4 @@
-const BAY_ORDER = ["code", "chat", "image"];
+const BAY_ORDER = ["code", "chat", "image", "video"];
 
 const BAY_META = {
   code: {
@@ -32,6 +32,18 @@ const BAY_META = {
     hints:
       "<div><span>Enter</span> to generate · <span>Shift+Enter</span> for a new line</div>" +
       "<div><span>&lt;/&gt; ◎ ✺</span> switch bays above</div>",
+  },
+  video: {
+    eyebrow: "randomgenerals --video",
+    title: "Trim a video",
+    // Says what it does and, just as importantly, what it does not. A bay
+    // called Video that turns out to only trim is worse than one that
+    // said so before the upload.
+    sub: "Drop a clip, choose the part you want, and get an MP4 back. Trimming only for now.",
+    placeholder: "",
+    hints:
+      "<div><span>Drop a file</span> or click to choose one</div>" +
+      "<div><span>&lt;/&gt; ◎ ✺ ▶</span> switch bays above</div>",
   },
 };
 
@@ -119,7 +131,10 @@ const mobileToggle = document.getElementById("mobileToggle");
 const clockEl = document.getElementById("clock");
 const composerHintText = document.getElementById("composerHintText");
 
-const bayPuck = document.getElementById("bayPuck");
+// The puck is one bay wide, and CSS cannot count its siblings. Set the
+// count once here so adding a bay to BAY_ORDER is the only change
+// needed - the sizing follows.
+
 const bayButtons = [...document.querySelectorAll(".bay-btn")];
 
 const creditBarFill = document.getElementById("creditBarFill");
@@ -435,8 +450,9 @@ function selectBay(bay) {
   const wanted = preferredProviderFor(bay);
   if (wanted && wanted !== activeProvider) selectProvider(wanted);
 
-  const idx = BAY_ORDER.indexOf(bay);
-  bayPuck.style.transform = `translateX(${idx * 100}%)`;
+  // aria-selected is the whole highlight: the stylesheet paints the
+  // selected tab from it, so the state the screen reader announces and
+  // the state you can see cannot disagree.
   bayButtons.forEach((b) =>
     b.setAttribute("aria-selected", b.dataset.bay === bay ? "true" : "false"),
   );
@@ -445,15 +461,36 @@ function selectBay(bay) {
   root.style.setProperty("--bay-soft", `var(--bay-${bay}-soft)`);
 
   messageInput.placeholder = BAY_META[bay].placeholder;
-  chatModeControls.hidden = bay === "image";
+
+  // Video swaps the whole workspace rather than just the sidebar
+  // controls: there is no prompt to type and no thread to show, so the
+  // chat shell and the composer go away entirely instead of sitting
+  // there inert.
+  const isVideo = bay === "video";
+  const bayEl = document.getElementById("videoBay");
+  // The composer and the panel header are siblings of .chat-shell, not
+  // children, so hiding the shell alone left a message box and a
+  // "New chat / delete" header sitting above and below a video tool
+  // that has neither messages nor a conversation to delete.
+  const shell = document.querySelector(".chat-shell");
+  const composer = document.querySelector(".composer");
+  const panelHeader = document.querySelector(".panel-header");
+  if (bayEl) bayEl.hidden = !isVideo;
+  if (shell) shell.hidden = isVideo;
+  if (composer) composer.hidden = isVideo;
+  if (panelHeader) panelHeader.hidden = isVideo;
+
+  chatModeControls.hidden = bay === "image" || isVideo;
   imageModeControls.hidden = bay !== "image";
-  if (bay !== "image") applyPreferredModel(bay);
+  if (!isVideo && bay !== "image") applyPreferredModel(bay);
 
   currentThreadId = null;
-  updateEmptyState();
-  showEmptyState();
-  loadThreadList();
-  updateComposerHint();
+  if (!isVideo) {
+    updateEmptyState();
+    showEmptyState();
+    loadThreadList();
+    updateComposerHint();
+  }
 }
 
 bayButtons.forEach((btn) =>
@@ -2134,3 +2171,380 @@ function renderGreeting() {
 /* ---------------------------------------------------------------- */
 updateEmptyState();
 boot();
+
+/* ----------------------------------------------------------------
+   Video bay — upload, choose a range, export
+   ----------------------------------------------------------------
+   A panel rather than a thread. Trimming is a form with a preview, and
+   forcing it through the chat log would mean inventing a message type
+   for a range slider.
+
+   The server does the work and owns the limits; this file's job is to
+   keep the two range handles sane, poll the render, and never leave the
+   user looking at a spinner with no idea what is happening.
+   ---------------------------------------------------------------- */
+const videoBay = document.getElementById("videoBay");
+const videoDrop = document.getElementById("videoDrop");
+const videoFile = document.getElementById("videoFile");
+const videoWork = document.getElementById("videoWork");
+const videoPreview = document.getElementById("videoPreview");
+const videoMeta = document.getElementById("videoMeta");
+const videoStart = document.getElementById("videoStart");
+const videoEnd = document.getElementById("videoEnd");
+const videoStartOut = document.getElementById("videoStartOut");
+const videoEndOut = document.getElementById("videoEndOut");
+const videoSelection = document.getElementById("videoSelection");
+const videoScale = document.getElementById("videoScale");
+const videoGo = document.getElementById("videoGo");
+const videoAsk = document.getElementById("videoAsk");
+const videoPrompt = document.getElementById("videoPrompt");
+const videoRun = document.getElementById("videoRun");
+const videoExamples = document.getElementById("videoExamples");
+const videoPlanEl = document.getElementById("videoPlan");
+const videoStatusEl = document.getElementById("videoStatus");
+const videoResult = document.getElementById("videoResult");
+const videoOut = document.getElementById("videoOut");
+const videoDownload = document.getElementById("videoDownload");
+const videoLimits = document.getElementById("videoLimits");
+
+let videoClip = null;      // { name, duration, width, height, url }
+let videoPoll = null;
+
+function fmtTime(sec) {
+  const s = Math.max(0, Math.floor(sec % 60));
+  const m = Math.floor(Math.max(0, sec) / 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function videoSay(msg, isError) {
+  if (!videoStatusEl) return;
+  videoStatusEl.hidden = !msg;
+  videoStatusEl.textContent = msg || "";
+  videoStatusEl.classList.toggle("is-error", !!isError);
+}
+
+async function loadVideoLimits() {
+  if (!videoLimits) return;
+  try {
+    const r = await fetch("/api/video/status");
+    const d = await r.json();
+    if (!d.available) {
+      videoLimits.textContent = d.reason;
+      if (videoDrop) videoDrop.style.pointerEvents = "none";
+      return;
+    }
+    videoLimits.textContent =
+      `MP4, MOV, WebM, MKV or AVI · up to ${d.max_upload_mb}MB and ` +
+      `${Math.round(d.max_input_seconds / 60)} minutes · exports up to ` +
+      `${d.max_output_seconds} seconds`;
+  } catch (_) {
+    /* The drop zone still works; the limits line is just detail. */
+  }
+}
+
+function syncRange() {
+  if (!videoClip) return;
+  let a = parseFloat(videoStart.value);
+  let b = parseFloat(videoEnd.value);
+  // Keep the handles from crossing. Whichever moved last gives way, so
+  // dragging past the other one nudges rather than inverting the range.
+  if (a > b - 0.1) {
+    if (document.activeElement === videoStart) a = Math.max(0, b - 0.1);
+    else b = Math.min(videoClip.duration, a + 0.1);
+    videoStart.value = a;
+    videoEnd.value = b;
+  }
+  videoStartOut.textContent = fmtTime(a);
+  videoEndOut.textContent = fmtTime(b);
+  videoSelection.textContent = `${(b - a).toFixed(1)}s selected`;
+  videoGo.disabled = b - a < 0.2;
+}
+
+function seekPreview(t) {
+  if (videoPreview.readyState >= 1) videoPreview.currentTime = t;
+}
+
+async function uploadVideo(file) {
+  if (!file) return;
+  videoSay("Uploading…");
+  videoResult.hidden = true;
+  const fd = new FormData();
+  fd.append("file", file);
+  let d;
+  try {
+    const r = await fetch("/api/video/upload", { method: "POST", body: fd });
+    d = await r.json();
+    if (!r.ok) {
+      videoSay(d.error || "That upload failed.", true);
+      return;
+    }
+  } catch (_) {
+    videoSay("Could not reach the server.", true);
+    return;
+  }
+
+  videoClip = d;
+  videoPreview.src = d.url;
+  videoWork.hidden = false;
+  // Once there is a clip, the drop zone collapses to a slim "replace"
+  // bar. Left at full size it kept more of the panel than the video it
+  // had already accepted, and pushed the prompt box below the fold.
+  const bay = document.getElementById("videoBay");
+  if (bay) bay.classList.add("has-clip");
+  videoStart.max = d.duration;
+  videoEnd.max = d.duration;
+  videoStart.value = 0;
+  videoEnd.value = d.duration;
+  videoMeta.textContent =
+    `${d.original} · ${fmtTime(d.duration)} · ${d.width}×${d.height} · ` +
+    `${d.fps}fps · ${(d.size_bytes / 1048576).toFixed(1)}MB` +
+    (d.has_audio ? "" : " · no audio");
+  syncRange();
+  videoSay("");
+}
+
+if (videoDrop) {
+  videoDrop.addEventListener("click", () => videoFile.click());
+  videoDrop.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      videoFile.click();
+    }
+  });
+  videoFile.addEventListener("change", () => uploadVideo(videoFile.files[0]));
+
+  ["dragenter", "dragover"].forEach((ev) =>
+    videoDrop.addEventListener(ev, (e) => {
+      e.preventDefault();
+      videoDrop.classList.add("is-over");
+    }),
+  );
+  ["dragleave", "drop"].forEach((ev) =>
+    videoDrop.addEventListener(ev, (e) => {
+      e.preventDefault();
+      videoDrop.classList.remove("is-over");
+    }),
+  );
+  videoDrop.addEventListener("drop", (e) => {
+    const f = e.dataTransfer && e.dataTransfer.files[0];
+    if (f) uploadVideo(f);
+  });
+
+  videoStart.addEventListener("input", () => {
+    syncRange();
+    seekPreview(parseFloat(videoStart.value));
+  });
+  videoEnd.addEventListener("input", () => {
+    syncRange();
+    seekPreview(parseFloat(videoEnd.value));
+  });
+
+  videoGo.addEventListener("click", async () => {
+    if (!videoClip) return;
+    videoGo.disabled = true;
+    videoResult.hidden = true;
+    videoSay("Starting…");
+    let d;
+    try {
+      const r = await fetch("/api/video/trim", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: videoClip.name,
+          start: parseFloat(videoStart.value),
+          end: parseFloat(videoEnd.value),
+          scale: videoScale.value || null,
+        }),
+      });
+      d = await r.json();
+      if (!r.ok) {
+        videoSay(d.error || "Could not start the render.", true);
+        videoUnlock();
+        return;
+      }
+    } catch (_) {
+      videoSay("Could not reach the server.", true);
+      videoUnlock();
+      return;
+    }
+    videoShowPlan(null);
+    pollVideoJob(d.job.id);
+  });
+}
+
+// What the sentence was read as, shown before the render finishes so a
+// misread prompt is caught by the person rather than by watching the
+// wrong video come out.
+//
+// `skipped` is the half that matters more. A render that quietly does
+// four of the five things someone asked for is what makes a tool feel
+// arbitrarily capped: nothing failed, nothing was said, and the only
+// way to find out is to watch the result and notice an absence. Naming
+// what did not survive turns that into information they can act on -
+// usually by rephrasing the one clause that was not understood.
+function videoShowPlan(steps, source, skipped) {
+  if (!videoPlanEl) return;
+  const hasSteps = steps && steps.length;
+  const hasSkips = skipped && skipped.length;
+  if (!hasSteps && !hasSkips) {
+    videoPlanEl.hidden = true;
+    videoPlanEl.textContent = "";
+    return;
+  }
+  videoPlanEl.hidden = false;
+  videoPlanEl.textContent = "";
+
+  if (hasSteps) {
+    const lead = document.createElement("span");
+    lead.className = "video-plan-lead";
+    lead.textContent = "Doing";
+    videoPlanEl.appendChild(lead);
+    steps.forEach((t) => {
+      const chip = document.createElement("span");
+      chip.className = "video-plan-step";
+      chip.textContent = t;
+      videoPlanEl.appendChild(chip);
+    });
+    if (source === "model") {
+      const note = document.createElement("span");
+      note.className = "video-plan-note";
+      note.textContent = "read by the model";
+      videoPlanEl.appendChild(note);
+    }
+  }
+
+  if (hasSkips) {
+    const row = document.createElement("div");
+    row.className = "video-plan-row";
+    const lead = document.createElement("span");
+    lead.className = "video-plan-lead video-plan-lead-skip";
+    lead.textContent = hasSteps ? "Couldn't" : "Couldn't do";
+    row.appendChild(lead);
+    skipped.forEach((t) => {
+      const chip = document.createElement("span");
+      chip.className = "video-plan-step video-plan-skip";
+      chip.textContent = t;
+      row.appendChild(chip);
+    });
+    videoPlanEl.appendChild(row);
+  }
+}
+
+if (videoAsk) {
+  // Clicking an example fills the box rather than running immediately:
+  // they are there to show the shape of a request, and most people want
+  // to change a number before running it.
+  if (videoExamples) {
+    videoExamples.addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-ex]");
+      if (!b || !videoPrompt) return;
+      videoPrompt.value = b.dataset.ex;
+      videoPrompt.focus();
+      videoPrompt.setSelectionRange(
+        videoPrompt.value.length, videoPrompt.value.length);
+    });
+  }
+
+  // Enter submits, Shift+Enter makes a new line - the same as the chat
+  // composer, so the habit carries between bays.
+  if (videoPrompt) {
+    videoPrompt.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        videoAsk.requestSubmit();
+      }
+    });
+  }
+
+  videoAsk.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!videoClip) return;
+    const text = (videoPrompt.value || "").trim();
+    if (!text) {
+      videoSay("Say what you want changed.", true);
+      videoPrompt.focus();
+      return;
+    }
+
+    videoRun.disabled = true;
+    if (videoGo) videoGo.disabled = true;
+    videoResult.hidden = true;
+    videoShowPlan(null);
+    videoSay("Reading that…");
+
+    let d;
+    try {
+      const r = await fetch("/api/video/edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: videoClip.name, prompt: text }),
+      });
+      d = await r.json();
+      if (!r.ok) {
+        videoSay(d.error || "Could not start the render.", true);
+        // A rejection can still carry a list of what it could not read,
+        // and that list is usually the explanation for the rejection.
+        videoShowPlan(null, null, d.skipped);
+        videoRun.disabled = false;
+        if (videoGo) videoGo.disabled = false;
+        return;
+      }
+    } catch (_) {
+      videoSay("Could not reach the server.", true);
+      videoRun.disabled = false;
+      if (videoGo) videoGo.disabled = false;
+      return;
+    }
+
+    videoShowPlan(d.steps, d.source, d.skipped);
+    pollVideoJob(d.job.id);
+  });
+}
+
+function videoUnlock() {
+  if (videoGo) videoGo.disabled = false;
+  if (videoRun) videoRun.disabled = false;
+}
+
+function pollVideoJob(id) {
+  clearInterval(videoPoll);
+  // Named stages rather than a percentage: ffmpeg does not report progress
+  // in a form worth trusting, and an invented percentage that sticks at
+  // 90% is worse than an honest label.
+  videoSay("Rendering…");
+  videoPoll = setInterval(async () => {
+    let j;
+    try {
+      const r = await fetch(`/api/video/job/${id}`);
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "gone");
+      j = d.job;
+    } catch (_) {
+      clearInterval(videoPoll);
+      videoSay("Lost track of that render. Try again.", true);
+      videoUnlock();
+      return;
+    }
+
+    if (j.status === "running" || j.status === "queued") {
+      videoSay(j.stage === "waiting" ? "Queued…" : "Rendering…");
+      return;
+    }
+
+    clearInterval(videoPoll);
+    videoUnlock();
+
+    if (j.status === "failed") {
+      videoSay(j.error || "That render failed.", true);
+      return;
+    }
+
+    videoSay(`Ready — ${j.duration}s, ${(j.size_bytes / 1048576).toFixed(1)}MB`);
+    videoOut.src = j.url;
+    videoDownload.href = j.url;
+    videoDownload.setAttribute("download", `edited-${j.id}.mp4`);
+    videoResult.hidden = false;
+  }, 1200);
+}
+
+loadVideoLimits();
