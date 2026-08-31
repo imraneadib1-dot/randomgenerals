@@ -354,3 +354,89 @@ function setupBackgroundVideo(id) {
 // that: this pauses and resumes on visibility, which would move the
 // playhead out from under the scrubbing.
 setupBackgroundVideo("heroVideo");
+
+
+/* ----------------------------------------------------------------
+   Theme switch: Desert <-> Moon
+
+   The page has one palette expressed as tokens on :root, so switching
+   is setting data-theme and letting CSS do the rest. Two things need
+   doing in script rather than CSS: remembering the choice, and swapping
+   the hero footage, which is a different file per theme.
+
+   The initial read happens inline in the <head>, before first paint -
+   see the note there. This file only handles the click.
+   ---------------------------------------------------------------- */
+(function () {
+  "use strict";
+
+  var KEY = "rg-theme";
+  var btn = document.getElementById("themeToggle");
+  if (!btn) return;
+
+  var label = document.getElementById("themeToggleLabel");
+  var video = document.getElementById("sceneVideo");
+  var root = document.documentElement;
+
+  function current() {
+    return root.getAttribute("data-theme") === "moon" ? "moon" : "desert";
+  }
+
+  function paintButton() {
+    var moon = current() === "moon";
+    // The label names the theme you are IN, not the one you would switch
+    // to. Both readings are defensible and they are opposites, so the
+    // aria-pressed state is what disambiguates it for a screen reader:
+    // pressed = moon is on.
+    if (label) label.textContent = moon ? "Moon" : "Desert";
+    btn.setAttribute("aria-pressed", moon ? "true" : "false");
+  }
+
+  function swapVideo(theme) {
+    if (!video) return;
+    var next = theme === "moon"
+      ? video.dataset.srcMoon
+      : video.dataset.srcDesert;
+    if (!next || video.getAttribute("src") === next) return;
+
+    // scroll-scene.js scrubs this element by setting currentTime against
+    // its duration, and duration is NaN between assigning a new src and
+    // the metadata arriving. Loading before the swap is visible, then
+    // seeking to the same relative position, keeps the scrubber from
+    // reading NaN and parking the frame at 0.
+    var ratio = (video.duration && isFinite(video.duration))
+      ? video.currentTime / video.duration
+      : 0;
+    video.setAttribute("src", next);
+    video.load();
+    video.addEventListener("loadedmetadata", function once() {
+      video.removeEventListener("loadedmetadata", once);
+      if (isFinite(video.duration)) {
+        video.currentTime = ratio * video.duration;
+      }
+      // The scene script measures the clip's aspect on this event too,
+      // and the two files are different shapes - wide vs nearly square -
+      // so it has to re-run. Dispatching resize is how that module is
+      // already told the geometry changed.
+      window.dispatchEvent(new Event("resize"));
+    });
+  }
+
+  btn.addEventListener("click", function () {
+    var next = current() === "moon" ? "desert" : "moon";
+    if (next === "moon") root.setAttribute("data-theme", "moon");
+    else root.removeAttribute("data-theme");
+
+    // Best-effort: a blocked localStorage means the choice lasts for
+    // this page only, which is a smaller failure than not switching.
+    try { localStorage.setItem(KEY, next); } catch (e) {}
+
+    paintButton();
+    swapVideo(next);
+  });
+
+  // The attribute was set in <head>; the video src and the label were
+  // not, because neither exists that early.
+  paintButton();
+  swapVideo(current());
+})();
