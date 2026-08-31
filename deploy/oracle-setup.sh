@@ -154,7 +154,36 @@ TRUST_PROXY=1
 # "make me Pro" switch - fine on a laptop, not on a public address.
 ALLOW_MOCK_UPGRADE=
 
-# Billing, if and when it is wired up.
+# ---------------------------------------------------------------- billing
+# Paddle, not Stripe. Paddle is a merchant of record and reaches places
+# Stripe does not, which is the whole reason it is here.
+#
+# sandbox and production are entirely separate systems with separate
+# dashboards, keys and price IDs. Keys from one against the other's host
+# is an auth failure that names neither, so change this only when you
+# have production credentials to go with it.
+PADDLE_ENV=sandbox
+
+# Paddle > Developer tools > Authentication > API keys.
+PADDLE_API_KEY=
+
+# Paddle > Catalog > Products > (your Pro price) - the pri_... id.
+PADDLE_PRICE_ID_PRO=
+
+# Paddle > Developer tools > Notifications > (your endpoint) > secret key.
+# Without it checkout still works and nobody is ever upgraded, which is
+# the failure that looks like the payment vanished.
+PADDLE_WEBHOOK_SECRET=
+
+# Paddle > Developer tools > Authentication > Client-side tokens.
+# A different credential from the API key, and meant to be public - it
+# ships inside the page. Paddle Billing has no hosted checkout page to
+# redirect to; its checkout is an overlay Paddle.js opens on your own
+# site, and Paddle.js cannot start without this. Missing, the flow
+# creates a transaction and then visibly does nothing.
+PADDLE_CLIENT_TOKEN=
+
+# Stripe, kept for regions where it is preferable. Optional.
 STRIPE_SECRET_KEY=
 STRIPE_PRICE_ID_PRO=
 STRIPE_WEBHOOK_SECRET=

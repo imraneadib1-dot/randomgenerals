@@ -762,6 +762,244 @@ def asset(filename):
     return url_for("static", filename=filename, v=version)
 
 
+# ----------------------------------------------------------------------
+# Legal pages.
+#
+# Paddle is a merchant of record: it takes on the legal liability for
+# every sale, so it reviews the site before approving an account, and a
+# site charging subscriptions with no terms, privacy or refund policy is
+# the most common reason a submission goes to manual review or is
+# refused outright.
+#
+# They are also just necessary. This app holds accounts, stores what
+# people write, and sends prompts to Google - none of which anyone has
+# agreed to if it is written down nowhere.
+#
+# The copy below is deliberately specific about where data actually
+# goes, because a privacy policy that describes a different product than
+# the one running is worse than none: it is a promise nobody kept.
+# ----------------------------------------------------------------------
+SUPPORT_EMAIL = os.environ.get("SUPPORT_EMAIL", "support@randomgenerals.com")
+LEGAL_UPDATED = "30 August 2026"
+
+
+def _legal(slug, title, sections):
+    return render_template(
+        "legal.html", slug=slug, title=title, sections=sections,
+        updated=LEGAL_UPDATED, support_email=SUPPORT_EMAIL)
+
+
+@app.route("/terms")
+def terms_page():
+    return _legal("terms", "Terms of Service", [
+        {"heading": "What this is", "body": [
+            "RandomGenerals AI is a hosted assistant for chat, code, image "
+            "generation and video editing. Using it means accepting these "
+            "terms.",
+            "You must be at least 16, or old enough to enter a contract "
+            "where you live, whichever is higher.",
+        ]},
+        {"heading": "Your account", "body": [
+            "You are responsible for what happens under your account and "
+            "for keeping your password to yourself. Tell us promptly if "
+            "you think someone else has access.",
+            "You can use the service without an account, in which case "
+            "your work is tied to your browser session and is lost when "
+            "it ends.",
+        ]},
+        {"heading": "Acceptable use", "body": [
+            "Do not use the service to:",
+            ["break the law, or help anyone else to",
+             "generate sexual content involving minors, or content that "
+             "sexualises real people without consent",
+             "harass, threaten or defame anyone",
+             "produce malware, or material intended to attack systems you "
+             "do not own",
+             "impersonate a real person or organisation",
+             "resell access, or run automated traffic through the service "
+             "beyond ordinary personal use"],
+            "We may suspend an account that does these things, without "
+            "refunding time already used.",
+        ]},
+        {"heading": "What you make", "body": [
+            "You keep whatever rights you have in what you type and in "
+            "what the service produces for you. We claim no ownership of "
+            "your prompts or outputs.",
+            "Generated output is not guaranteed to be original, accurate "
+            "or free of third-party rights. Check anything you intend to "
+            "publish or rely on.",
+        ]},
+        {"heading": "Credits and limits", "body": [
+            "Both tiers run on credits that reset on a fixed schedule - "
+            "Free every two hours, Pro every hour. Different tasks cost "
+            "different amounts, roughly in proportion to the work they "
+            "take. Current amounts are shown in the app and on the "
+            "pricing section of the home page.",
+            "We may change the credit amounts and prices. If a change "
+            "makes Pro worse for you, it takes effect at your next "
+            "renewal, not mid-term, and you can cancel before it applies.",
+        ]},
+        {"heading": "Availability", "body": [
+            "This is a small service. It runs on modest hardware and "
+            "depends on third parties for the models. There is no uptime "
+            "guarantee, and features can change or be withdrawn.",
+            "Nothing here is a professional service. Do not rely on it "
+            "for medical, legal, financial or safety-critical decisions.",
+        ]},
+        {"heading": "Liability", "body": [
+            "The service is provided as is. To the extent the law allows, "
+            "we are not liable for indirect or consequential loss, and "
+            "our total liability is limited to what you paid us in the "
+            "twelve months before the claim.",
+            "Nothing here limits liability that cannot lawfully be "
+            "limited, including for death or personal injury caused by "
+            "negligence, or for fraud.",
+        ]},
+        {"heading": "Payments", "body": [
+            "Subscriptions are sold and processed by Paddle, which acts "
+            "as the merchant of record. Your payment contract for the "
+            "transaction is with Paddle, and their terms apply to it "
+            "alongside these. Paddle handles tax and invoicing.",
+        ]},
+        {"heading": "Ending it", "body": [
+            "You can stop using the service or cancel a subscription at "
+            "any time. We can suspend or close an account that breaches "
+            "these terms, or if we stop running the service.",
+        ]},
+    ])
+
+
+@app.route("/privacy")
+def privacy_page():
+    return _legal("privacy", "Privacy Policy", [
+        {"heading": "The short version", "body": [
+            "We keep what is needed to run your account and no more. We "
+            "do not sell your data, run advertising, or use your "
+            "conversations to train models.",
+        ]},
+        {"heading": "What we hold", "body": [
+            ["<strong>Account</strong> - email address and a hashed "
+             "password, or a Google account identifier if you sign in "
+             "that way. Passwords are never stored in a readable form.",
+             "<strong>Your work</strong> - conversation threads, saved "
+             "memories, custom instructions, uploaded files and generated "
+             "images, stored so they are there when you come back.",
+             "<strong>Billing</strong> - a subscription status and "
+             "identifier from Paddle. Card details never reach our "
+             "servers; Paddle handles them.",
+             "<strong>Technical</strong> - ordinary server logs, and a "
+             "signed session cookie that keeps you logged in."],
+        ]},
+        {"heading": "Where prompts actually go", "body": [
+            "This matters more than the rest of the page, so it is stated "
+            "plainly rather than buried.",
+            "On this hosted site, the models do not run on our hardware. "
+            "What you type is sent to <strong>Google (Gemini)</strong> to "
+            "produce a reply. Google processes it under their own terms.",
+            ["Image generation sends your description to "
+             "<strong>Pollinations</strong>, which serves the FLUX model.",
+             "Web search sends your query to <strong>DuckDuckGo</strong>.",
+             "Uploaded files and videos are processed on our own server "
+             "and are not sent to a third party."],
+            "The self-hosted version of this software can run models "
+            "entirely on your own machine, in which case none of the "
+            "above applies. The channel label in the app tells you which "
+            "is in use - it reads \"On this machine\" only when that is "
+            "literally true.",
+        ]},
+        {"heading": "Cookies", "body": [
+            "One essential cookie keeps you signed in. A little browser "
+            "storage remembers display preferences. No advertising or "
+            "third-party tracking cookies are set.",
+        ]},
+        {"heading": "How long we keep it", "body": [
+            "Your threads and memories stay until you delete them or "
+            "close your account. Generated images and uploads are pruned "
+            "on a timer. Deleting your account removes your data from the "
+            "live database; backups age out.",
+        ]},
+        {"heading": "Your rights", "body": [
+            "You can ask for a copy of your data, ask us to correct or "
+            "delete it, or object to how we use it. Email "
+            "<a href=\"mailto:%s\">%s</a> and we will act within 30 days. "
+            "If you are in the UK or EU you can also complain to your "
+            "data protection authority." % (SUPPORT_EMAIL, SUPPORT_EMAIL),
+        ]},
+        {"heading": "Children", "body": [
+            "The service is not for under-16s and we do not knowingly "
+            "collect their data. Tell us if you believe a child has an "
+            "account and we will remove it.",
+        ]},
+    ])
+
+
+@app.route("/refunds")
+def refunds_page():
+    return _legal("refunds", "Refund & Cancellation Policy", [
+        {"heading": "Cancelling", "body": [
+            "Cancel any time from Settings in the app, or through the "
+            "link in any Paddle receipt. Cancellation stops the next "
+            "renewal.",
+            "Pro stays active until the end of the period you have "
+            "already paid for. You are not cut off the moment you cancel.",
+        ]},
+        {"heading": "Refunds", "body": [
+            "If Pro is not what you expected, email us within "
+            "<strong>14 days</strong> of a payment and we will refund it "
+            "in full. No explanation required.",
+            "After 14 days we do not normally refund a period already "
+            "under way, because the credits for it were available to use. "
+            "Ask anyway if something went wrong - a service failure, a "
+            "duplicate charge, a subscription you thought you had "
+            "cancelled - and we will sort it out.",
+        ]},
+        {"heading": "Things we always refund", "body": [
+            ["a charge after you cancelled",
+             "a duplicate or accidental charge",
+             "a period where the service was substantially unavailable"],
+        ]},
+        {"heading": "How to ask", "body": [
+            "Email <a href=\"mailto:%s\">%s</a> from the address on the "
+            "account, with the date of the charge. Refunds are issued by "
+            "Paddle to the original payment method and usually appear "
+            "within 5-10 working days." % (SUPPORT_EMAIL, SUPPORT_EMAIL),
+        ]},
+        {"heading": "The free tier", "body": [
+            "Free costs nothing and involves no payment, so nothing to "
+            "refund. You can stop using it at any time.",
+        ]},
+    ])
+
+
+@app.route("/contact")
+def contact_page():
+    return _legal("contact", "Contact", [
+        {"heading": "Getting in touch", "body": [
+            "One address for everything - support, billing, privacy "
+            "requests, bug reports and security issues: "
+            "<a href=\"mailto:%s\">%s</a>." % (SUPPORT_EMAIL, SUPPORT_EMAIL),
+            "We aim to reply within two working days.",
+        ]},
+        {"heading": "What to include", "body": [
+            "For anything account-related, write from the email address "
+            "on the account and say what you were doing when it went "
+            "wrong. For a billing question, the date and amount of the "
+            "charge is usually enough to find it.",
+        ]},
+        {"heading": "Security", "body": [
+            "If you have found a vulnerability, please report it to the "
+            "same address before disclosing it publicly, and give us a "
+            "reasonable window to fix it. We will not pursue anyone who "
+            "reports a genuine issue in good faith.",
+        ]},
+        {"heading": "Payments", "body": [
+            "Subscriptions are handled by Paddle as merchant of record. "
+            "Charges appear on statements under Paddle's name rather than "
+            "ours, which is normal and not a fraudulent charge.",
+        ]},
+    ])
+
+
 @app.route("/robots.txt")
 def robots_txt():
     """What search engines may crawl.
@@ -779,6 +1017,10 @@ def robots_txt():
     body = (
         "User-agent: *\n"
         "Allow: /$\n"
+        "Allow: /terms\n"
+        "Allow: /privacy\n"
+        "Allow: /refunds\n"
+        "Allow: /contact\n"
         "Disallow: /app\n"
         "Disallow: /api/\n"
         "Disallow: /static/generated/\n"
@@ -791,16 +1033,28 @@ def robots_txt():
 
 @app.route("/sitemap.xml")
 def sitemap_xml():
-    """One entry, because there is one indexable page. A sitemap listing
-    pages that shouldn't be indexed actively works against you."""
+    """The home page and the four legal pages - everything that is meant
+    to be indexed, and nothing that is not. A sitemap listing pages that
+    should not be indexed actively works against you."""
+    pages = [
+        ("", "weekly", "1.0"),
+        ("terms", "yearly", "0.3"),
+        ("privacy", "yearly", "0.3"),
+        ("refunds", "yearly", "0.3"),
+        ("contact", "yearly", "0.4"),
+    ]
+    entries = "".join(
+        "  <url>\n"
+        f"    <loc>{request.url_root}{path}</loc>\n"
+        f"    <changefreq>{freq}</changefreq>\n"
+        f"    <priority>{prio}</priority>\n"
+        "  </url>\n"
+        for path, freq, prio in pages
+    )
     body = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
-        "  <url>\n"
-        f"    <loc>{request.url_root}</loc>\n"
-        "    <changefreq>weekly</changefreq>\n"
-        "    <priority>1.0</priority>\n"
-        "  </url>\n"
+        + entries +
         "</urlset>\n"
     )
     return Response(body, mimetype="application/xml")

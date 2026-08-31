@@ -1090,6 +1090,101 @@ p {
   }
 }
 
+/* ---- legal pages ----
+   A reading page, not a landing page: one column at a comfortable
+   measure, no footage, no motion. Someone reading a refund policy wants
+   a fact, and a page that animates while they look for it is working
+   against them. It is also what a reviewer wants to see - Paddle reads
+   these as part of approving the account. */
+.legal-page {
+  background: var(--ink-0);
+}
+
+.legal {
+  max-width: 62ch;
+  margin: 0 auto;
+  padding: clamp(80px, 12vh, 140px) 24px clamp(64px, 10vh, 120px);
+}
+
+.legal h1 {
+  font-family: var(--font-serif);
+  font-size: clamp(30px, 4vw, 46px);
+  font-weight: 500;
+  line-height: 1.1;
+  margin: 0 0 10px;
+}
+
+.legal-updated {
+  color: var(--text-faint);
+  font-size: 13px;
+  margin: 0 0 44px;
+}
+
+/* The bare `section` rule above is sized for full-width landing-page
+   bands and applies here too, which put ~200px of dead air between every
+   heading. These are paragraphs in a document, not sections of a pitch. */
+.legal section {
+  max-width: none;
+  margin: 0 0 38px;
+  padding: 0;
+}
+
+.legal h2 {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  margin: 0 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.legal p,
+.legal li {
+  color: var(--text-soft);
+  font-size: 15px;
+  line-height: 1.75;
+}
+
+.legal p {
+  margin: 0 0 14px;
+}
+
+.legal ul {
+  margin: 0 0 14px;
+  padding-left: 20px;
+}
+
+.legal li {
+  margin-bottom: 8px;
+}
+
+.legal strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.legal a {
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* The legal row sits under the main footer links rather than beside
+   them, so it reads as fine print instead of competing with navigation. */
+.footer-legal {
+  margin-top: 14px;
+  font-size: 12.5px;
+}
+
+.footer-legal a {
+  color: var(--text-faint);
+}
+
+.footer-legal a:hover {
+  color: var(--accent-ink);
+}
+
 /* ---- Print ----
    Strips the page back to its actual content: no fixed chrome, no
    glow, no interactive affordances that mean nothing on paper, and
