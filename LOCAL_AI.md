@@ -38,15 +38,25 @@ Every outbound call in the codebase, and what triggers it:
 | `app.py` `ollama_provider()` | `localhost:11434` | model list refresh | **No** - loopback |
 | `websearch.py` | duckduckgo.com | only when web search runs | Yes - the search query only |
 | `app.py` Google OAuth | accounts.google.com | only on sign-in click | Yes - only if `GOOGLE_CLIENT_ID` set |
-| `imagegen.py` Gemini | generativelanguage.googleapis.com | only if `GEMINI_API_KEY` set **and** Gemini selected | Yes - the image prompt only |
+| `groq_api.py` | api.groq.com | every chat message routed to the fast channel | **Yes - the whole conversation** |
+| `imagegen.py` hosted | image.pollinations.ai | every generated image | Yes - the image prompt only |
+| `imagegen.py` Cloudflare | api.cloudflare.com | only if `CF_ACCOUNT_ID`/`CF_API_TOKEN` set | Yes - the image prompt only |
 
 There is **no telemetry, analytics, or crash reporting** anywhere in the
-codebase. The three egress paths above are each opt-in or explicitly
-user-initiated, and none of them carry chat history.
+codebase.
 
-To guarantee zero egress, leave `GOOGLE_CLIENT_ID` and `GEMINI_API_KEY`
-unset and don't use Deep mode (which forces a web search). The app is
-fully functional in that configuration.
+**Read the Groq row carefully.** It is the one path that carries chat
+history off the machine, and unlike the others it is not opt-in per
+request: when `GROQ_API_KEY` is set, the fast channel is the default for
+chat and code, and the local model is what it falls back to. That is the
+right default on a server with no GPU and the wrong one if privacy is
+why you are self-hosting.
+
+To guarantee zero egress: leave `GROQ_API_KEY`, `GOOGLE_CLIENT_ID`,
+`CF_ACCOUNT_ID` and `CF_API_TOKEN` unset, don't use the image bay, and
+don't use Deep mode (which forces a web search). Chat, code, memory,
+accounts, the sandboxed runner and the video bay all work in that
+configuration, served entirely by Ollama.
 
 ## Claude Code itself cannot route through Ollama
 

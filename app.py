@@ -1,5 +1,5 @@
 from flask import (Flask, render_template, request, Response, jsonify,
-                   session, stream_with_context, redirect, url_for)
+                   session, stream_with_context, redirect, url_for, abort)
 from dotenv import load_dotenv
 import hmac
 import json
@@ -22,7 +22,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 #
 # The symptom is quiet and confusing - the key is correct, a standalone
 # check confirms it, and the app still behaves as though nothing is
-# configured. GEMINI_API_KEY could never have worked either.
+# configured. GROQ_API_KEY could never have worked either.
 load_dotenv()
 
 import db  # noqa: E402  SQLite persistence - see db.py for the schema and why
@@ -32,7 +32,7 @@ import imagegen  # noqa: E402  local text-to-image generation
 import codeexec  # noqa: E402  sandboxed Python execution - see codeexec.py
 import moderation  # noqa: E402  content filtering - see moderation.py
 import features  # noqa: E402  per-tier feature flags - see features.py
-import gemini  # noqa: E402  cloud fallback for when this machine is off
+import stats  # noqa: E402  owner-only usage figures - see stats.py
 import groq_api  # noqa: E402  fast open-weight models - see groq_api.py
 import openai_api  # noqa: E402  OpenAI-compatible API - see openai_api.py
 import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
@@ -45,6 +45,34 @@ import videoedit  # noqa: E402  ffmpeg-backed video bay - see videoedit.py
 # working code. brain/ is untouched on disk; this app just isn't wired to
 # it any more.
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+
+# HOW LONG A LOADED MODEL STAYS IN MEMORY
+#
+# "-1" is Ollama's value for never unload, and it is the right default
+# here rather than an aggressive one. The measurements that matter: a 7B
+# answers in 0.09s once resident and takes 7-8 SECONDS to load from disk,
+# so an unload is not a small cost paid occasionally, it is the whole
+# difference between the app feeling instant and feeling broken. Ollama's
+# own default is five minutes, which means a site that is quiet for six
+# greets its next visitor with an eight-second wait.
+#
+# This machine is running in order to serve this app, so holding ~5GB for
+# the model is not a sacrifice, it is the job. Override it on a machine
+# that has other work to do:  OLLAMA_KEEP_ALIVE=30m
+#
+# Sent as an INTEGER when it is one. Ollama parses a string keep_alive as
+# a Go duration, so "-1" is rejected outright - `time: missing unit in
+# duration "-1"` - and a 400 on every single chat request. The bare
+# number -1 is the documented way to say never unload; only named
+# durations like "30m" may travel as strings.
+def _keep_alive(raw):
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return raw
+
+
+OLLAMA_KEEP_ALIVE = _keep_alive(os.environ.get("OLLAMA_KEEP_ALIVE", "-1"))
 
 # Ollama Cloud serves the same native API as a local install - /api/tags,
 # /api/chat and /api/generate all behave identically - at
@@ -581,24 +609,44 @@ def video_cost(out_seconds, quality="standard"):
 # Refill is a reset to the cap, not a trickle. That is the behaviour
 # people can reason about: "full again at half past" beats working out an
 # accrual rate.
+# WHAT PRO ACTUALLY SELLS
+#
+# Not simply "more credits". The thing that genuinely runs out on this
+# deployment is the fast channel: Groq's ceiling is 8,000 tokens a minute
+# shared across everyone on the site at once, so at a busy moment the
+# scarce resource is a fast reply, not an allowance. Pro is therefore
+# first in the queue for it (see _groq_has_room), and keeps answering
+# quickly at exactly the times a free session drops to the local model.
+#
+# The credit gap widened as well - 2,000 against 25,000 - but that is the
+# smaller half of the offer, and deliberately so. An allowance can be
+# waited out; being the one who still gets the fast channel cannot.
 PLANS = {
     "free": {
         "label": "Free",
         "price": "$0",
-        "cap": 3000,
+        "cap": 2000,
         "refill_seconds": 2 * 60 * 60,  # 2 hours
-        "blurb": "3,000 credits, refilling every 2 hours. Fast chat and "
+        "blurb": "2,000 credits, refilling every 2 hours. Fast chat and "
                  "coding models, image generation, code execution, the "
                  "video bay, and web search.",
     },
     "pro": {
         "label": "Pro",
         "price": "$1.99/mo",
-        "cap": 10000,
-        "refill_seconds": 2 * 60 * 60,  # 2 hours
-        "blurb": "10,000 credits every 2 hours, plus the 7B model, "
-                 "vision, unlimited memory, long-form code, every image "
-                 "shape, and 3-minute max-quality video renders.",
+        "cap": 25000,
+        # Hourly, not two-hourly. Halving the wait is the part people
+        # feel: a free session that runs dry is out for up to two hours,
+        # a Pro one for at most one - on an allowance twelve times larger
+        # that it should rarely reach in the first place.
+        "refill_seconds": 60 * 60,      # 1 hour
+        "blurb": "25,000 credits, refilling every hour - 12x the free "
+                 "allowance, twice as often. Priority on the fast "
+                 "channel when the site is busy, so your replies stay "
+                 "quick while free sessions fall back to the local "
+                 "model. Plus vision, the 7B model, unlimited memory, "
+                 "long-form code, every image shape, and 3-minute "
+                 "max-quality video renders.",
     },
 }
 STARTING_CREDITS = PLANS["free"]["cap"]
@@ -649,6 +697,75 @@ USERS = load_users()
 # image - the request just waits on imagegen's own lock if it's still
 # loading when they get there.
 threading.Thread(target=imagegen.preload, daemon=True).start()
+
+
+def _warm_providers():
+    """Load the workhorse model at boot instead of in someone's request.
+
+    This is the single largest latency win available here. A 7B loads
+    from disk in 7-8 seconds and answers in 0.09 once it is resident -
+    so whether the app feels instant or broken comes down entirely to
+    whether the model happens to be in memory when someone types. Left
+    alone, the first person after every restart pays that 8 seconds and
+    reads it as the site being slow.
+
+    Only the chat/code workhorse is warmed. llava is deliberately left
+    cold: it is 5GB, only one 7B fits in 8GB of VRAM, and loading it here
+    would evict the model almost every request actually needs.
+
+    It replays a REAL request rather than merely loading the model, and
+    that distinction turned out to be the whole thing. A bare load leaves
+    Ollama holding a runner configured with default options; the first
+    real request then asks for num_ctx 8192, which is a different runner,
+    and it reconfigures - measured at 11.4s, of which only 0.5s was
+    actually evaluating the prompt. The model was resident the whole time
+    and the request was still slow. So the warm-up sends the same system
+    prompt and the same num_ctx the chat bay sends, and the first real
+    request finds a runner it can reuse.
+
+    Deliberately silent - Ollama not being up at boot is not a startup
+    failure, and the next real request will load it the slow way.
+    """
+    try:
+        r = requests.get(f"{OLLAMA_URL}/api/tags",
+                         headers=ollama_headers(), timeout=10)
+        names = [m["name"] for m in r.json().get("models", [])]
+    except (requests.exceptions.RequestException, ValueError, KeyError):
+        return
+
+    for _, pattern in BAY_ROUTES["chat"]:
+        match = next((n for n in names if pattern in n.lower()), None)
+        if not match:
+            continue
+        try:
+            requests.post(
+                f"{OLLAMA_URL}/api/chat", headers=ollama_headers(),
+                json={
+                    "model": match,
+                    "stream": False,
+                    "keep_alive": OLLAMA_KEEP_ALIVE,
+                    # The real system prompt, so the shared prefix is
+                    # already in the KV cache when someone actually types.
+                    "messages": [
+                        {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+                        {"role": "user", "content": "hi"},
+                    ],
+                    # Must match what _stream_reply() sends for chat, or
+                    # this warms a runner that the first request discards.
+                    "options": {"num_predict": 1, "num_ctx": 8192},
+                },
+                timeout=300)
+        except requests.exceptions.RequestException:
+            pass
+        return
+
+
+# Started at the FOOT of this module, not here. _warm_providers() reads
+# BAY_ROUTES, which is defined ~1,200 lines below this point, and a
+# thread launched here races module execution and loses: it raised
+# NameError inside a daemon thread, where nothing reports it, and the
+# only visible symptom was that the first request still paid the full
+# 8-second model load the warm-up exists to remove.
 
 
 def public_user(user):
@@ -802,6 +919,45 @@ def _legal(slug, title, sections):
         updated=LEGAL_UPDATED, support_email=SUPPORT_EMAIL)
 
 
+# OWNER-ONLY STATISTICS
+#
+# Gated on an email in the environment rather than a role column, because
+# there is exactly one owner and a schema change to express that would be
+# ceremony. Set ADMIN_EMAIL to the address you sign in with.
+#
+# FAILS CLOSED, and deliberately with 404 rather than 403. With
+# ADMIN_EMAIL unset the page does not exist for anybody - including the
+# owner - because the alternative default is a public page listing
+# revenue, signups and usage. A 403 would also confirm the route is real
+# and worth attacking; a 404 says nothing.
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "").strip().lower()
+
+
+@app.route("/stats")
+def stats_page():
+    if not ADMIN_EMAIL:
+        abort(404)
+    uid = session.get("user_id")
+    user = USERS.get(uid) if uid else None
+    if not user or (user.get("email") or "").strip().lower() != ADMIN_EMAIL:
+        abort(404)
+    return render_template("stats.html", s=stats.collect())
+
+
+@app.route("/api/stats")
+def stats_json():
+    """The same figures as JSON, for anything that wants to graph them
+    elsewhere. Same gate - it would be a strange kind of protection that
+    covered the page and not the data behind it."""
+    if not ADMIN_EMAIL:
+        abort(404)
+    uid = session.get("user_id")
+    user = USERS.get(uid) if uid else None
+    if not user or (user.get("email") or "").strip().lower() != ADMIN_EMAIL:
+        abort(404)
+    return jsonify(stats.collect())
+
+
 @app.route("/terms")
 def terms_page():
     return _legal("terms", "Terms of Service", [
@@ -906,11 +1062,15 @@ def privacy_page():
         {"heading": "Where prompts actually go", "body": [
             "This matters more than the rest of the page, so it is stated "
             "plainly rather than buried.",
-            "On this hosted site, the models do not run on our hardware. "
-            "What you type is sent to <strong>Google (Gemini)</strong> to "
-            "produce a reply. Google processes it under their own terms.",
+            "Chat and code replies come from one of two places. Where "
+            "a model is running on our own server, what you type stays "
+            "on it. Otherwise it is sent to <strong>Groq</strong> to "
+            "produce a reply, and Groq processes it under their own "
+            "terms. Which one answered is shown on each reply.",
             ["Image generation sends your description to "
-             "<strong>Pollinations</strong>, which serves the FLUX model.",
+             "<strong>Pollinations</strong>, which serves the SANA "
+             "model. Your description is also rewritten by the same "
+             "chat model first, to get a better picture.",
              "Web search sends your query to <strong>DuckDuckGo</strong>.",
              "Uploaded files and videos are processed on our own server "
              "and are not sent to a third party."],
@@ -1614,8 +1774,8 @@ def _api_user():
     """The account behind the bearer key, or None.
 
     Every request is authenticated. Without this the endpoint is an open
-    relay on a public URL: a stranger could spend the owner's Gemini
-    quota, and on a machine with Ollama running, occupy their GPU.
+    relay on a public URL: a stranger could spend the owner's per-minute
+    Groq budget, and on a machine with Ollama running, occupy their GPU.
     """
     raw = openai_api.key_from_request(request.headers)
     if not raw:
@@ -1637,10 +1797,6 @@ def openai_models():
             "Invalid API key. Create one in the app under Settings.",
             401, "invalid_request_error")
     ids = list(ollama_provider().get("models") or [])
-    if gemini.configured():
-        ids += gemini.models()
-    if groq_api.configured():
-        ids += groq_api.models()
     return jsonify(openai_api.model_list(ids or ["randomgenerals"]))
 
 
@@ -1663,21 +1819,16 @@ def openai_chat_completions():
     # integration look broken when it is only mislabelled.
     requested = (payload.get("model") or "").strip()
     local = list(ollama_provider().get("models") or [])
-    cloud = gemini.models() if gemini.configured() else []
 
     if requested in local:
         provider, model = "ollama", requested
-    elif requested in cloud:
-        provider, model = "gemini", requested
     elif local and ollama_reachable():
         provider, model = "ollama", (
             next((m for m in local if "coder" in m), local[0]))
-    elif cloud:
-        provider, model = "gemini", _best_cloud_model("code", cloud)
     else:
         return _api_error(
-            "No model is available right now: the local AI is not running "
-            "and no cloud fallback is configured.", 503, "server_error")
+            "No model is available right now - Ollama is not answering.",
+            503, "server_error")
 
     opts = openai_api.options_from(payload)
     opts["num_ctx"] = 16384
@@ -1750,27 +1901,37 @@ def health():
     the deployment's health check and by the UI's status indicator, so
     it has to stay fast enough to call often.
 
-    Two possible sources: Ollama on this machine, and Gemini as a
-    fallback for when this machine is off. `mode` says which one a
-    request would actually reach right now.
+    Two possible sources: Ollama on this machine, and Groq when that is
+    faster or when there is no local model at all. `mode` says which one
+    a request would actually reach right now.
     """
     local = ollama_reachable()
-    # A key being present is not the same as a key that works. Asking
-    # whether any model came back is what distinguishes "configured" from
-    # "actually usable" - a rejected key looks like the former.
-    cloud = bool(gemini.configured() and gemini.models())
-    payload = {
+    # A key being present is not the same as a key that works, so this
+    # asks whether any model actually came back.
+    cloud = bool(groq_api.configured() and groq_api.models())
+    # Whether the fast channel has budget right now, which is a different
+    # question from whether it is configured - and the one that explains
+    # a sudden change in reply latency to anyone watching this endpoint.
+    remaining, resets_in = groq_api.budget_state()
+    return jsonify({
         "status": "ok",
         "time": now_iso(),
         "compute": {
             "local_models": local,
             "cloud_models": cloud,
         },
-        "mode": "local" if local else ("cloud" if cloud else "unavailable"),
-    }
-    if gemini.configured() and not cloud:
-        payload["cloud_problem"] = gemini.last_error()
-    return jsonify(payload)
+        "fast_channel": {
+            "configured": cloud,
+            "tokens_remaining": remaining,
+            "resets_in_seconds": round(resets_in, 1),
+        },
+        # Which one a request would actually reach right now. "cloud"
+        # only when it is both configured and has budget left, because
+        # otherwise the honest answer is that local is answering.
+        "mode": ("cloud" if cloud and groq_api.budget_ok()
+                 else "local" if local
+                 else "cloud" if cloud else "unavailable"),
+    })
 
 
 @app.route("/api/plans", methods=["GET"])
@@ -1887,30 +2048,98 @@ def get_credits():
 # and local sits underneath as a deliberate choice rather than a default.
 #
 # Vision is the exception that decides its own order: Groq's catalogue
-# has no model that can see an image, so the choice there is Gemini or a
-# local llava, and Gemini wins on speed by two orders of magnitude.
+# has no model that can see an image, so vision is local-only: llava is
+# the one thing here the fast channel cannot do at all.
+#
+# ONE MODEL ANSWERS BOTH CHAT AND CODE, AND THAT IS THE WHOLE POINT
+#
+# A 7B at Q4 occupies ~5GB of VRAM. This machine has 8GB, so exactly one
+# fits, and /api/ps confirms Ollama keeps exactly one resident. Every
+# time a bay asks for a different model the current one is evicted and
+# the new one loaded from disk, which was measured at 7-8 SECONDS before
+# the first token - against 0.09s when the model is already warm.
+#
+# Chat and code are the two bays people move between constantly, so
+# giving them different models means paying that 7-8s on most switches.
+# qwen2.5-coder was checked on general chat before being given the job -
+# it explained Rayleigh scattering perfectly well - so one model covers
+# both bays and stays resident permanently. That is where the speed
+# comes from: not a faster model, an un-evicted one.
+#
+# llava is the deliberate exception. Vision is rare and always follows an
+# upload, so its load is paid by someone who has just chosen to wait, and
+# it buys the one capability no text model has.
+#
+# Each entry is matched as a SUBSTRING against whatever Ollama actually
+# reports, which is what lets one table serve two very different
+# endpoints. Locally that resolves to qwen2.5-coder:7b and llava:7b; with
+# OLLAMA_URL pointed at Ollama Cloud the same patterns fall through to
+# qwen3.5 and gemma4, because the cloud catalogue carries neither
+# qwen2.5 nor llava (checked against ollama.com/api/tags, which lists 19
+# models and none of them llava).
 BAY_ROUTES = {
     "code": [
         ("groq", "gpt-oss-120b"),
-        ("gemini", "gemini-2.5-pro"),
-        ("gemini", "gemini-2.5-flash"),
         ("ollama", "qwen2.5-coder"),
+        ("ollama", "qwen3.5"),          # Ollama Cloud
+        ("ollama", "gpt-oss"),          # Ollama Cloud
+        ("ollama", "qwen2.5"),
         ("ollama", "llama3.2"),
     ],
+    # Same local entry as code, on purpose. See above.
     "chat": [
         ("groq", "gpt-oss-120b"),
-        ("gemini", "gemini-2.5-flash"),
-        ("ollama", "llama3.2"),
+        ("ollama", "qwen2.5-coder"),
+        ("ollama", "qwen3.5"),          # Ollama Cloud
+        ("ollama", "gpt-oss"),          # Ollama Cloud
         ("ollama", "qwen2.5"),
+        ("ollama", "llama3.2"),
     ],
     # Reading an attached image, not generating one - the Image bay's
     # pictures come from imagegen.py and never touch a chat model.
     "vision": [
-        ("gemini", "gemini-2.5-flash"),
-        ("gemini", "gemini-2.5-pro"),
         ("ollama", "llava"),
+        ("ollama", "gemma4"),           # Ollama Cloud - multimodal
     ],
 }
+
+
+def _local_alternative(mode):
+    """The local model that should answer instead of the fast channel.
+
+    Reads the same BAY_ROUTES table rather than hardcoding a name, so
+    the fallback and the primary can never drift apart, and returns None
+    when Ollama has nothing to offer - which the caller must handle,
+    since falling back to nothing is not falling back.
+    """
+    if not ollama_reachable():
+        return None
+    # Fetched once. ollama_provider() is an HTTP round trip, and this
+    # runs on the failover path, where latency is already the reason we
+    # are here.
+    names = ollama_provider().get("models") or []
+    for provider_id, pattern in BAY_ROUTES.get(mode, BAY_ROUTES["chat"]):
+        if provider_id != "ollama":
+            continue
+        match = next((n for n in names if pattern in n.lower()), None)
+        if match:
+            return match
+    return names[0] if names else None
+
+
+def _groq_has_room(plan):
+    """Whether this plan may spend the shared per-minute budget now.
+
+    Pro skips the reserve. That is a real benefit rather than a cosmetic
+    one: when the site is busy the fast channel is precisely what runs
+    out, so being the one who still gets it is worth more than any
+    number of extra credits.
+    """
+    return groq_api.budget_ok(priority=(plan == features.PRO))
+
+
+# Safe here: BAY_ROUTES above is what this reads.
+threading.Thread(target=_warm_providers, daemon=True).start()
 
 
 def _recommended_routes(providers):
@@ -1937,43 +2166,37 @@ def _recommended_routes(providers):
 
 @app.route("/api/providers", methods=["GET"])
 def list_providers():
+    # TWO CHANNELS: the fast one, and the one that is always there.
+    #
+    # Gemini is gone entirely: the import is removed, every call site is
+    # unwired, and gemini.py has been deleted. It was the fallback for
+    # "this machine is off", a job Groq now does faster and Ollama does
+    # locally, so it was a third way to answer that nothing chose.
+    #
+    # Groq stays because it is genuinely the fastest thing here, and its
+    # 8,000-tokens-per-minute ceiling is now steered around rather than
+    # walked into: see groq_api.budget_ok() and the failover in
+    # _stream_reply(). It no longer has to be reliable on its own,
+    # because Ollama catches every request it cannot take.
     providers = [ollama_provider()]
-    # Only advertised when a key exists, so the picker never offers a
-    # channel that would immediately fail.
-    # Groq before Gemini in the list: on this deployment it is both the
-    # faster channel and the one with the more generous request ceiling,
-    # so it is the sensible default to land on.
     if groq_api.configured():
         groq_models = groq_api.models()
+        remaining, resets_in = groq_api.budget_state()
+        if remaining is not None and remaining < 500:
+            note = ("At its per-minute limit - replies are coming from "
+                    "the local model for about %ds." % int(resets_in))
+        else:
+            note = ("Open-weight models on dedicated accelerators. Runs "
+                    "off-device, so prompts leave this machine.")
         providers.append({
             "id": "groq",
             "label": "Fast cloud",
             "available": bool(groq_models),
             "models": groq_models,
             "model_info": [describe_model(m) for m in groq_models],
-            "note": "Open-weight models on dedicated accelerators. Runs "
-                    "off-device, so prompts leave this machine.",
+            "note": note,
         })
 
-    if gemini.configured():
-        providers.append({
-            "id": "gemini",
-            "label": "Cloud",
-            "available": True,
-            "models": gemini.models(),
-            "model_info": [describe_model(m) for m in gemini.models()],
-            "note": "Used automatically when this machine is off. Runs "
-                    "off-device, so prompts leave it.",
-        })
-    # A channel that cannot answer is worse than one that is absent: it
-    # is a visible, disabled button labelled "On this machine", which on
-    # a hosted deployment reads as "the product is broken" rather than
-    # "this deployment has no local model". Nobody can act on it either -
-    # it is the server's hardware, not theirs.
-    #
-    # So it is dropped, but only while something else can answer. If
-    # nothing works at all, the dead channel is the only evidence of why,
-    # and hiding it would leave an empty picker and no explanation.
     live = [p for p in providers if p["available"]]
     if live:
         providers = live
@@ -1981,10 +2204,13 @@ def list_providers():
     return jsonify({
         "recommended": _recommended_routes(providers),
         "providers": providers,
-        # Kept under its old name because the frontend reads it to decide
-        # whether to offer a second image backend at all. It now means
-        # "is there a local model as well", the hosted one being always on.
-        "gemini_configured": imagegen.local_available(),
+        # Whether there is a SECOND image backend (Stable Diffusion on
+        # this machine) to choose between, the hosted one being always
+        # Renamed off "gemini_configured": Gemini never made an image
+        # here after Imagen was dropped, and the frontend was still
+        # printing "Local or Gemini" underneath the composer on the
+        # strength of that name.
+        "local_image": imagegen.local_available(),
         "image_sizes": list(imagegen.SIZES),
         "image_styles": list(imagegen.STYLES),
     })
@@ -2047,34 +2273,6 @@ def ollama_reachable():
         ok = False
     _ollama_health.update({"at": now, "ok": ok})
     return ok
-
-
-def _best_cloud_model(mode, available):
-    """Which cloud model stands in for the local one this bay uses.
-
-    First match wins, falling back to whatever the catalogue offers, so
-    this can never return nothing and strand a request that has already
-    decided to use the cloud.
-    """
-    # The -latest aliases, not pinned versions. A pinned default was
-    # already closed to new accounts by the time it was first called;
-    # an alias moves with Google instead of needing to be chased.
-    # gemini.stream_chat retries the next one if the first is busy, so
-    # this only has to name a sensible starting point.
-    # Code gets the Pro model, chat gets Flash. Reasoning through an
-    # unfamiliar API or a subtle bug is where the stronger model earns
-    # its slower response, and a coding answer is read once and used -
-    # unlike chat, where waiting is the thing you notice. gemini.stream_chat
-    # falls back on its own if Pro is busy or over quota.
-    order = (["gemini-pro-latest"] + gemini.PREFERRED if mode == "code"
-             else gemini.PREFERRED)
-    for m in order:
-        if m in available:
-            return m
-    for m in available:
-        if "flash" in m:
-            return m
-    return available[0]
 
 
 def ollama_provider():
@@ -2208,7 +2406,7 @@ def stream_ollama(model, history, options=None, images=None, usage=None):
         # load off disk again before it can say a word. Keeping it warm
         # for 30 minutes trades some idle RAM for not paying that reload
         # tax on every message.
-        "keep_alive": "30m",
+        "keep_alive": OLLAMA_KEEP_ALIVE,
     }
     if options:
         body["options"] = options
@@ -2254,7 +2452,6 @@ def tool_event(payload):
 
 PROVIDER_STREAMERS = {
     "ollama": stream_ollama,
-    "gemini": gemini.stream_chat,
     "groq": groq_api.stream_chat,
 }
 
@@ -2476,22 +2673,45 @@ def save_instructions_route():
 # ----------------------------------------------------------------------
 # Image generation - see imagegen.py, not Ollama, which only serves LLMs.
 #
-# Two backends: FLUX hosted (the default, needs no key and so works on a
-# GPU-less host) and Stable Diffusion locally where torch is installed.
+# Three backends, and this route does not choose between the hosted ones:
+# imagegen.best_backend() does, so setting a Cloudflare key upgrades every
+# picture without anyone editing a setting or finding a menu. Local Stable
+# Diffusion stays an explicit request, because it is the only one whose
+# availability depends on the machine rather than on a credential.
+#
 # Google's Imagen used to be the hosted option; it was dropped because it
 # needed the same key as chat, so revoking one key took out two features.
 # ----------------------------------------------------------------------
+def _image_model_name(backend):
+    """What to record as having drawn it.
+
+    Recorded per message rather than derived at read time, so a thread
+    opened months later still says which model made a given picture even
+    though the default has moved on since.
+    """
+    if backend == "local":
+        return imagegen.MODEL_ID
+    if backend == "cloudflare":
+        return imagegen.CF_MODEL
+    # Not FLUX_MODEL: that constant is the string sent to Pollinations,
+    # which ignores it. See the note at the top of imagegen.py.
+    return "sana"
+
+
 @app.route("/api/generate-image", methods=["POST"])
 def generate_image_route():
     payload = request.get_json(force=True, silent=True) or {}
     tid = payload.get("thread_id")
     prompt = (payload.get("prompt") or "").strip()
-    backend = "local" if payload.get("backend") == "local" else "flux"
+    # Anything that is not an explicit request for local hardware takes
+    # whichever hosted backend is best here - see imagegen.best_backend().
+    backend = ("local" if payload.get("backend") == "local"
+               else imagegen.best_backend())
     # Asking for local on a host without torch is a request that cannot be
     # served; falling back beats an error for something the person did not
     # choose and probably cannot see.
     if backend == "local" and not imagegen.local_available():
-        backend = "flux"
+        backend = imagegen.best_backend()
     size = payload.get("size") or imagegen.DEFAULT_SIZE
     style = payload.get("style") or imagegen.DEFAULT_STYLE
     # The widest shapes are ~25% more pixels and cost ~25% more to make,
@@ -2510,7 +2730,10 @@ def generate_image_route():
     if not prompt:
         return jsonify({"error": "Describe what you want to see."}), 400
 
-    blocked = moderation.check_message(prompt)
+    # The stricter image bar, not the conversational one - see the note
+    # in moderation.py. Checked before any credits are touched, so a
+    # refused prompt costs nothing.
+    blocked = moderation.check_image_prompt(prompt)
     if blocked is not None:
         return jsonify({"error": blocked}), 400
 
@@ -2529,8 +2752,15 @@ def generate_image_route():
     if thread["title"] == "New chat":
         thread["title"] = prompt[:40]
 
+    # A language model expands the request before it reaches the image
+    # model - see enhance_prompt() in imagegen.py for why that is the
+    # biggest quality lever available without paying for better pixels.
+    # Opt-out rather than opt-in: the gain is large, the round trip is
+    # under a second on the fast channel, and a failure silently leaves
+    # the person's own words in place.
     url, error = imagegen.generate_image(
-        prompt, backend=backend, size=size, style=style)
+        prompt, backend=backend, size=size, style=style,
+        enhance=payload.get("enhance") is not False)
 
     if error:
         thread["updated"] = now_iso()
@@ -2542,7 +2772,7 @@ def generate_image_route():
         "content": url,
         "type": "image",
         "provider": "imagegen",
-        "model": imagegen.FLUX_MODEL if backend == "flux" else imagegen.MODEL_ID,
+        "model": _image_model_name(backend),
     })
     thread["updated"] = now_iso()
     save_threads()
@@ -2627,10 +2857,10 @@ def _video_planner():
     Local first, and not only on principle: this is a short call with a
     fixed output shape, which is what a small local model is good at, and
     it keeps the description of someone's footage on the machine the
-    footage is on. Gemini stands in when Ollama is not running, because a
-    missing planner is not a neutral failure - it drops the prompt box
-    back to the regex patterns, and from outside that looks like the app
-    ignoring most of what you asked for.
+    footage is on. Returning None is not a neutral failure - it drops the
+    prompt box back to the regex patterns, and from outside that looks
+    like the app ignoring most of what you asked for - so this is worth
+    keeping working.
     """
     if ollama_reachable():
         models = ollama_provider()["models"]
@@ -2652,7 +2882,7 @@ def _video_planner():
                         # writing. The same sentence should produce the
                         # same edit every time someone runs it.
                         "options": {"temperature": 0},
-                        "keep_alive": "30m",
+                        "keep_alive": OLLAMA_KEEP_ALIVE,
                     },
                     timeout=VIDEO_PLAN_TIMEOUT,
                 )
@@ -2661,15 +2891,10 @@ def _video_planner():
 
             return complete_local
 
-    available = gemini.models() if gemini.configured() else []
-    if available:
-        def complete_cloud(prompt):
-            return "".join(gemini.stream_chat(
-                _best_cloud_model("chat", available),
-                [{"role": "user", "content": prompt}]))
-
-        return complete_cloud
-
+    # No cloud planner any more. Returning None is already the "plan it
+    # with regex rules instead" path that videoedit.plan() falls back to,
+    # so an unreachable Ollama degrades the edit planning rather than
+    # failing the render.
     return None
 
 
@@ -2921,29 +3146,48 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
         for m in thread["messages"] if m["type"] == "text"
     ]
 
-    # Local first, always. Prompts stay on this machine whenever that is
-    # possible at all, and Gemini is only reached for when it isn't -
-    # Ollama not started, still loading, or the whole machine off and the
-    # app running somewhere else.
+    # THE FAST CHANNEL NO LONGER HAS TO BE RELIABLE ON ITS OWN
     #
-    # The reply is tagged so the UI can say which one answered. Falling
-    # back silently would mean a user who chose local for privacy could
-    # have a prompt leave the device without ever being told.
+    # Groq's ceiling is 8,000 tokens a minute shared by everybody using
+    # the site, which is what made it "work for a few seconds a minute":
+    # a few requests drained the window and every one after that failed
+    # until it rolled over. Two changes, and neither asks Groq for more.
+    #
+    # First, the budget is checked BEFORE the request. Every Groq
+    # response reports what is left, so when there is not enough for this
+    # one it goes straight to the local model - no wasted round trip, no
+    # error, and the person never learns there was a limit.
+    #
+    # Second, a 429 that happens anyway is caught below and retried
+    # locally rather than surfaced. Between them the channel degrades
+    # instead of failing, which is the actual fix: it is not that Groq
+    # stops being rate-limited, it is that being rate-limited stops
+    # mattering.
     fell_back_to_cloud = False
-    if provider == "ollama" and not ollama_reachable():
-        if gemini.configured():
-            cloud_models = gemini.models()
-            if cloud_models:
-                provider = "gemini"
-                model = _best_cloud_model(mode, cloud_models)
+    plan = features.normalize_plan(current_account()[0].get("plan"))
+    if provider == "groq":
+        if not _groq_has_room(plan):
+            local = _local_alternative(mode)
+            if local:
+                provider, model = "ollama", local
                 fell_back_to_cloud = True
 
     if provider == "ollama" and not ollama_reachable():
-        def unavailable():
-            yield ("[The local AI isn't running and no cloud fallback is "
-                   "configured, so there's nothing to answer with. Start "
-                   "Ollama, or set GEMINI_API_KEY on the server.]")
-        return streaming_response(unavailable())
+        # Local is unavailable too. Try the fast channel rather than
+        # giving up - the direction people usually need is the other way,
+        # but a deployment with no local model at all is exactly the
+        # hosted case, and refusing there would be gratuitous.
+        if groq_api.configured() and groq_api.models():
+            provider = "groq"
+            model = next((m for _, p in BAY_ROUTES.get(mode, [])
+                          for m in groq_api.models() if p in m.lower()),
+                         groq_api.PREFERRED[0])
+        else:
+            def unavailable():
+                yield ("[No model is answering. If this is running on your "
+                       "own machine, start Ollama, or check OLLAMA_URL and "
+                       "OLLAMA_API_KEY on the server.]")
+            return streaming_response(unavailable())
 
     streamer = PROVIDER_STREAMERS[provider]
     # num_ctx matters more here than it looks. Without it, Ollama defaults
@@ -2964,6 +3208,13 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # definitions being asked about live.
     combined_options["num_ctx"] = 16384 if mode == "code" else 8192
     combined_options.update(STRENGTH_LEVELS[strength]["options"])
+    # Only Groq reads this, and for it the setting is a budget decision
+    # as much as a quality one: the same maths question cost 297
+    # completion tokens at "low" effort and 683 at "high", for the same
+    # correct answer. Against an 8,000/minute ceiling that is the
+    # difference between roughly 25 replies a minute and 11.
+    combined_options["reasoning_effort"] = groq_api.effort_for(
+        mode, strength)
     if mode == "code":
         # Quick's 320-token cap and Deep's 2048 are both prose-sized -
         # real code needs a much bigger generation budget, which is what
@@ -2990,11 +3241,31 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # still work; the user drives them from the UI as before.
 
     def generate():
+        nonlocal provider, model, streamer, fell_back_to_cloud
         full_reply = ""
         try:
-            for piece in streamer(model, history, **stream_kwargs):
-                full_reply += piece
-                yield piece
+            try:
+                for piece in streamer(model, history, **stream_kwargs):
+                    full_reply += piece
+                    yield piece
+            except groq_api.RateLimited:
+                # Safe to retry: RateLimited is raised before the first
+                # chunk, so nothing has reached the browser yet and the
+                # same conversation can be answered locally without the
+                # reader seeing a seam.
+                local = _local_alternative(mode)
+                if not local:
+                    full_reply = ("[The fast channel is at its per-minute "
+                                  "limit and no local model is running to "
+                                  "take over. Try again in a moment.]")
+                    yield full_reply
+                    return
+                provider, model = "ollama", local
+                streamer = PROVIDER_STREAMERS[provider]
+                fell_back_to_cloud = True
+                for piece in streamer(model, history, **stream_kwargs):
+                    full_reply += piece
+                    yield piece
         except GeneratorExit:
             raise
         except Exception as e:

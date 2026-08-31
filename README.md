@@ -37,7 +37,7 @@ Set these as environment variables — never in the repo.
 | `OLLAMA_URL` | no | Defaults to `http://localhost:11434` |
 | `DB_PATH` | no | Where SQLite lives |
 | `FORCE_HTTPS_COOKIES` | no | Set to `1` behind TLS |
-| `GEMINI_API_KEY` | no | Higher-quality image generation |
+| `CF_ACCOUNT_ID` / `CF_API_TOKEN` | no | Better image generation (FLUX on Cloudflare Workers AI) |
 | `STRIPE_SECRET_KEY` / `STRIPE_PRICE_ID_PRO` / `STRIPE_WEBHOOK_SECRET` | no | Pro subscriptions |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | no | Google sign-in |
 | `ALLOW_MOCK_UPGRADE` | no | **Leave unset when hosted** (see below) |

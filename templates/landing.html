@@ -379,8 +379,9 @@
             <span class="card-num">03</span>
             <h3>Image generation</h3>
             <p>
-              Describe it and get it, generated locally and privately. Bring
-              your own Gemini key if you want higher-fidelity results.
+              Describe it and get it. Your words are expanded into a
+              full prompt first, so a few words still make a real
+              picture — no key, no account, no signup.
             </p>
           </article>
           <article class="card">
@@ -486,11 +487,15 @@
           <details>
             <summary>Where does the AI actually run?</summary>
             <p>
-              On the machine hosting this app, through Ollama — not a cloud AI
-              provider. Your conversations aren't sent to a third-party model
-              API. The one exception is optional: if you supply your own Gemini
-              key for higher-quality image generation, those image prompts go
-              to Google.
+              Two places, and each reply says which. Where a model is
+              running on the host machine, through Ollama, your message
+              stays on it. Otherwise it goes to <strong>Groq</strong>,
+              which runs the same kind of open-weight model on faster
+              hardware — on this hosted site that is usually what
+              answers, because the server has no GPU.
+              Image generation always sends the description to
+              Pollinations. Run it yourself and the local path is the
+              only one that is used.
             </p>
           </details>
           <details>

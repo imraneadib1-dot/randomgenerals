@@ -1270,7 +1270,7 @@ def captions_available():
 # ---- reading the sentence -------------------------------------------
 # Rules first, model second. Most edit requests are a handful of stock
 # phrases, and matching those directly means the common case needs no
-# model at all: instant, works with Ollama stopped and no Gemini key, and
+# model at all: instant, works with Ollama stopped and no Groq key, and
 # it cannot drift. The model handles the sentences these patterns miss.
 
 _NUM = r"(\d+(?:\.\d+)?)"

@@ -96,6 +96,10 @@ FEATURES = {
         "terminal_unrestricted": True,
         "terminal_timeout_seconds": 1800,
         "external_connectors": True,
+        # First claim on the shared per-minute budget of the fast
+        # channel. Read by app.py's _groq_has_room(); see PLANS there for
+        # why this is the benefit that matters most on this deployment.
+        "priority_fast_channel": True,
     },
 }
 

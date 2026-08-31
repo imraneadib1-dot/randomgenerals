@@ -27,7 +27,7 @@ const BAY_META = {
   image: {
     eyebrow: "randomgenerals --image",
     title: "Describe an image",
-    sub: "Describe what you want to see — generated locally by default, or via Gemini if you've set that up.",
+    sub: "Describe what you want to see — your words get expanded into a full prompt first, so a few words still make a real picture.",
     placeholder: "A red apple on a wooden table…",
     hints:
       "<div><span>Enter</span> to generate · <span>Shift+Enter</span> for a new line</div>" +
@@ -49,7 +49,6 @@ const BAY_META = {
 
 const PROVIDER_META = {
   ollama: { label: "RandomGenerals AI" },
-  gemini: { label: "Cloud" },
   imagegen: { label: "Image" },
 };
 
@@ -111,7 +110,9 @@ const chatModeControls = document.getElementById("chatModeControls");
 const imageModeControls = document.getElementById("imageModeControls");
 const imageQualityToggle = document.getElementById("imageQualityToggle");
 const imageModeNote = document.getElementById("imageModeNote");
-let geminiConfigured = false;
+// Whether Stable Diffusion is installed alongside the hosted image
+// backend, i.e. whether there is a quality choice to offer at all.
+let localImageAvailable = false;
 // FLUX by default: it needs no key, so it is the one backend guaranteed
 // to work everywhere this app runs. Local is opt-in and only offered
 // where torch is actually installed.
@@ -674,9 +675,9 @@ function openPreview(content) {
    ---------------------------------------------------------------- */
 function updateComposerHint() {
   if (currentBay === "image") {
-    composerHintText.textContent = geminiConfigured
-      ? "Local or Gemini · pick a quality above"
-      : "Local generation · free, runs on this machine";
+    composerHintText.textContent = localImageAvailable
+      ? "Hosted or on-device · pick a quality above"
+      : "Image generation · free, no account needed";
     return;
   }
   const p = providers.find((x) => x.id === activeProvider);
@@ -758,8 +759,8 @@ async function loadProviders() {
     recommended = data.recommended || {};
     renderChannelRow();
 
-    geminiConfigured = !!data.gemini_configured;
-    imageQualityToggle.hidden = !geminiConfigured;
+    localImageAvailable = !!data.local_image;
+    imageQualityToggle.hidden = !localImageAvailable;
 
     const firstAvailable = providers.find((p) => p.available);
     statusDot.classList.toggle("online", !!firstAvailable);

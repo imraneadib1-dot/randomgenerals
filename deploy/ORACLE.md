@@ -123,11 +123,11 @@ top of the script first.
 ## 6. Add a model key
 
 ```bash
-nano /opt/randomgenerals/.env      # set GEMINI_API_KEY
+nano /opt/randomgenerals/.env      # set GROQ_API_KEY
 ```
 
-Get one free at <https://aistudio.google.com/apikey>. Without it the app
-serves every page and every prompt fails at the point of asking.
+Get one free at <https://console.groq.com/keys> — no card. Without it the
+app serves every page and every prompt fails at the point of asking.
 
 ## 7. Start it
 
@@ -174,16 +174,21 @@ There is no GPU on any free tier anywhere, including this one. A 7B model
 on two Ampere cores answers at well under a word a second, which reads as
 broken rather than slow.
 
-So replies come from **Gemini**, which `gemini.py` has supported all
-along as "the cloud fallback for when this machine is off" — and this VM
-is exactly that case, permanently. Google's free tier is generous and
-needs no card.
+Measured on this VM, not estimated: `llama3.2:3b` took **99.6 seconds**
+to reach the first token of "name three primary colours", and
+`qwen2.5-coder:7b` never finished "say hi" inside a 120-second timeout.
 
-`--with-ollama` pulls `llama3.2:3b` and serves it locally as well. On the
-old 4-core allowance a 3B was usable for short answers; on 2 cores it is
-slower still. It exists so "runs on hardware you control" can stay
-literally true if that matters more than speed — not because it is the
-better experience.
+So replies come from **Groq**, free and without a card. Its ceiling is
+8,000 tokens per minute per key, shared across everyone using the site at
+once — the app reads the remaining budget from every response and routes
+to the local model *before* the limit rather than after, so running out
+degrades a reply instead of failing it. Pro accounts get first claim on
+what is left.
+
+`--with-ollama` pulls `llama3.2:3b` and serves it locally as well. Read
+the timings above first. It exists so "runs on hardware you control" can
+stay literally true if that matters more than speed — not because it is
+the better experience.
 
 **Note this changes what the app may honestly claim.** The provider label
 is computed from `OLLAMA_URL`: point it at a remote endpoint and the

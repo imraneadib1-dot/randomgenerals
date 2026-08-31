@@ -141,10 +141,8 @@ def available_specs(allow_images=True, allow_code=True, allow_web=True):
         specs.append(WEB_SEARCH)
     if allow_code:
         specs.append(RUN_PYTHON)
-    # imagegen.available(), not gemini_configured(): the local diffusion
-    # backend works with no key at all, so gating on Gemini meant the
-    # model was never offered image generation on the very machine where
-    # it works best.
+    # imagegen.available(), which is unconditionally true: the default
+    # image backend needs no key at all, so there is nothing to gate on.
     if allow_images and imagegen.available():
         specs.append(GENERATE_IMAGE)
     return specs
@@ -212,7 +210,12 @@ def _do_generate_image(args):
     prompt = (args.get("prompt") or "").strip()
     if not prompt:
         return {"text": "No prompt given.", "display": None}
-    backend = "gemini" if imagegen.gemini_configured() else "local"
+    # imagegen.best_backend() picks the best hosted backend that is
+    # actually usable here. The old call was imagegen.gemini_configured(),
+    # which stopped existing when Gemini was removed - a latent
+    # AttributeError that only never fired because model-driven tool
+    # calling is not currently wired up (see the note in app.py).
+    backend = imagegen.best_backend()
     try:
         url, error = imagegen.generate_image(prompt, backend=backend)
     except Exception as e:                    # noqa: BLE001

@@ -16,7 +16,7 @@ internet.
 
 AUTHENTICATION
 A bearer key per account, checked on every request. Without it this is an
-open relay: anyone who found the URL could spend the owner's Gemini quota
+open relay: anyone who found the URL could spend the owner's Groq quota
 and, on a machine with Ollama running, use their GPU. Keys are stored as
 SHA-256 hashes - a leaked database should not hand over working keys, and
 nothing here ever needs the original back.

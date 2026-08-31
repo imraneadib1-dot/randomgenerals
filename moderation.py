@@ -63,6 +63,114 @@ SELF_HARM_RESPONSE = (
 
 REFUSAL_RESPONSE = "I can't help with that request."
 
+IMAGE_REFUSAL = (
+    "I can't generate that. Try describing a scene, a subject, a style "
+    "or a mood instead."
+)
+
+# A SEPARATE, STRICTER BAR FOR PICTURES
+#
+# The rules above are tuned for conversation, where discussing a subject
+# is not the same as endorsing it - a chat about sexual health, or about
+# how a bomb disposal team works, is legitimate and gets through. An
+# image generator has no equivalent: there is no context in which the
+# output is a discussion of the thing rather than the thing itself.
+#
+# So this bar is lower, and deliberately accepts more false positives.
+# The cost of wrongly refusing a picture is that someone rewords their
+# prompt. The cost of wrongly generating one is a file on a public
+# server, produced by this app, with this app's name on it.
+# EVERY PATTERN HERE IS ANCHORED ON \b, AND SOME NEED MORE THAN THAT
+#
+# The first version of this block was written as bare substrings, on the
+# reasoning that over-blocking a picture is cheap. That reasoning is
+# sound and the implementation was not: "strip" matches inside stripes,
+# striped and airstrip, so "a tiger with orange stripes" was refused.
+# A filter that rejects tigers is not strict, it is broken, and people
+# route around broken by not using the feature.
+#
+# So the rule is: a word boundary at minimum, and where an ordinary,
+# innocent use of the word is COMMON rather than merely conceivable, the
+# pattern has to name the harmful sense specifically. "naked" earns a
+# lookahead because naked eye, naked flame and a naked tree in winter are
+# all normal things to ask for. "hentai" does not, because there is no
+# innocent sense of it to protect.
+_IMG_SEXUAL = (
+    r"\b(?:"
+    # Unambiguous - no innocent reading to preserve.
+    r"nsfw|topless|pornographic|porn|hentai|erotica|erotic|lingerie"
+    r"|undress(?:ed|ing)?|nipples?|buttocks|stripper|"
+    # "nude" is almost always the sexual sense; the exception is art
+    # history, where a nude is a genre and a legitimate thing to want.
+    r"nude(?!\s+(?:descriptive|study|sculpture))|"
+    # naked EXCEPT the ordinary English collocations.
+    r"naked(?!\s+(?:eye|flame|truth|tree|trees|branch|branches|"
+    r"singularity|mole[\s-]?rat))|"
+    # Scoped: "sexual dimorphism", "sexual health" and "sexual selection"
+    # are all things someone might legitimately want illustrated.
+    r"sexually\s+explicit|sexual\s+(?:act|acts|intercourse|position)|"
+    # Scoped: chicken breast, breast cancer ribbon, robin redbreast.
+    r"(?:bare|exposed|naked)\s+breasts?|breasts?\s+(?:exposed|bared)|"
+    # Scoped: crystal cleavage is a mineralogy term.
+    r"cleavage(?!\s+(?:plane|planes))|"
+    # Scoped: stripping paint, stripping wire, a comic strip.
+    r"strip(?:ping|ped)?\s+(?:down|naked|nude)|"
+    r"genitals?|genitalia"
+    r")\b"
+)
+
+# Real, identifiable people. Generating a photorealistic image of a named
+# person is a likeness problem regardless of what they are doing in it,
+# and combined with anything above it is worse.
+_IMG_LIKENESS = (
+    r"\b(?:deepfake|face[\s-]?swap|likeness\s+of|"
+    r"photo\s+of\s+(?:the\s+)?(?:president|prime\s+minister|celebrity)|"
+    r"as\s+a\s+real\s+person)\b"
+)
+
+# Marks, documents and payment instruments - the categories where a
+# convincing render is the harm, not a depiction of it. Every branch is
+# scoped to the object, so a forged SIGNATURE is caught and forged steel
+# is not.
+_IMG_FORGERY = (
+    r"\b(?:counterfeit|"
+    r"forged?\s+(?:document|documents|passport|id|signature)|"
+    r"fake\s+(?:passport|id\s+card|driver'?s?\s+licen[cs]e|banknote|"
+    r"currency|money)|"
+    r"realistic\s+(?:banknote|credit\s+card))\b"
+)
+
+# Gore. Over-blocking is most defensible here, so these stay broad - but
+# still anchored, and corpse spares the corpse flower, which is a real
+# plant people photograph.
+_IMG_GORE = (
+    r"\b(?:gore|beheading|behead|decapitat\w*|mutilat\w*|dismember\w*|"
+    r"torture|massacre|execution\s+of|"
+    r"corpse(?!\s+flower)s?|dead\s+bod(?:y|ies))\b"
+)
+
+_IMG_BLOCK_RE = re.compile(
+    "|".join((_IMG_SEXUAL, _IMG_LIKENESS, _IMG_FORGERY, _IMG_GORE)),
+    re.IGNORECASE,
+)
+
+
+def check_image_prompt(text):
+    """-> a refusal string if this prompt should not be drawn, else None.
+
+    Runs IN ADDITION to check_message(), never instead of it: the
+    hard-stop categories there - minors, weapons, self-harm - apply to
+    every surface in the app and are not restated here.
+    """
+    if not text:
+        return None
+    hard = check_message(text)
+    if hard is not None:
+        return hard
+    if _IMG_BLOCK_RE.search(text):
+        return IMAGE_REFUSAL
+    return None
+
 
 def check_message(text):
     """-> a canned response string if `text` should be blocked before

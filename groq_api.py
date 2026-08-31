@@ -1,6 +1,6 @@
 """Groq - fast open-weight models over an OpenAI-compatible API.
 
-WHY THIS EXISTS ALONGSIDE GEMINI
+WHY THIS IS THE FAST CHANNEL
 
 The deployment target is an Oracle Always Free VM: two ARM cores and no
 GPU. A local model there is not a slower version of a good experience, it
@@ -15,15 +15,16 @@ than a local 3B on this hardware, it is a far larger model as well, so
 there is no axis on which the local option wins except the literal claim
 of locality.
 
-It also buys redundancy, which one provider cannot. Gemini's free tier is
-10-15 requests a minute; a public site can exceed that on a quiet
-afternoon, and when it does the whole app has nothing to answer with.
-Two independent free providers means one being rate-limited is a
-degradation rather than an outage.
+It is not, however, unlimited, and the limit is low enough to matter:
+8,000 tokens a minute per key, shared by every visitor at once. So this
+module tracks the remaining budget from the rate-limit headers on every
+response, and app.py routes to the local model before the ceiling rather
+than after it - see the note above _budget below. Ollama is what makes
+that survivable: one provider being rate-limited is a degradation rather
+than an outage only because there is something underneath it.
 
-Deliberately mirrors gemini.py's interface - configured(), models(),
-stream_chat() - so app.py registers it the same way and nothing else has
-to learn a second shape.
+Exposes configured(), models() and stream_chat(), the interface app.py
+registers every provider through.
 """
 import json
 import os
@@ -69,6 +70,151 @@ PREFERRED = [
 _NON_CHAT = ("whisper", "guard", "embed", "tts", "playai",
              "orpheus", "canopylabs")
 
+# THE LIMIT THAT ACTUALLY BINDS
+#
+# The free tier is 1,000 requests a day but only 8,000 TOKENS A MINUTE,
+# and it is the token budget that runs out first - measured against the
+# live x-ratelimit headers, not quoted. That ceiling is per key, so it is
+# shared by everyone using the site at once rather than being per person.
+#
+# Two consequences run through the rest of this file and app.py:
+#
+#   - Reasoning tokens are charged against it. gpt-oss thinks before it
+#     answers, and on a maths question that was 297 completion tokens at
+#     "low" effort against 683 at "high" - the same correct answer for
+#     2.3x the budget. So effort is a capacity decision as much as a
+#     quality one, and app.py sets it per bay rather than leaving it at
+#     the model default (see BAY_EFFORT there).
+#
+#   - Running out has to be survivable. A 429 here used to yield a
+#     bracketed apology, which ended the request with no answer; it now
+#     raises RateLimited before anything is streamed, so app.py can move
+#     the same conversation to Ollama and answer anyway.
+TOKENS_PER_MINUTE = 8000
+
+
+# WHY THE CHANNEL "ONLY WORKS SOME SECONDS PER MINUTE"
+#
+# That is the exact shape of an 8,000 token-per-minute cap being spent in
+# the first few seconds of each minute. A handful of requests drains it,
+# every request after that 429s, and then the window rolls over and it
+# works again - which from the outside looks like a channel that comes
+# and goes on a timer.
+#
+# It cannot be raised without paying Groq, so the fix is to stop walking
+# into it. Every response - streaming included - carries the remaining
+# budget in x-ratelimit-remaining-tokens, so the ceiling is observable
+# rather than something to be discovered by failing. This module tracks
+# it and lets the caller ask, before spending a round trip, whether a
+# request is likely to fit.
+_budget = {
+    "remaining": None,      # tokens left in the current window
+    "resets_at": 0.0,       # when the window rolls over (monotonic)
+}
+
+# Held back from free users so a paid one is not queued behind them. The
+# budget is per key, i.e. shared by everyone on the site at once, and
+# without a reserve whoever happens to type first takes it all.
+PRO_RESERVE_TOKENS = 2500
+
+# What a request costs when nothing better is known. Deliberately on the
+# high side: over-estimating routes a request to the local model that
+# might have fitted, while under-estimating produces the 429 this exists
+# to avoid.
+DEFAULT_REQUEST_TOKENS = 1200
+
+
+def _parse_duration(text):
+    """Go's duration format ('772ms', '45.6s', '1m26.4s') -> seconds."""
+    text = (text or "").strip()
+    if not text:
+        return 0.0
+    total, number = 0.0, ""
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch.isdigit() or ch == ".":
+            number += ch
+            i += 1
+            continue
+        unit = text[i:i + 2]
+        if unit == "ms":
+            total += float(number or 0) / 1000.0
+            i += 2
+        elif ch == "s":
+            total += float(number or 0)
+            i += 1
+        elif ch == "m":
+            total += float(number or 0) * 60.0
+            i += 1
+        elif ch == "h":
+            total += float(number or 0) * 3600.0
+            i += 1
+        else:
+            i += 1
+        number = ""
+    return total
+
+
+def note_limits(headers):
+    """Record the budget from a response's rate-limit headers.
+
+    Called on every response, including error ones - a 429 carries the
+    headers too, and that is precisely the moment the numbers matter.
+    """
+    try:
+        remaining = headers.get("x-ratelimit-remaining-tokens")
+        reset = headers.get("x-ratelimit-reset-tokens")
+        if remaining is not None:
+            _budget["remaining"] = int(float(remaining))
+        if reset is not None:
+            _budget["resets_at"] = time.monotonic() + _parse_duration(reset)
+    except (TypeError, ValueError):
+        pass
+
+
+def budget_ok(need=DEFAULT_REQUEST_TOKENS, priority=False):
+    """Is there plausibly room for a request of `need` tokens?
+
+    True when nothing is known yet - the first request of a process has
+    to be allowed to discover the budget, and pessimism there would mean
+    never using the fast channel at all.
+
+    `priority` skips the reserve that is held back for paid plans.
+    """
+    if _budget["remaining"] is None:
+        return True
+    if time.monotonic() >= _budget["resets_at"]:
+        # Window has rolled over; the recorded figure is stale and the
+        # budget is full again.
+        return True
+    floor = 0 if priority else PRO_RESERVE_TOKENS
+    return _budget["remaining"] >= need + floor
+
+
+def budget_state():
+    """-> (remaining, seconds_until_reset) for display and diagnostics."""
+    if _budget["remaining"] is None:
+        return None, 0.0
+    left = max(0.0, _budget["resets_at"] - time.monotonic())
+    return _budget["remaining"], left
+
+
+class RateLimited(Exception):
+    """Groq's per-minute token budget is spent.
+
+    Raised rather than yielded, and always before the first chunk, so a
+    caller can still switch providers - once any text has been streamed
+    to the browser it is too late to answer from somewhere else.
+    """
+
+
+# What to ask for when the caller says nothing. "low" rather than the
+# model default: on the questions this app actually gets, low reaches the
+# same answer roughly a third faster and for a third fewer tokens.
+DEFAULT_EFFORT = "low"
+VALID_EFFORTS = ("low", "medium", "high")
+
 _models_cache = {"at": 0.0, "models": None, "error": ""}
 
 
@@ -108,6 +254,7 @@ def models():
         return cached["models"]
     try:
         r = requests.get(API_ROOT + "/models", headers=_headers(), timeout=8)
+        note_limits(r.headers)
         if r.status_code in (401, 403):
             _models_cache.update({
                 "at": now, "models": [],
@@ -128,6 +275,43 @@ def models():
         _models_cache.update({"at": now, "models": out,
                               "error": "could not reach Groq: %s" % e})
         return out
+
+
+def complete(system, user, max_tokens=300, temperature=0.7,
+             effort="low", timeout=15):
+    """One prompt in, one string out. -> text, or "" on any failure.
+
+    stream_chat() is the wrong shape for the short internal calls this
+    app makes on its own behalf - rewriting an image prompt, say - where
+    there is no reader waiting on the first token and a failure should
+    leave the caller's original input untouched rather than surface as a
+    bracketed apology in someone's chat.
+
+    Never raises, and never returns a partial result: every failure path
+    is "" so the caller can fall back to what it already had.
+    """
+    if not configured():
+        return ""
+    body = {
+        "model": PREFERRED[0],
+        "messages": [{"role": "system", "content": system},
+                     {"role": "user", "content": user}],
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "reasoning_effort": effort,
+    }
+    try:
+        r = requests.post(API_ROOT + "/chat/completions", json=body,
+                          headers=_headers(), timeout=timeout)
+        note_limits(r.headers)
+        if r.status_code != 200:
+            return ""
+        choices = r.json().get("choices") or []
+        if not choices:
+            return ""
+        return (choices[0].get("message", {}).get("content") or "").strip()
+    except (requests.exceptions.RequestException, ValueError, KeyError):
+        return ""
 
 
 def _to_messages(history):
@@ -182,15 +366,25 @@ def stream_chat(model, history, options=None, images=None, usage=None):
     if opts.get("num_predict"):
         body["max_tokens"] = int(opts["num_predict"])
 
+    # How long the model thinks before it starts answering. Ollama has no
+    # equivalent, so this arrives under its own name and is simply absent
+    # on that channel rather than being translated into something.
+    effort = opts.get("reasoning_effort", DEFAULT_EFFORT)
+    if effort in VALID_EFFORTS:
+        body["reasoning_effort"] = effort
+
     try:
         with requests.post(API_ROOT + "/chat/completions", json=body,
                            headers=_headers(), stream=True,
                            timeout=120) as r:
+            note_limits(r.headers)
             if r.status_code == 429:
-                yield ("[Groq is rate-limited right now. The free tier "
-                       "allows about 30 requests a minute - try again in "
-                       "a moment, or switch channel.]")
-                return
+                # Raised, not yielded. Nothing has been streamed yet, so
+                # the caller can still answer this from another provider
+                # - which is the whole reason a second one is configured.
+                raise RateLimited(
+                    r.headers.get("retry-after")
+                    or "token budget spent for this minute")
             if r.status_code in (401, 403):
                 yield "[Groq rejected the key (%d).]" % r.status_code
                 return
@@ -230,3 +424,17 @@ def stream_chat(model, history, options=None, images=None, usage=None):
                     usage["eval_count"] = spent.get("completion_tokens")
     except requests.exceptions.RequestException as e:
         yield "[Could not reach Groq: %s]" % e
+
+
+def effort_for(mode, strength):
+    """How hard the model should think, given the bay and the toggle.
+
+    Kept here rather than in app.py because the trade-off it encodes is a
+    property of this provider - it is the only one that charges thinking
+    against a shared per-minute budget.
+    """
+    if mode == "code":
+        # Code has a right answer, and a wrong one costs a debugging
+        # session rather than a re-read. Worth the tokens.
+        return "high" if strength == "deep" else "medium"
+    return "medium" if strength == "deep" else "low"

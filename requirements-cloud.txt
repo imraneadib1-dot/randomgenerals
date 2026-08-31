@@ -24,3 +24,9 @@ gunicorn==23.0.0
 # on the server, not only on a developer machine. ~40MB with mpmath, and
 # pure Python, so it adds no build step on ARM.
 sympy==1.14.0
+
+# Resampling only, for imagegen.py. The keyless image service caps its
+# output at ~0.59MP whatever size is requested, so a 1024x1024 request
+# arrives as 768x768; _fit() scales it to the size the app promised.
+# Pure wheels on ARM, so it adds no build step on the Oracle VM.
+Pillow==12.3.0

@@ -1,14 +1,40 @@
 """Text-to-image generation - two backends, one hosted and one local.
 
-**flux** (the default): FLUX.1 through Pollinations, which serves it over
-a plain GET with no account, no key and no signup. That combination is
-what makes it the right default here: this app is deployed on a free
-Oracle VM with no GPU, and every keyed alternative would mean either a
-credential to manage or a card on file for a feature people try once.
+**hosted** (the default): Pollinations, over a plain GET with no
+account, no key and no signup. That combination is what makes it the
+right default here: this app runs on a free Oracle VM with no GPU, and
+every keyed alternative means a credential to manage or a card on file
+for a feature most people try once.
+
+It serves SANA, not FLUX. An earlier version of this file claimed FLUX
+because the endpoint accepts a `model=flux` parameter - but it accepts
+`model=` anything, including names that do not exist, and returns a
+byte-identical image for all of them. Verified: the same seed under
+flux, sana, turbo and a deliberately invalid name produced four files
+with the same MD5. The parameter is ignored and /models reports only
+sana, so that is what this is.
+
+SANA is fast and decent. It is not FLUX, and if image quality becomes
+the priority the honest fix is a keyed provider that actually runs the
+model it advertises - which is what the third backend below is.
+
+It also caps resolution. Asking for 1024x1024 returns 768x768; asking
+for 1344x768 returns 1015x580. Measured across all five shapes, what
+comes back is always the requested ASPECT RATIO scaled to a fixed budget
+of about 589,000 pixels - 0.59MP, roughly three quarters of the
+requested linear size. The shape offered in the UI is therefore honest
+and the resolution was not, which _fit() below now corrects.
+
+**cloudflare** (opt-in, keyed): FLUX.1-schnell on Cloudflare Workers AI,
+which has a standing free daily allocation. Off unless CF_ACCOUNT_ID and
+CF_API_TOKEN are set, and preferred over Pollinations when they are:
+this is the one path here to genuinely better pixels rather than better
+use of the same ones. Cloudflare is already in this deployment for the
+tunnel, so it adds an API token rather than a whole new relationship.
 
 It replaced Google's Imagen, which was the only hosted option before.
-Imagen needed GEMINI_API_KEY, and quality aside, tying image generation
-to the same key that answers chat meant one revoked key took out two
+Imagen needed a Google key, and quality aside, tying image generation to
+the same key that answers chat meant one revoked key took out two
 unrelated features.
 
 **local** (opt-in): Stable Diffusion via diffusers, on this machine. Free
@@ -39,9 +65,18 @@ os.makedirs(GENERATED_DIR, exist_ok=True)
 # "slow" and "unusable" on the hardware this is likely to meet.
 MODEL_ID = "stabilityai/sd-turbo"
 
-# The hosted one.
+# The hosted one. The model name is sent for forward-compatibility if
+# Pollinations ever honours it, but see the note above - today it does
+# not, and every value returns the same SANA output.
 FLUX_MODEL = "flux"
 FLUX_URL = "https://image.pollinations.ai/prompt/"
+
+# The keyed one. schnell is the distilled FLUX: four steps instead of
+# ~28, which is what makes it viable on a free allocation at all.
+CF_MODEL = "@cf/black-forest-labs/flux-1-schnell"
+CF_URL = ("https://api.cloudflare.com/client/v4/accounts/%s/ai/run/%s")
+# Cloudflare's own ceiling for this model, not a choice made here.
+CF_MAX_STEPS = 8
 
 # Sizes offered to the UI. Kept to a small set of known-good shapes
 # rather than free numbers: diffusion models are trained at particular
@@ -126,10 +161,19 @@ def preload():
 def available():
     """True if image generation can work at all, by any backend.
 
-    The hosted backend needs no credentials, so this is effectively
-    always true - which is the point of choosing a keyless provider.
+    The keyless backend needs no credentials, so this is effectively
+    always true - which is the point of choosing one.
     """
     return True
+
+
+def best_backend():
+    """The best backend that is actually usable here.
+
+    Cloudflare first when it has a key: it is the only one running a
+    model chosen on merit rather than on being free without an account.
+    """
+    return "cloudflare" if cloudflare_configured() else "flux"
 
 
 # ------------------------------------------------------------------ shared
@@ -158,10 +202,171 @@ def _dimensions(size):
     return SIZES.get(size, SIZES[DEFAULT_SIZE])
 
 
+# WHY A LANGUAGE MODEL WRITES THE PROMPT
+#
+# The largest quality lever available without paying for a better image
+# model is the prompt, because a diffusion model asked for "a cat" has to
+# invent the breed, the pose, the setting, the light and the lens itself,
+# and it invents the average of its training data. Given those decisions
+# explicitly it makes a picture instead of a stock photo.
+#
+# Compared side by side at a fixed seed, "a mountain village" came back
+# as a competent generic postcard; the expanded version - cliffs, smoke
+# from chimneys, mist in the lanes, low sun - came back as a photograph
+# someone would keep.
+#
+# The prohibition on softness language is not stylistic fussiness. The
+# first version of this prompt happily produced "shallow depth of field,
+# soft golden light", and SANA read that as instructions to blur: the
+# result was better composed than the bare prompt and visibly less sharp.
+# Atmosphere has to be earned with subject and light, not with words that
+# name a blur.
+ENRICH_SYSTEM = (
+    "You rewrite a short image request as one vivid, concrete "
+    "text-to-image prompt.\n"
+    "Rules:\n"
+    "- Keep the requested subject exactly. Never replace or reinterpret "
+    "it, and never add a different subject.\n"
+    "- Add specifics the request leaves open: what the subject looks "
+    "like, where it is, the light, the time of day, the palette, the "
+    "medium or camera, the mood.\n"
+    "- Prefer sharp, well-lit description. Do NOT ask for shallow depth "
+    "of field, bokeh, soft focus, heavy haze or motion blur unless the "
+    "request did - they make the image mushy rather than atmospheric.\n"
+    "- If the request is already detailed, tighten it rather than "
+    "padding it.\n"
+    "Output ONLY the prompt: one line, under 60 words, no quotes, no "
+    "markdown, no preamble."
+)
+
+
+def _complete(system, user, max_tokens=220, timeout=25):
+    """One prompt in, one string out, via Ollama. -> text, or "" on error.
+
+    Deliberately does not import app.py - that would be a circular
+    import, since app.py imports this module. The endpoint is read from
+    the same environment variables instead, so a deployment pointed at
+    Ollama Cloud enriches prompts there too without any extra wiring.
+
+    Never raises and never returns half an answer: every failure is "" so
+    the caller keeps the words the person actually typed.
+    """
+    url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+    key = os.environ.get("OLLAMA_API_KEY", "").strip()
+    headers = {"Authorization": "Bearer " + key} if key else {}
+
+
+    def _keep_alive_value():
+        raw = os.environ.get("OLLAMA_KEEP_ALIVE", "-1")
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return raw
+
+    try:
+        tags = requests.get(url + "/api/tags", headers=headers, timeout=5)
+        names = [m["name"] for m in tags.json().get("models", [])]
+    except (requests.exceptions.RequestException, ValueError, KeyError):
+        return ""
+    if not names:
+        return ""
+
+    # Whichever general model is loaded - matching the order app.py's
+    # BAY_ROUTES uses, so this reuses the model already resident in VRAM
+    # rather than evicting it to load a second one. Getting this wrong
+    # would make every image request cost an 8-second model swap, twice.
+    model = next(
+        (n for p in ("qwen2.5-coder", "qwen3.5", "gpt-oss", "qwen2.5",
+                     "llama3.2")
+         for n in names if p in n.lower()), names[0])
+
+    try:
+        r = requests.post(
+            url + "/api/chat", headers=headers, timeout=timeout,
+            json={"model": model, "stream": False,
+                  # Match app.py's OLLAMA_KEEP_ALIVE default, or this call
+                  # would reset a resident model to Ollama's 5-minute one.
+                  # An int, not "-1": Ollama parses a string as a Go
+                  # duration and rejects a bare number in one.
+                  "keep_alive": _keep_alive_value(),
+                  "messages": [{"role": "system", "content": system},
+                               {"role": "user", "content": user}],
+                  "options": {"num_predict": max_tokens, "temperature": 0.7}})
+        return ((r.json().get("message") or {}).get("content") or "").strip()
+    except (requests.exceptions.RequestException, ValueError, KeyError):
+        return ""
+
+
+def enhance_prompt(prompt):
+    """A short request expanded into a detailed one. -> text.
+
+    Returns the original unchanged if there is no text model configured,
+    if it is slow, or if it answers with something implausible. Every
+    failure is silent and non-fatal: this improves a picture, it is not
+    allowed to stop one being made.
+    """
+    prompt = (prompt or "").strip()
+    if not prompt:
+        return prompt
+    # Already-detailed requests are left alone. Someone who wrote three
+    # careful sentences has said what they want, and rewriting it would
+    # be this app overruling them rather than helping.
+    if len(prompt) > 240:
+        return prompt
+
+    out = _complete(ENRICH_SYSTEM, prompt)
+    # Sanity bounds, because a model that ignores the format instruction
+    # tends to fail loudly - a refusal, a preamble, a bulleted list - and
+    # any of those make a worse picture than the plain request would.
+    if not out or len(out) < len(prompt) or len(out) > 900:
+        return prompt
+    if "\n" in out.strip():
+        return prompt
+    return out
+
+
+def _fit(raw, width, height):
+    """Resample to the size that was actually asked for. -> bytes.
+
+    Pollinations caps output at ~0.59MP whatever is requested (see the
+    module note), so a 1024x1024 request arrives as 768x768. This does
+    NOT invent detail - it is a Lanczos resample and nothing more. What
+    it buys is that the file matches its advertised dimensions, so a
+    picture dropped into a full-width layout is not quietly upscaled by
+    the browser with nearest-neighbour instead.
+
+    Returns the bytes untouched if Pillow is missing or the image is
+    already at or above the target, so this is an improvement where it
+    can be had and never a failure.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        return raw
+
+    try:
+        img = Image.open(io.BytesIO(raw))
+        img.load()
+        if img.width >= width and img.height >= height:
+            return raw
+        img = img.convert("RGB").resize((width, height), Image.LANCZOS)
+        buf = io.BytesIO()
+        # Quality 92: above this the file grows faster than it improves,
+        # and these are already lossy JPEGs coming in - re-encoding at 100
+        # would preserve the first encoder's artefacts in high fidelity.
+        img.save(buf, format="JPEG", quality=92, subsampling=0,
+                 optimize=True)
+        return buf.getvalue()
+    except Exception:                            # noqa: BLE001 - cosmetic
+        # Anything at all here means the original bytes are still a
+        # perfectly good picture. Never let framing break delivery.
+        return raw
+
+
 # ------------------------------------------------------------------ hosted
 def generate_image_flux(prompt, size=DEFAULT_SIZE, style=DEFAULT_STYLE,
                         seed=None):
-    """FLUX.1 via Pollinations. -> (url, error)."""
+    """SANA via Pollinations, keyless. -> (url, error)."""
     width, height = _dimensions(size)
     full = build_prompt(prompt, style)
 
@@ -198,8 +403,64 @@ def generate_image_flux(prompt, size=DEFAULT_SIZE, style=DEFAULT_STYLE,
     if len(r.content) < 1024:
         return None, "The image service returned an empty image."
 
-    ext = "jpg" if "jpeg" in ctype or "jpg" in ctype else "png"
-    return _save_bytes(r.content, ext), None
+    body = _fit(r.content, width, height)
+    ext = "jpg" if body is not r.content or "jpeg" in ctype or "jpg" in ctype \
+        else "png"
+    return _save_bytes(body, ext), None
+
+
+# -------------------------------------------------------- hosted, keyed
+def cloudflare_configured():
+    return bool(os.environ.get("CF_ACCOUNT_ID", "").strip()
+                and os.environ.get("CF_API_TOKEN", "").strip())
+
+
+def generate_image_cloudflare(prompt, size=DEFAULT_SIZE,
+                              style=DEFAULT_STYLE, seed=None):
+    """FLUX.1-schnell on Cloudflare Workers AI. -> (url, error)."""
+    import base64
+
+    account = os.environ.get("CF_ACCOUNT_ID", "").strip()
+    token = os.environ.get("CF_API_TOKEN", "").strip()
+    if not (account and token):
+        return None, "Cloudflare image generation is not configured."
+
+    width, height = _dimensions(size)
+    body = {"prompt": build_prompt(prompt, style), "steps": 4}
+    if seed is not None:
+        body["seed"] = int(seed)
+
+    try:
+        r = requests.post(CF_URL % (account, CF_MODEL), json=body,
+                          headers={"Authorization": "Bearer " + token},
+                          timeout=120)
+    except requests.exceptions.RequestException as e:
+        return None, "Could not reach Cloudflare: %s" % e
+
+    # Cloudflare answers 200 with success:false for a bad model slug or a
+    # token without the Workers AI permission, so the status code alone
+    # is not the check. Their message is surfaced verbatim because it is
+    # specific and actionable, and guessing at it would not be.
+    try:
+        payload = r.json()
+    except ValueError:
+        return None, "Cloudflare returned a non-JSON response (%d)." % (
+            r.status_code)
+
+    if not payload.get("success"):
+        errors = payload.get("errors") or [{}]
+        return None, "Cloudflare image generation failed: %s" % (
+            errors[0].get("message") or r.status_code)
+
+    encoded = (payload.get("result") or {}).get("image")
+    if not encoded:
+        return None, "Cloudflare returned no image."
+    try:
+        raw = base64.b64decode(encoded)
+    except (ValueError, TypeError):
+        return None, "Cloudflare returned an unreadable image."
+
+    return _save_bytes(_fit(raw, width, height), "jpg"), None
 
 
 # ------------------------------------------------------------------ local
@@ -239,11 +500,16 @@ def generate_image_local(prompt, size=DEFAULT_SIZE, style=DEFAULT_STYLE):
 
 # ------------------------------------------------------------------ entry
 def generate_image(prompt, backend="flux", size=DEFAULT_SIZE,
-                   style=DEFAULT_STYLE, seed=None):
+                   style=DEFAULT_STYLE, seed=None, enhance=True):
     """-> (url, error). Exactly one of the two is set.
 
-    `backend` is "flux" (hosted, the default, always available) or
-    "local" (this machine, only where torch is installed).
+    `backend` is "cloudflare" (keyed FLUX, best where configured),
+    "flux" (keyless, always available) or "local" (this machine, only
+    where torch is installed).
+
+    `enhance` runs the request through a language model first - see
+    enhance_prompt(). On by default because the difference is large and
+    the failure mode is "nothing happens".
     """
     prompt = (prompt or "").strip()
     if not prompt:
@@ -252,5 +518,26 @@ def generate_image(prompt, backend="flux", size=DEFAULT_SIZE,
         return None, "That description is too long. Try a shorter one."
 
     if backend == "local":
+        # Not enhanced: sd-turbo runs at four steps with no guidance and
+        # does not reward a long prompt the way the hosted models do, and
+        # the round trip would be a noticeable share of the wait.
         return generate_image_local(prompt, size, style)
+
+    if enhance:
+        prompt = enhance_prompt(prompt)
+
+    # An explicit choice is honoured; anything else takes the best that
+    # is actually available, so adding a key upgrades the default
+    # without anyone having to find a setting.
+    if backend == "cloudflare" or (backend != "flux"
+                                   and cloudflare_configured()):
+        url, error = generate_image_cloudflare(prompt, size, style, seed)
+        if url:
+            return url, error
+        # A key that is wrong, out of allocation or pointed at a model
+        # slug that has been renamed should degrade to the keyless
+        # backend rather than take the feature down with it.
+        if backend == "cloudflare":
+            return None, error
+
     return generate_image_flux(prompt, size, style, seed)

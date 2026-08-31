@@ -5,20 +5,20 @@
 #
 # WHAT IS AND ISN'T IN HERE
 # No Ollama and no torch/diffusers. These hosts have a couple of shared
-# vCPUs and no GPU: a 7B model would answer at about a word per second
+# vCPUs and no GPU: a 7B model would answer at about a word per second -
+# measured on the Oracle VM, where a three-word reply took 100 seconds -
 # and the local image model would take minutes per picture. Replies come
-# from Gemini instead (gemini.py, already the fallback for when the local
-# machine is off) and image generation from the hosted API that
-# imagegen.gemini_configured() checks for. Everything else - accounts,
-# threads, memory, credits, the sandboxed code runner, web search, and
-# the video bay - runs here unchanged.
+# from Groq instead, and image generation from a keyless hosted API.
+# Everything else - accounts, threads, memory, credits, the sandboxed
+# code runner, web search, and the video bay - runs here unchanged.
 #
 # Skipping torch takes the image from ~2.5GB to ~300MB, which matters
 # every time the host rebuilds it.
 #
 # TWO THINGS TO SET ON THE HOST
-#   GEMINI_API_KEY  without it there is no model to answer with, and
-#                   every prompt fails at the point of asking.
+#   GROQ_API_KEY    without it there is no model to answer with, and
+#                   every prompt fails at the point of asking. Free, no
+#                   card: https://console.groq.com/keys
 #   DB_PATH         point it at a mounted volume, e.g. /data/app.db.
 #                   The container filesystem does not survive a deploy,
 #                   so leaving this at its default means every account,

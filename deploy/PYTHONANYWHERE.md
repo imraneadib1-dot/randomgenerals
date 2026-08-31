@@ -56,7 +56,7 @@ nano .env      # replace PASTE_YOUR_KEY_HERE with the real gsk_... value
 `Ctrl+O`, `Enter`, `Ctrl+X` saves and exits nano.
 
 Optional, only if you use them: `STRIPE_SECRET_KEY`,
-`STRIPE_PRICE_ID_PRO`, `STRIPE_WEBHOOK_SECRET`, `GEMINI_API_KEY`,
+`STRIPE_PRICE_ID_PRO`, `STRIPE_WEBHOOK_SECRET`, `GROQ_API_KEY`,
 `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`.
 
 Leave `ALLOW_MOCK_UPGRADE` out entirely. It hands out Pro for free.

@@ -15,15 +15,17 @@
 # allowance from 4/24GB to 2/12GB in June 2026). That is plenty for the
 # web app and nowhere near enough for a good model: a 7B answers at well
 # under a word a second here, which reads as broken rather than slow. So
-# by default no
-# model is installed and replies come from Gemini, which gemini.py has
-# supported all along as "the cloud fallback for when this machine is
-# off" - and this VM is precisely that case, permanently.
+# by default no model is installed and replies come from Groq.
 #
-# --with-ollama installs Ollama and pulls llama3.2:3b anyway. A 3B on two
-# Ampere cores is slow for anything longer than a sentence. It exists so
-# the "runs on hardware you control" claim can stay literally true if
-# that matters more than speed; Gemini stays the fallback either way.
+# Measured on this VM rather than assumed: llama3.2:3b took 99.6 seconds
+# to produce the first token of "name three primary colours", and
+# qwen2.5-coder:7b did not finish "say hi" inside a 120-second timeout.
+# Those are not slow replies, they are a broken product.
+#
+# --with-ollama installs Ollama and pulls llama3.2:3b anyway. It exists
+# so the "runs on hardware you control" claim can stay literally true if
+# that matters more than speed. Read the numbers above first; Groq stays
+# the one that actually answers either way.
 #
 # Torch and diffusers are skipped regardless: ~1GB of wheels for a local
 # image model that cannot run acceptably on any CPU.
@@ -119,7 +121,7 @@ if [ "$WITH_OLLAMA" = "1" ]; then
   ollama pull llama3.2:3b || warn "model pull failed - run it again by hand"
   ok "ollama serving on 127.0.0.1:11434 with llama3.2:3b"
 else
-  ok "skipping Ollama - replies come from Gemini (see .env)"
+  ok "skipping Ollama - replies come from Groq (see .env)"
 fi
 
 # ---------------------------------------------------------------- secrets
@@ -134,15 +136,24 @@ if [ ! -f "$APP_DIR/.env" ]; then
 SECRET_KEY=$SECRET
 
 # The model. Without this there is nothing to answer with and every
-# prompt fails at the point of asking.
-#   https://aistudio.google.com/apikey
-GEMINI_API_KEY=
+# prompt fails at the point of asking. Free, no card.
+#   https://console.groq.com/keys
+GROQ_API_KEY=
 
 # Local models. Left pointing at localhost either way: with --with-ollama
 # there is an Ollama here to answer, and without one the app finds
-# nothing, reports the local channel as unavailable, and uses Gemini -
+# nothing, reports the local channel as unavailable, and uses Groq -
 # which is the intended behaviour, not a failure.
+#
+# To use Ollama Cloud instead of a local model, point this at
+# https://ollama.com and set OLLAMA_API_KEY from
+# https://ollama.com/settings/keys. Note its catalogue carries neither
+# llava nor llama - vision needs a local llava.
 OLLAMA_URL=http://localhost:11434
+
+# Owner-only /stats page. Your sign-in email; blank means the page 404s
+# for everyone, which is the safe default.
+ADMIN_EMAIL=
 
 # Cloudflare terminates TLS at its edge and forwards over the tunnel, so
 # these two are always right here. TRUST_PROXY is what lets Flask build
@@ -190,7 +201,7 @@ STRIPE_WEBHOOK_SECRET=
 ENVEOF
   chmod 600 "$APP_DIR/.env"
   ok "created $APP_DIR/.env with a fresh SECRET_KEY"
-  warn "fill in GEMINI_API_KEY before starting the service"
+  warn "fill in GROQ_API_KEY before starting the service"
 else
   ok ".env already present (left untouched)"
 fi
@@ -269,8 +280,8 @@ cat <<NEXTEOF
 Next steps - these need your credentials, so they are not automated.
 
   1. Add the model key:
-       nano $APP_DIR/.env          # set GEMINI_API_KEY
-     Get one at https://aistudio.google.com/apikey
+       nano $APP_DIR/.env          # set GROQ_API_KEY
+     Get one at https://console.groq.com/keys (free, no card)
 
   2. Start it and check it locally:
        sudo systemctl start $SERVICE_NAME
