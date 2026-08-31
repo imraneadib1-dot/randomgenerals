@@ -28,12 +28,25 @@ PRO = "pro"
 # also a more honest sell than gating a counter - Pro isn't "the same
 # thing but more of it".
 FREE_MODELS = {
-    "llama3.2",          # fast general chat
-    "qwen2.5-coder",     # code bay - kept free, coding is the core use
+    "gemma3",            # the model this app runs on now
+    "llama3.2",
+    "qwen2.5-coder",
+}
+
+# GATED BY TAG, NOT BY FAMILY
+#
+# gemma3:1b and gemma3:4b are the same family, so the family check below
+# cannot separate them - and they need separating, because the 4b is the
+# one that sees images and thinks harder. Tags are checked first for
+# exactly this case; the family set stays for everything else, where
+# an install's tag ("latest", "7b", "7b-instruct") is unpredictable and
+# gating on it would let a Pro model through under a different name.
+PRO_MODEL_TAGS = {
+    "gemma3:4b",         # multimodal, and the better of the two
 }
 PRO_MODELS = {
-    "qwen2.5",           # the accurate general model (7B instruct)
-    "llava",             # vision: actually *sees* attached images
+    "qwen2.5",           # kept: an install that still has it
+    "llava",
 }
 
 FEATURES = {
@@ -126,8 +139,10 @@ def model_allowed(plan, model_name):
     into Ollama shouldn't be locked out of their own machine. Only the
     explicitly premium families are restricted.
     """
-    family = _model_family(model_name)
-    if family in PRO_MODELS:
+    name = (model_name or "").strip().lower()
+    if name in PRO_MODEL_TAGS:
+        return normalize_plan(plan) == PRO
+    if _model_family(name) in PRO_MODELS:
         return normalize_plan(plan) == PRO
     return True
 

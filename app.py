@@ -2122,27 +2122,33 @@ def get_credits():
 # models and none of them llava).
 BAY_ROUTES = {
     "code": [
-        ("ollama", "qwen2.5-coder"),
+        ("ollama", "gemma3:1b"),
         ("groq", "gpt-oss-120b"),
+        ("ollama", "gemma3"),
         ("ollama", "qwen3.5"),          # Ollama Cloud
         ("ollama", "gpt-oss"),          # Ollama Cloud
-        ("ollama", "qwen2.5"),
-        ("ollama", "llama3.2"),
+        ("ollama", "qwen2.5-coder"),
     ],
     # Same local entry as code, on purpose. See above.
     "chat": [
-        ("ollama", "qwen2.5-coder"),
+        ("ollama", "gemma3:1b"),
         ("groq", "gpt-oss-120b"),
+        ("ollama", "gemma3"),
         ("ollama", "qwen3.5"),          # Ollama Cloud
         ("ollama", "gpt-oss"),          # Ollama Cloud
         ("ollama", "qwen2.5"),
-        ("ollama", "llama3.2"),
     ],
     # Reading an attached image, not generating one - the Image bay's
     # pictures come from imagegen.py and never touch a chat model.
+    #
+    # gemma3:4b replaced llava:7b here. It is multimodal, it answered a
+    # test image correctly, and it does so at 6.98 tok/s against llava's
+    # ~3.7 - so the smaller model is both faster AND the one that lets
+    # this box hold only Gemma.
     "vision": [
+        ("ollama", "gemma3:4b"),
+        ("ollama", "gemma3"),
         ("ollama", "llava"),
-        ("ollama", "gemma4"),           # Ollama Cloud - multimodal
     ],
 }
 
@@ -2280,6 +2286,9 @@ def list_providers():
 # aim is a clear capability ladder, not hiding what this is built on.
 MODEL_DISPLAY_NAMES = {
     # local
+    "gemma3:1b": ("Swift", "Fastest replies - the default here"),
+    "gemma3:4b": ("Sight", "Sees attached images, thinks a little harder"),
+    "gemma3": ("Gemma", "Google's open model, running on this server"),
     "llama3.2": ("Swift", "Fastest replies, lighter reasoning"),
     "qwen2.5-coder": ("Coder", "Tuned for writing and debugging code"),
     "qwen2.5": ("Core", "Best local accuracy for general questions"),
