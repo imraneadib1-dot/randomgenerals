@@ -1872,6 +1872,69 @@ def get_credits():
 # ----------------------------------------------------------------------
 # Provider / model discovery
 # ----------------------------------------------------------------------
+# WHICH MODEL ANSWERS WHICH BAY
+#
+# Ranked preferences, best first. Every entry is (provider, name-pattern)
+# and the first one that is actually present and working wins, so the
+# same table serves a laptop with four local models and a GPU-less VM
+# with none - it simply falls further down the list.
+#
+# The order is set by measurement on the deployment this runs on, not by
+# which model is nominally strongest. On the Oracle VM (two ARM cores, no
+# GPU) a 7B answers at about 3.5 tokens a second - a 417-token code reply
+# took 194 seconds - while Groq returns the same answer in about one. So
+# hosted comes first for the bays where waiting is the thing you notice,
+# and local sits underneath as a deliberate choice rather than a default.
+#
+# Vision is the exception that decides its own order: Groq's catalogue
+# has no model that can see an image, so the choice there is Gemini or a
+# local llava, and Gemini wins on speed by two orders of magnitude.
+BAY_ROUTES = {
+    "code": [
+        ("groq", "gpt-oss-120b"),
+        ("gemini", "gemini-2.5-pro"),
+        ("gemini", "gemini-2.5-flash"),
+        ("ollama", "qwen2.5-coder"),
+        ("ollama", "llama3.2"),
+    ],
+    "chat": [
+        ("groq", "gpt-oss-120b"),
+        ("gemini", "gemini-2.5-flash"),
+        ("ollama", "llama3.2"),
+        ("ollama", "qwen2.5"),
+    ],
+    # Reading an attached image, not generating one - the Image bay's
+    # pictures come from imagegen.py and never touch a chat model.
+    "vision": [
+        ("gemini", "gemini-2.5-flash"),
+        ("gemini", "gemini-2.5-pro"),
+        ("ollama", "llava"),
+    ],
+}
+
+
+def _recommended_routes(providers):
+    """-> {bay: {"provider": id, "model": name}} for what is live now.
+
+    Resolved from the live provider list rather than assumed, so a
+    channel that is rate-limited, unconfigured or simply absent is
+    skipped instead of being recommended and then failing.
+    """
+    by_id = {p["id"]: p for p in providers if p.get("available")}
+    out = {}
+    for bay, ranked in BAY_ROUTES.items():
+        for provider_id, pattern in ranked:
+            provider = by_id.get(provider_id)
+            if not provider:
+                continue
+            match = next(
+                (m for m in provider["models"] if pattern in m.lower()), None)
+            if match:
+                out[bay] = {"provider": provider_id, "model": match}
+                break
+    return out
+
+
 @app.route("/api/providers", methods=["GET"])
 def list_providers():
     providers = [ollama_provider()]
@@ -1916,6 +1979,7 @@ def list_providers():
         providers = live
 
     return jsonify({
+        "recommended": _recommended_routes(providers),
         "providers": providers,
         # Kept under its old name because the frontend reads it to decide
         # whether to offer a second image backend at all. It now means

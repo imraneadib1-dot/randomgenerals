@@ -428,8 +428,25 @@ function showEmptyState() {
 // slower model made every-day use feel broken. qwen2.5 is still there
 // in the dropdown for anyone who wants to pick it on purpose and knows
 // they're paying a one-time load cost for it.
+// What the server says should answer this bay, resolved against what is
+// actually live - see BAY_ROUTES in app.py. Populated by loadProviders().
+let recommended = {};
+
 function preferredModel(models, bay) {
   if (!models.length) return null;
+
+  // The server's choice wins when it applies to the channel in use. It
+  // is the only party that can rank across channels, because it is the
+  // only one that knows a local 7B answers at 3.5 tokens a second here
+  // while a hosted model answers in one - a name-matching heuristic in
+  // the browser cannot see any of that.
+  const route = recommended[bay];
+  if (route && route.provider === activeProvider
+      && models.includes(route.model)) {
+    return route.model;
+  }
+
+  // Fallback for a channel the table does not cover: match on the name.
   const isCoder = (m) => /coder|code/i.test(m);
   if (bay === "code") return models.find(isCoder) || models[0];
 
@@ -450,12 +467,11 @@ function applyPreferredModel(bay) {
   if (preferred) modelSelect.value = preferred;
 }
 
-// With a single channel there is nothing to choose between, so this
-// always declines to express a preference. Kept rather than deleted
-// because selectBay() and loadProviders() both consult it, and it is
-// where a preference would go if another channel is ever added.
-function preferredProviderFor(_bay) {
-  return null;
+// Which channel should answer this bay. The server ranks them against
+// what is live (BAY_ROUTES in app.py); this just reads the answer.
+function preferredProviderFor(bay) {
+  const route = recommended[bay];
+  return route ? route.provider : null;
 }
 
 function selectBay(bay) {
@@ -739,6 +755,7 @@ async function loadProviders() {
     const res = await fetch("/api/providers");
     const data = await res.json();
     providers = data.providers || [];
+    recommended = data.recommended || {};
     renderChannelRow();
 
     geminiConfigured = !!data.gemini_configured;
