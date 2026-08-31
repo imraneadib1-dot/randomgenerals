@@ -2191,12 +2191,16 @@ def _groq_has_room(plan):
 threading.Thread(target=_warm_providers, daemon=True).start()
 
 
-def _recommended_routes(providers):
+def _recommended_routes(providers, plan=None):
     """-> {bay: {"provider": id, "model": name}} for what is live now.
 
     Resolved from the live provider list rather than assumed, so a
     channel that is rate-limited, unconfigured or simply absent is
     skipped instead of being recommended and then failing.
+
+    Models this plan may not run are skipped for the same reason. A
+    recommendation the recipient cannot act on is worse than none: it is
+    what put a free session on gemma3:4b and then refused the message.
     """
     by_id = {p["id"]: p for p in providers if p.get("available")}
     # On hardware that cannot run the model at a usable speed, the app's
@@ -2220,7 +2224,9 @@ def _recommended_routes(providers):
             if not provider:
                 continue
             match = next(
-                (m for m in provider["models"] if pattern in m.lower()), None)
+                (m for m in provider["models"]
+                 if pattern in m.lower()
+                 and features.model_allowed(plan, m)), None)
             if match:
                 out[bay] = {"provider": provider_id, "model": match}
                 break
@@ -2241,7 +2247,8 @@ def list_providers():
     # walked into: see groq_api.budget_ok() and the failover in
     # _stream_reply(). It no longer has to be reliable on its own,
     # because Ollama catches every request it cannot take.
-    providers = [ollama_provider()]
+    plan = features.normalize_plan(current_account()[0].get("plan"))
+    providers = [ollama_provider(plan)]
     if groq_api.configured():
         groq_models = groq_api.models()
         remaining, resets_in = groq_api.budget_state()
@@ -2256,7 +2263,7 @@ def list_providers():
             "label": "RandomGenerals AI Turbo",
             "available": bool(groq_models),
             "models": groq_models,
-            "model_info": [describe_model(m) for m in groq_models],
+            "model_info": [describe_model(m, plan) for m in groq_models],
             "note": note,
         })
 
@@ -2265,7 +2272,7 @@ def list_providers():
         providers = live
 
     return jsonify({
-        "recommended": _recommended_routes(providers),
+        "recommended": _recommended_routes(providers, plan),
         "providers": providers,
         # Whether there is a SECOND image backend (Stable Diffusion on
         # this machine) to choose between, the hosted one being always
@@ -2304,9 +2311,16 @@ MODEL_DISPLAY_NAMES = {
 }
 
 
-def describe_model(model_id):
-    """-> {id, name, blurb}. Falls back to the raw id for anything not in
-    the table, so a model the user pulls themselves still appears."""
+def describe_model(model_id, plan=None):
+    """-> {id, name, blurb, locked}. Falls back to the raw id for anything
+    not in the table, so a model the user pulls themselves still appears.
+
+    `locked` is the fix for a specific bad moment: the picker used to
+    list every model the server had, the frontend would auto-select one,
+    and the server would then refuse it with "that is a Pro model". The
+    app offered something and then told you off for taking it. Whether a
+    model is usable is the server's knowledge, so the server says it.
+    """
     key = model_id.split(":")[0].strip().lower()
     name, blurb = MODEL_DISPLAY_NAMES.get(
         model_id, MODEL_DISPLAY_NAMES.get(key, (None, None)))
@@ -2314,6 +2328,7 @@ def describe_model(model_id):
         "id": model_id,
         "name": name or model_id,
         "blurb": blurb or "",
+        "locked": not features.model_allowed(plan, model_id),
     }
 
 
@@ -2341,7 +2356,7 @@ def ollama_reachable():
     return ok
 
 
-def ollama_provider():
+def ollama_provider(plan=None):
     """The Ollama-served models. Kept as a function rather than a
     hardcoded dict so /api/providers reflects reality if Ollama isn't
     running or has no models pulled.
@@ -2386,7 +2401,7 @@ def ollama_provider():
         "label": "RandomGenerals AI",
         "available": available and bool(models),
         "models": models,
-        "model_info": [describe_model(m) for m in models],
+        "model_info": [describe_model(m, plan) for m in models],
         "note": note,
     }
 

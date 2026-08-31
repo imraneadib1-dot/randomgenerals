@@ -438,8 +438,29 @@ function showEmptyState() {
 // actually live - see BAY_ROUTES in app.py. Populated by loadProviders().
 let recommended = {};
 
-function preferredModel(models, bay) {
-  if (!models.length) return null;
+// Which models this plan may actually run, from /api/providers. The
+// browser cannot work this out - it does not know the plan rules - so it
+// is told, and every automatic choice below filters through it.
+function unlockedModels(models) {
+  const p = providers.find((x) => x.id === activeProvider);
+  const info = (p && p.model_info) || [];
+  const locked = new Set(
+    info.filter((m) => m.locked).map((m) => m.id),
+  );
+  const open = models.filter((m) => !locked.has(m));
+  // If every model is locked, return the full list rather than nothing:
+  // an empty picker is a worse failure than one that shows a model the
+  // server will explain is Pro.
+  return open.length ? open : models;
+}
+
+function preferredModel(all, bay) {
+  if (!all.length) return null;
+  // THE BUG THIS CLOSES: the fallbacks below match on name, and a name
+  // cannot tell you a model is paid. gemma3:4b reads as a perfectly
+  // ordinary general model, and being first in the list it was what a
+  // free session landed on - then every message was refused as Pro.
+  const models = unlockedModels(all);
 
   // The server's choice wins when it applies to the channel in use. It
   // is the only party that can rank across channels, because it is the
@@ -460,6 +481,7 @@ function preferredModel(models, bay) {
   const isGeneral = (m) => !isCoder(m) && !isVision(m);
 
   return (
+    models.find((m) => /gemma3/i.test(m)) ||
     models.find((m) => /llama3\.2/i.test(m)) ||
     models.find(isGeneral) ||
     models[0]
@@ -709,8 +731,20 @@ function selectProvider(id) {
   // `value="${m}"` unescaped lets a name containing a double quote break
   // out of the attribute. new Option() assigns them as data, so there is
   // no markup context to escape from in the first place.
+  // Locked models stay VISIBLE and disabled rather than being hidden.
+  // Hiding them would make Pro invisible to the people it is sold to;
+  // disabling them makes the ceiling legible without letting anyone walk
+  // into it. The label carries the reason, since a greyed row with no
+  // explanation reads as a bug.
+  const info = new Map((p.model_info || []).map((m) => [m.id, m]));
   modelSelect.replaceChildren(
-    ...p.models.map((m) => new Option(m, m)),
+    ...p.models.map((m) => {
+      const meta = info.get(m);
+      const opt = new Option(
+        meta && meta.locked ? `${m} — Pro` : m, m);
+      if (meta && meta.locked) opt.disabled = true;
+      return opt;
+    }),
   );
   modelSelect.disabled = p.models.length === 0;
   channelNote.textContent = p.models.length
