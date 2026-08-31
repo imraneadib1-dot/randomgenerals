@@ -37,7 +37,7 @@ import stats  # noqa: E402  owner-only usage figures - see stats.py
 import groq_api  # noqa: E402  fast open-weight models - see groq_api.py
 import openai_api  # noqa: E402  OpenAI-compatible API - see openai_api.py
 import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
-import videoedit  # noqa: E402  ffmpeg-backed video bay - see videoedit.py
+import pixverse  # noqa: E402  text-to-video generation - see pixverse.py
 
 # The one AI this app talks to: Ollama, running locally (llama3.2 pulled
 # already). Runs fully on this machine - no cloud call, no API key - but
@@ -2852,310 +2852,156 @@ def generate_image_route():
 
 
 # ----------------------------------------------------------------------
-# Video bay - upload, read the request, render.
+# Video generation - PixVerse, see pixverse.py.
 #
-# The prompt is the interface: someone writes what they want changed in
-# their own words, and a model turns that sentence into a list of
-# operations. What makes handing a language model a video editor safe is
-# that it never writes ffmpeg arguments. It picks op names and numbers
-# from a fixed vocabulary, and videoedit.validate() checks every one
-# against a table of types and ranges before a filter string exists. An
-# invented filter - hallucinated, or smuggled in through the prompt -
-# is not in the table and is dropped with a note.
+# This replaced a video EDITOR that ran ffmpeg on the server. The editor
+# was removed rather than kept alongside: on a two-core VM with no GPU a
+# re-encode of anything longer than a short clip took tens of minutes,
+# which is not a slow feature, it is a broken one.
 #
-# Everything expensive is capped inside videoedit.py, because encoding
-# saturates a core and this app is served from one laptop. The routes
-# here add only what needs a request context: who is asking, and which
-# model reads the sentence.
+# What replaces it is not the same product. Generation makes short clips
+# from a description; it cannot trim, cut or caption footage somebody
+# already has. That capability is gone, deliberately.
+#
+# Unlike every other feature here, each call spends real money, so this
+# is Pro-only and metered by a hard monthly count rather than credits -
+# see the note at the top of pixverse.py for why those must not be the
+# same pool.
 # ----------------------------------------------------------------------
-VIDEO_NAME_RE = re.compile(r"^[a-f0-9]{12}-[a-f0-9]{12}\.[a-z0-9]{2,4}$")
-VIDEO_PLAN_TIMEOUT = 90
-
-# Preference order for reading an edit request locally. This is parsing
-# with a fixed output shape rather than open conversation, which is what
-# the coder-tuned model is best at; the others are here so a machine
-# with only one of them pulled still works.
-VIDEO_PLAN_MODELS = ("qwen2.5-coder", "qwen2.5", "llama3.2")
+VIDEO_JOBS = {}
+VIDEO_JOBS_LOCK = threading.Lock()
 
 
-def _video_owner_tag(owner=None):
-    """A short tag for whoever uploaded a clip, mixed into its filename.
-
-    Uploads are addressed by name in every later call, which makes the
-    name a capability: without this, one person's `name` in an /edit body
-    would reach another person's file. Signed with the app secret rather
-    than being a plain hash of the id, so it cannot be computed for
-    somebody else.
-    """
-    owner = owner or current_owner_id()
-    # secret_key is typed str | bytes | None. It is always set at import
-    # time above, but signing with a None key would silently become a
-    # forgeable tag rather than an error, so this asserts the shape it
-    # needs instead of assuming it.
-    secret = app.secret_key or ""
-    key = secret if isinstance(secret, bytes) else secret.encode("utf-8")
-    return hmac.new(key,
-                    ("video:" + owner).encode("utf-8"),
-                    "sha256").hexdigest()[:12]
+def _video_month():
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m")
 
 
-def _video_source(name):
-    """Resolve an upload name from a request body. -> (path, error).
-
-    The regex is the path-traversal defence and the tag is the ownership
-    one; neither substitutes for the other.
-    """
-    name = str(name or "")
-    if not VIDEO_NAME_RE.match(name):
-        return None, "That clip reference isn't valid. Upload the file again."
-    if not name.startswith(_video_owner_tag() + "-"):
-        return None, "That clip belongs to a different session. Upload it again."
-    path = os.path.join(videoedit.UPLOAD_DIR, name)
-    if not os.path.exists(path):
-        return None, "That clip is no longer on the server. Upload it again."
-    return path, None
-
-
-def _video_planner():
-    """A one-shot completion for reading an edit request, or None.
-
-    Local first, and not only on principle: this is a short call with a
-    fixed output shape, which is what a small local model is good at, and
-    it keeps the description of someone's footage on the machine the
-    footage is on. Returning None is not a neutral failure - it drops the
-    prompt box back to the regex patterns, and from outside that looks
-    like the app ignoring most of what you asked for - so this is worth
-    keeping working.
-    """
-    if ollama_reachable():
-        models = ollama_provider()["models"]
-        if models:
-            model = next(
-                (m for want in VIDEO_PLAN_MODELS for m in models
-                 if m.split(":")[0] == want),
-                models[0])
-
-            def complete_local(prompt):
-                r = requests.post(
-                    f"{OLLAMA_URL}/api/generate",
-                    headers=ollama_headers(),
-                    json={
-                        "model": model,
-                        "prompt": prompt,
-                        "stream": False,
-                        # Deterministic on purpose: this is parsing, not
-                        # writing. The same sentence should produce the
-                        # same edit every time someone runs it.
-                        "options": {"temperature": 0},
-                        "keep_alive": OLLAMA_KEEP_ALIVE,
-                    },
-                    timeout=VIDEO_PLAN_TIMEOUT,
-                )
-                r.raise_for_status()
-                return r.json().get("response") or ""
-
-            return complete_local
-
-    # No cloud planner any more. Returning None is already the "plan it
-    # with regex rules instead" path that videoedit.plan() falls back to,
-    # so an unreachable Ollama degrades the edit planning rather than
-    # failing the render.
-    return None
+def _video_quota_view(owner_id, plan):
+    allowed = features.video_quota_for(plan)
+    used = db.video_used(owner_id, _video_month()) if allowed else 0
+    return {
+        "allowed": features.video_allowed(plan),
+        "used": used,
+        "limit": allowed,
+        "remaining": max(0, allowed - used),
+        "month": _video_month(),
+    }
 
 
 @app.route("/api/video/status", methods=["GET"])
 def video_status():
-    # Called whenever the app page loads, which makes it the natural
-    # place to sweep stale renders: they are served as ordinary static
-    # files and nothing else would ever remove them.
-    videoedit.prune()
-    if not videoedit.available():
-        return jsonify({"available": False,
-                        "reason": videoedit.unavailable_reason()})
+    """What the bay should render before anyone types anything."""
+    account, _ = current_account()
+    plan = features.normalize_plan(account.get("plan"))
     return jsonify({
-        "available": True,
-        "reason": "",
-        "max_upload_mb": videoedit.MAX_UPLOAD_BYTES // (1024 * 1024),
-        "max_input_seconds": videoedit.MAX_INPUT_SECONDS,
-        "max_output_seconds": videoedit.MAX_OUTPUT_SECONDS,
-        "captions": videoedit.captions_available(),
-        # So the UI can say the prompt box is only pattern-matching
-        # rather than letting people discover it a failed request later.
-        "planner": _video_planner() is not None,
+        "configured": pixverse.configured(),
+        "quota": _video_quota_view(current_owner_id(), plan),
+        "max_seconds": pixverse.MAX_SECONDS,
+        "min_seconds": pixverse.MIN_SECONDS,
+        "default_seconds": pixverse.DEFAULT_SECONDS,
+        "qualities": list(pixverse.QUALITIES),
+        "ratios": list(pixverse.RATIOS),
     })
 
 
-@app.route("/api/video/upload", methods=["POST"])
-def video_upload():
-    if not videoedit.available():
-        return jsonify({"error": videoedit.unavailable_reason()}), 503
-
-    f = request.files.get("file")
-    if not f or not f.filename:
-        return jsonify({"error": "No file was sent."}), 400
-
-    ext = os.path.splitext(f.filename)[1].lower()
-    if ext not in videoedit.ALLOWED_EXT:
-        allowed = ", ".join(sorted(e[1:].upper()
-                                   for e in videoedit.ALLOWED_EXT))
-        return jsonify({
-            "error": f"That file type isn't supported. Use {allowed}."
-        }), 400
-
-    # The stored name is generated, never taken from the upload. It is
-    # handed back to the client and quoted in later requests, so a name
-    # the uploader chose would be a path the uploader chose.
-    name = f"{_video_owner_tag()}-{uuid.uuid4().hex[:12]}{ext}"
-    path = os.path.join(videoedit.UPLOAD_DIR, name)
-    f.save(path)
-
-    size = os.path.getsize(path)
-    limit_mb = videoedit.MAX_UPLOAD_BYTES // (1024 * 1024)
-    if size > videoedit.MAX_UPLOAD_BYTES:
-        os.remove(path)
-        return jsonify({
-            "error": f"That file is {size / 1048576:.0f}MB. "
-            f"The limit is {limit_mb}MB."
-        }), 400
-
-    info, err = videoedit.probe(path)
-    if err or not info:
-        os.remove(path)
-        return jsonify({"error": err or "Could not read that video."}), 400
-    if info["duration"] > videoedit.MAX_INPUT_SECONDS:
-        os.remove(path)
-        return jsonify({
-            "error": f"That clip is {info['duration'] / 60:.0f} minutes long. "
-            f"The limit is {videoedit.MAX_INPUT_SECONDS // 60}."
-        }), 400
-
-    info.update({
-        "name": name,
-        "original": f.filename[:120],
-        # Under static/, so the preview element can fetch it directly.
-        # The name is 24 hex characters of which half are unguessable,
-        # which is the same protection the generated images rely on.
-        "url": "/" + videoedit.UPLOAD_DIR.replace(os.sep, "/") + "/" + name,
-    })
-    return jsonify(info)
-
-
-@app.route("/api/video/trim", methods=["POST"])
-def video_trim():
+@app.route("/api/video/generate", methods=["POST"])
+def video_generate():
     payload = request.get_json(force=True, silent=True) or {}
-    path, err = _video_source(payload.get("name"))
-    if err:
-        return jsonify({"error": err}), 400
-
-    raw_scale = payload.get("scale")
-    try:
-        scale = int(raw_scale) if raw_scale else None
-    except (TypeError, ValueError):
-        scale = None
-
-    job_id, err = videoedit.start_trim(
-        current_owner_id(), path,
-        payload.get("start"), payload.get("end"), scale)
-    if err:
-        return jsonify({"error": err}), 400
-    return jsonify({"job": _video_job_view(job_id)})
-
-
-@app.route("/api/video/edit", methods=["POST"])
-def video_edit():
-    payload = request.get_json(force=True, silent=True) or {}
-    path, err = _video_source(payload.get("name"))
-    if err:
-        return jsonify({"error": err}), 400
-
     prompt = (payload.get("prompt") or "").strip()
-    blocked = moderation.check_message(prompt)
+    if not prompt:
+        return jsonify({"error": "Describe the video you want."}), 400
+
+    if not pixverse.configured():
+        return jsonify({
+            "error": "Video generation isn't set up on this server yet.",
+        }), 503
+
+    account, _ = current_account()
+    plan = features.normalize_plan(account.get("plan"))
+    if not features.video_allowed(plan):
+        return jsonify({
+            "error": "Video generation is a Pro feature.",
+            "upgrade_required": True,
+        }), 402
+
+    # The image bar, not the chat one: a generated clip is a published
+    # artefact in exactly the way a generated picture is, and the same
+    # reasoning applies - there is no context in which the output is a
+    # discussion of the thing rather than the thing itself.
+    blocked = moderation.check_image_prompt(prompt)
     if blocked is not None:
         return jsonify({"error": blocked}), 400
 
-    info, err = videoedit.probe(path)
-    if err or not info:
-        return jsonify({"error": err or "Could not read that video."}), 400
-
-    # TWO WAYS IN, ONE RENDERER
-    #
-    # The timeline editor sends ops it built by direct manipulation - a
-    # dragged trim handle, a tapped filter - and there is nothing for a
-    # language model to interpret in that. Sending them through plan()
-    # would mean rendering the ops into a sentence for a model to parse
-    # back into the same ops, which is slower, costs a request, and can
-    # only lose fidelity.
-    #
-    # They still go through validate(), which is the same gate the
-    # planner's output passes. The UI is not trusted just because it is
-    # ours: it is a browser, and every bound in the OPS table has to hold
-    # against a hand-written request either way.
-    direct = payload.get("ops")
-    if isinstance(direct, list) and direct:
-        ops, skipped, err = videoedit.validate(direct, info["duration"])
-        source = "timeline"
-    else:
-        ops, source, skipped, err = videoedit.plan(
-            prompt, info["duration"], complete=_video_planner())
-
-    # A slower encoder preset pins a core for several times longer at the
-    # same footage length, and on a two-core VM that is the scarcest
-    # resource here - so the ceiling is a real capacity limit, not a
-    # paywall bolted onto a setting. Clamped rather than refused: someone
-    # on Free who says "best quality" gets a standard render they can
-    # use, not an error about an option they did not know they picked.
-    plan_name = current_account()[0].get("plan")
-    if ops:
-        for op in ops:
-            if op["op"] == "quality":
-                op["args"]["level"] = features.clamp_video_quality(
-                    plan_name, op["args"]["level"])
-    if err or not ops:
+    owner = current_owner_id()
+    month = _video_month()
+    limit = features.video_quota_for(plan)
+    if db.video_used(owner, month) >= limit:
         return jsonify({
-            "error": err or "Nothing in that maps to an edit I can do.",
-            "skipped": skipped,
-        }), 400
+            "error": "You've used all %d video generations for this month. "
+                     "The count resets on the 1st." % limit,
+            "quota": _video_quota_view(owner, plan),
+        }), 402
 
-    job_id, err = videoedit.start_edit(current_owner_id(), path, ops)
+    # Counted BEFORE the call, not after. Two requests arriving together
+    # would otherwise both pass the check above and both generate, and
+    # the overage is money rather than a rate limit. Refunded below if
+    # PixVerse never accepted the job.
+    db.video_consume(owner, month)
+
+    video_id, err = pixverse.start(
+        prompt,
+        seconds=pixverse.clamp_seconds(payload.get("seconds")),
+        quality=payload.get("quality") or "720p",
+        ratio=payload.get("ratio") or "16:9",
+    )
     if err:
-        return jsonify({"error": err, "skipped": skipped}), 400
+        db.video_refund(owner, month)
+        return jsonify({"error": err,
+                        "quota": _video_quota_view(owner, plan)}), 502
 
+    job_id = uuid.uuid4().hex[:12]
+    with VIDEO_JOBS_LOCK:
+        VIDEO_JOBS[job_id] = {
+            "id": job_id, "owner": owner, "video_id": video_id,
+            "status": "running", "url": None, "error": "",
+            "prompt": prompt, "started": now_iso(),
+        }
     return jsonify({
-        "job": _video_job_view(job_id),
-        "steps": [videoedit.describe(o) for o in ops],
-        "source": source,
-        # What the request asked for that this could not do. Sent even on
-        # success, because a render that quietly does four of five things
-        # is the thing that makes the feature feel arbitrarily capped.
-        "skipped": skipped,
+        "job": {"id": job_id, "status": "running"},
+        "quota": _video_quota_view(owner, plan),
     })
-
-
-def _video_job_view(job_id):
-    """A job as the client should see it - without the owner id, which is
-    internal and nobody else's business."""
-    j = videoedit.job(job_id) or {}
-    j.pop("owner", None)
-    return j
 
 
 @app.route("/api/video/job/<job_id>", methods=["GET"])
 def video_job(job_id):
-    j = videoedit.job(job_id)
-    if not j or j.get("owner") != current_owner_id():
-        # The same answer for "no such job" and "not yours", so this
-        # cannot be used to find out whether an id exists.
-        return jsonify({"error": "Unknown render."}), 404
-    return jsonify({"job": _video_job_view(job_id)})
+    with VIDEO_JOBS_LOCK:
+        job = VIDEO_JOBS.get(job_id)
+        if not job or job["owner"] != current_owner_id():
+            return jsonify({"error": "Unknown job"}), 404
+        job = dict(job)
+
+    if job["status"] == "running":
+        state, url, err = pixverse.result(job["video_id"])
+        if state == "done":
+            job.update({"status": "done", "url": url})
+        elif state == "failed":
+            job.update({"status": "failed", "error": err or "Failed."})
+            # The provider never delivered, so the month's count should
+            # not carry it. Refunded once, at the moment the failure is
+            # first observed - polling again finds status "failed" and
+            # does not reach here a second time.
+            db.video_refund(job["owner"], _video_month())
+        with VIDEO_JOBS_LOCK:
+            if job_id in VIDEO_JOBS:
+                VIDEO_JOBS[job_id].update(job)
+
+    account, _ = current_account()
+    plan = features.normalize_plan(account.get("plan"))
+    view = {k: v for k, v in job.items() if k != "owner"}
+    return jsonify({"job": view,
+                    "quota": _video_quota_view(job["owner"], plan)})
 
 
-# ----------------------------------------------------------------------
-# Code execution - runs AI-written Python in a locked-down subprocess
-# (see codeexec.py for exactly what that does and doesn't protect
-# against). Gated to signed-in accounts only, not guests: this app is
-# reachable over a public tunnel right now and there's no real network
-# isolation without a container, so requiring an account is the actual
-# damage-control measure here, not a formality.
 # ----------------------------------------------------------------------
 @app.route("/api/run-code", methods=["POST"])
 def run_code_route():

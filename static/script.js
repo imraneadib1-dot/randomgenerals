@@ -2374,48 +2374,39 @@ updateEmptyState();
 boot();
 
 /* ----------------------------------------------------------------
-   Video bay — upload, choose a range, export
-   ----------------------------------------------------------------
-   A panel rather than a thread. Trimming is a form with a preview, and
-   forcing it through the chat log would mean inventing a message type
-   for a range slider.
+   Video bay - generation
 
-   The server does the work and owns the limits; this file's job is to
-   keep the two range handles sane, poll the render, and never leave the
-   user looking at a spinner with no idea what is happening.
+   A panel rather than a thread: a clip takes minutes and has settings,
+   which is not a shape the chat log has a message type for.
+
+   This replaced an ffmpeg editor. The important difference for anyone
+   reading this later is that there is no upload and no source file -
+   the only input is a sentence, and the only output is a URL on the
+   provider's CDN. Nothing is stored on our server at all.
+
+   Generation is slow (minutes, not seconds) and costs real money per
+   clip, so two things matter more here than elsewhere: the remaining
+   quota is always on screen, and the wait says what is happening rather
+   than showing an unexplained spinner.
    ---------------------------------------------------------------- */
 const videoBay = document.getElementById("videoBay");
-const videoDrop = document.getElementById("videoDrop");
-const videoFile = document.getElementById("videoFile");
-const videoWork = document.getElementById("videoWork");
-const videoPreview = document.getElementById("videoPreview");
-const videoMeta = document.getElementById("videoMeta");
-const videoStart = document.getElementById("videoStart");
-const videoEnd = document.getElementById("videoEnd");
-const videoStartOut = document.getElementById("videoStartOut");
-const videoEndOut = document.getElementById("videoEndOut");
-const videoSelection = document.getElementById("videoSelection");
-const videoScale = document.getElementById("videoScale");
-const videoGo = document.getElementById("videoGo");
-const videoAsk = document.getElementById("videoAsk");
-const videoPrompt = document.getElementById("videoPrompt");
-const videoRun = document.getElementById("videoRun");
-const videoExamples = document.getElementById("videoExamples");
-const videoPlanEl = document.getElementById("videoPlan");
+const genForm = document.getElementById("genForm");
+const genPrompt = document.getElementById("genPrompt");
+const genRun = document.getElementById("genRun");
+const genSeconds = document.getElementById("genSeconds");
+const genSecondsOut = document.getElementById("genSecondsOut");
+const genRatio = document.getElementById("genRatio");
+const genQuality = document.getElementById("genQuality");
+const genQuotaEl = document.getElementById("genQuota");
+const genLocked = document.getElementById("genLocked");
+const genLockedText = document.getElementById("genLockedText");
+const genSub = document.getElementById("genSub");
 const videoStatusEl = document.getElementById("videoStatus");
 const videoResult = document.getElementById("videoResult");
 const videoOut = document.getElementById("videoOut");
 const videoDownload = document.getElementById("videoDownload");
-const videoLimits = document.getElementById("videoLimits");
 
-let videoClip = null;      // { name, duration, width, height, url }
 let videoPoll = null;
-
-function fmtTime(sec) {
-  const s = Math.max(0, Math.floor(sec % 60));
-  const m = Math.floor(Math.max(0, sec) / 60);
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
 
 function videoSay(msg, isError) {
   if (!videoStatusEl) return;
@@ -2424,372 +2415,192 @@ function videoSay(msg, isError) {
   videoStatusEl.classList.toggle("is-error", !!isError);
 }
 
-async function loadVideoLimits() {
-  if (!videoLimits) return;
-  try {
-    const r = await fetch("/api/video/status");
-    const d = await r.json();
-    if (!d.available) {
-      videoLimits.textContent = d.reason;
-      if (videoDrop) videoDrop.style.pointerEvents = "none";
-      return;
-    }
-    videoLimits.textContent =
-      `MP4, MOV, WebM, MKV or AVI · up to ${d.max_upload_mb}MB and ` +
-      `${Math.round(d.max_input_seconds / 60)} minutes · exports up to ` +
-      `${d.max_output_seconds} seconds`;
-  } catch (_) {
-    /* The drop zone still works; the limits line is just detail. */
-  }
+function renderQuota(q) {
+  if (!genQuotaEl || !q) return;
+  if (!q.allowed) { genQuotaEl.textContent = ""; return; }
+  genQuotaEl.textContent = `${q.remaining} of ${q.limit} left this month`;
 }
 
-function syncRange() {
-  if (!videoClip) return;
-  let a = parseFloat(videoStart.value);
-  let b = parseFloat(videoEnd.value);
-  // Keep the handles from crossing. Whichever moved last gives way, so
-  // dragging past the other one nudges rather than inverting the range.
-  if (a > b - 0.1) {
-    if (document.activeElement === videoStart) a = Math.max(0, b - 0.1);
-    else b = Math.min(videoClip.duration, a + 0.1);
-    videoStart.value = a;
-    videoEnd.value = b;
-  }
-  videoStartOut.textContent = fmtTime(a);
-  videoEndOut.textContent = fmtTime(b);
-  videoSelection.textContent = `${(b - a).toFixed(1)}s selected`;
-  videoGo.disabled = b - a < 0.2;
-}
-
-function seekPreview(t) {
-  if (videoPreview.readyState >= 1) videoPreview.currentTime = t;
-}
-
-async function uploadVideo(file) {
-  if (!file) return;
-  videoSay("Uploading…");
-  videoResult.hidden = true;
-  const fd = new FormData();
-  fd.append("file", file);
-  let d;
-  try {
-    const r = await fetch("/api/video/upload", { method: "POST", body: fd });
-    d = await r.json();
-    if (!r.ok) {
-      videoSay(d.error || "That upload failed.", true);
-      return;
-    }
-  } catch (_) {
-    videoSay("Could not reach the server.", true);
+/* Locking the form rather than hiding the bay. Someone on Free should be
+   able to see what the feature is and what it costs before deciding to
+   pay for it - a bay that simply is not there sells nothing. */
+function applyVideoAccess(d) {
+  const q = d.quota || {};
+  if (!d.configured) {
+    genLocked.hidden = false;
+    genLockedText.textContent =
+      "Video generation isn't switched on for this server yet.";
+    genForm.hidden = true;
     return;
   }
-
-  videoClip = d;
-  videoPreview.src = d.url;
-  videoWork.hidden = false;
-  // Once there is a clip, the drop zone collapses to a slim "replace"
-  // bar. Left at full size it kept more of the panel than the video it
-  // had already accepted, and pushed the prompt box below the fold.
-  const bay = document.getElementById("videoBay");
-  if (bay) bay.classList.add("has-clip");
-  videoStart.max = d.duration;
-  videoEnd.max = d.duration;
-  videoStart.value = 0;
-  videoEnd.value = d.duration;
-  videoMeta.textContent =
-    `${d.original} · ${fmtTime(d.duration)} · ${d.width}×${d.height} · ` +
-    `${d.fps}fps · ${(d.size_bytes / 1048576).toFixed(1)}MB` +
-    (d.has_audio ? "" : " · no audio");
-  syncRange();
-  videoSay("");
+  if (!q.allowed) {
+    genLocked.hidden = false;
+    genLockedText.textContent =
+      "Video generation is a Pro feature - 10 clips a month.";
+    genForm.hidden = true;
+    return;
+  }
+  genLocked.hidden = true;
+  genForm.hidden = false;
+  renderQuota(q);
+  if (genSeconds && d.max_seconds) {
+    genSeconds.max = String(d.max_seconds);
+    genSeconds.min = String(d.min_seconds || 1);
+    genSeconds.value = String(d.default_seconds || 5);
+    genSecondsOut.textContent = genSeconds.value + "s";
+  }
+  if (genSub) {
+    genSub.textContent =
+      `Describe a shot and get it back as a clip, up to ${d.max_seconds}s.`;
+  }
 }
 
-if (videoDrop) {
-  videoDrop.addEventListener("click", () => videoFile.click());
-  videoDrop.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      videoFile.click();
+async function loadVideoLimits() {
+  if (!videoBay) return;
+  try {
+    const r = await fetch("/api/video/status");
+    applyVideoAccess(await r.json());
+  } catch (_) {
+    /* Leave the form as the markup has it. A status call failing is not
+       a reason to take the feature away - the generate call will report
+       anything genuinely wrong, with a real message. */
+  }
+}
+
+if (genSeconds) {
+  genSeconds.addEventListener("input", () => {
+    genSecondsOut.textContent = genSeconds.value + "s";
+  });
+}
+
+const genExamples = document.getElementById("genExamples");
+if (genExamples) {
+  genExamples.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-ex]");
+    if (!b) return;
+    genPrompt.value = b.dataset.ex;
+    genPrompt.focus();
+  });
+}
+
+if (genForm) {
+  genForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const prompt = (genPrompt.value || "").trim();
+    if (!prompt) {
+      videoSay("Describe the video you want.", true);
+      genPrompt.focus();
+      return;
     }
-  });
-  videoFile.addEventListener("change", () => uploadVideo(videoFile.files[0]));
 
-  ["dragenter", "dragover"].forEach((ev) =>
-    videoDrop.addEventListener(ev, (e) => {
-      e.preventDefault();
-      videoDrop.classList.add("is-over");
-    }),
-  );
-  ["dragleave", "drop"].forEach((ev) =>
-    videoDrop.addEventListener(ev, (e) => {
-      e.preventDefault();
-      videoDrop.classList.remove("is-over");
-    }),
-  );
-  videoDrop.addEventListener("drop", (e) => {
-    const f = e.dataTransfer && e.dataTransfer.files[0];
-    if (f) uploadVideo(f);
-  });
-
-  videoStart.addEventListener("input", () => {
-    syncRange();
-    seekPreview(parseFloat(videoStart.value));
-  });
-  videoEnd.addEventListener("input", () => {
-    syncRange();
-    seekPreview(parseFloat(videoEnd.value));
-  });
-
-  videoGo.addEventListener("click", async () => {
-    if (!videoClip) return;
-    videoGo.disabled = true;
+    genRun.disabled = true;
     videoResult.hidden = true;
-    videoSay("Starting…");
+    videoSay("Sending it over…");
+
     let d;
     try {
-      const r = await fetch("/api/video/trim", {
+      const r = await fetch("/api/video/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: videoClip.name,
-          start: parseFloat(videoStart.value),
-          end: parseFloat(videoEnd.value),
-          scale: videoScale.value || null,
+          prompt,
+          seconds: parseInt(genSeconds.value, 10),
+          ratio: genRatio.value,
+          quality: genQuality.value,
         }),
       });
       d = await r.json();
       if (!r.ok) {
-        videoSay(d.error || "Could not start the render.", true);
-        videoUnlock();
+        videoSay(d.error || "Could not start that.", true);
+        if (d.quota) renderQuota(d.quota);
+        // No openUpgrade() exists; a bare `openUpgrade &&` would be a
+        // ReferenceError, not a short-circuit. Point at the plan panel
+        // that is actually in the page instead.
+        if (d.upgrade_required) {
+          const pro = document.getElementById("planProBtn");
+          if (pro) pro.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+        genRun.disabled = false;
         return;
       }
     } catch (_) {
       videoSay("Could not reach the server.", true);
-      videoUnlock();
+      genRun.disabled = false;
       return;
     }
-    videoShowPlan(null);
+
+    if (d.quota) renderQuota(d.quota);
     pollVideoJob(d.job.id);
   });
 }
-
-// What the sentence was read as, shown before the render finishes so a
-// misread prompt is caught by the person rather than by watching the
-// wrong video come out.
-//
-// `skipped` is the half that matters more. A render that quietly does
-// four of the five things someone asked for is what makes a tool feel
-// arbitrarily capped: nothing failed, nothing was said, and the only
-// way to find out is to watch the result and notice an absence. Naming
-// what did not survive turns that into information they can act on -
-// usually by rephrasing the one clause that was not understood.
-function videoShowPlan(steps, source, skipped) {
-  if (!videoPlanEl) return;
-  const hasSteps = steps && steps.length;
-  const hasSkips = skipped && skipped.length;
-  if (!hasSteps && !hasSkips) {
-    videoPlanEl.hidden = true;
-    videoPlanEl.textContent = "";
-    return;
-  }
-  videoPlanEl.hidden = false;
-  videoPlanEl.textContent = "";
-
-  if (hasSteps) {
-    const lead = document.createElement("span");
-    lead.className = "video-plan-lead";
-    lead.textContent = "Doing";
-    videoPlanEl.appendChild(lead);
-    steps.forEach((t) => {
-      const chip = document.createElement("span");
-      chip.className = "video-plan-step";
-      chip.textContent = t;
-      videoPlanEl.appendChild(chip);
-    });
-    if (source === "model") {
-      const note = document.createElement("span");
-      note.className = "video-plan-note";
-      note.textContent = "read by the model";
-      videoPlanEl.appendChild(note);
-    }
-  }
-
-  if (hasSkips) {
-    const row = document.createElement("div");
-    row.className = "video-plan-row";
-    const lead = document.createElement("span");
-    lead.className = "video-plan-lead video-plan-lead-skip";
-    lead.textContent = hasSteps ? "Couldn't" : "Couldn't do";
-    row.appendChild(lead);
-    skipped.forEach((t) => {
-      const chip = document.createElement("span");
-      chip.className = "video-plan-step video-plan-skip";
-      chip.textContent = t;
-      row.appendChild(chip);
-    });
-    videoPlanEl.appendChild(row);
-  }
-}
-
-if (videoAsk) {
-  // Clicking an example fills the box rather than running immediately:
-  // they are there to show the shape of a request, and most people want
-  // to change a number before running it.
-  if (videoExamples) {
-    videoExamples.addEventListener("click", (e) => {
-      const b = e.target.closest("button[data-ex]");
-      if (!b || !videoPrompt) return;
-      videoPrompt.value = b.dataset.ex;
-      videoPrompt.focus();
-      videoPrompt.setSelectionRange(
-        videoPrompt.value.length, videoPrompt.value.length);
-    });
-  }
-
-  // Enter submits, Shift+Enter makes a new line - the same as the chat
-  // composer, so the habit carries between bays.
-  if (videoPrompt) {
-    videoPrompt.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        videoAsk.requestSubmit();
-      }
-    });
-  }
-
-  videoAsk.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    if (!videoClip) return;
-    const text = (videoPrompt.value || "").trim();
-    if (!text) {
-      videoSay("Say what you want changed.", true);
-      videoPrompt.focus();
-      return;
-    }
-
-    videoRun.disabled = true;
-    if (videoGo) videoGo.disabled = true;
-    videoResult.hidden = true;
-    videoShowPlan(null);
-    videoSay("Reading that…");
-
-    let d;
-    try {
-      const r = await fetch("/api/video/edit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: videoClip.name, prompt: text }),
-      });
-      d = await r.json();
-      if (!r.ok) {
-        videoSay(d.error || "Could not start the render.", true);
-        // A rejection can still carry a list of what it could not read,
-        // and that list is usually the explanation for the rejection.
-        videoShowPlan(null, null, d.skipped);
-        videoRun.disabled = false;
-        if (videoGo) videoGo.disabled = false;
-        return;
-      }
-    } catch (_) {
-      videoSay("Could not reach the server.", true);
-      videoRun.disabled = false;
-      if (videoGo) videoGo.disabled = false;
-      return;
-    }
-
-    videoShowPlan(d.steps, d.source, d.skipped);
-    pollVideoJob(d.job.id);
-  });
-}
-
-function videoUnlock() {
-  if (videoGo) videoGo.disabled = false;
-  if (videoRun) videoRun.disabled = false;
-  const apply = document.getElementById("tlApply");
-  if (apply) apply.disabled = false;
-}
-
-/* The timeline editor's way in. Exposed on window rather than imported,
- * because video-editor.js is a plain script and this file owns the three
- * things a render needs and it does not have: which clip is loaded, the
- * job polling, and the result player.
- *
- * Deliberately the same endpoint and the same status/plan/poll path as
- * the prompt box - the only difference is that `ops` travels instead of
- * `prompt`, so there is one render flow to keep working rather than two. */
-window.runVideoOps = async function (ops) {
-  if (!videoClip || !Array.isArray(ops) || !ops.length) return;
-  const apply = document.getElementById("tlApply");
-  if (apply) apply.disabled = true;
-  if (videoRun) videoRun.disabled = true;
-  if (videoGo) videoGo.disabled = true;
-  videoResult.hidden = true;
-  videoShowPlan(null);
-  videoSay("Rendering…");
-
-  let d;
-  try {
-    const r = await fetch("/api/video/edit", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: videoClip.name, ops }),
-    });
-    d = await r.json();
-    if (!r.ok) {
-      videoSay(d.error || "Could not start the render.", true);
-      videoShowPlan(null, null, d.skipped);
-      videoUnlock();
-      return;
-    }
-  } catch (_) {
-    videoSay("Could not reach the server.", true);
-    videoUnlock();
-    return;
-  }
-
-  videoShowPlan(d.steps, d.source, d.skipped);
-  pollVideoJob(d.job.id);
-};
 
 function pollVideoJob(id) {
   clearInterval(videoPoll);
-  // Named stages rather than a percentage: ffmpeg does not report progress
-  // in a form worth trusting, and an invented percentage that sticks at
-  // 90% is worse than an honest label.
-  videoSay("Rendering…");
+  // Minutes, not seconds - so this says so rather than implying it is
+  // nearly done. An invented percentage that sticks is worse than an
+  // honest label.
+  const started = Date.now();
+  videoSay("Generating… this usually takes a minute or two.");
   videoPoll = setInterval(async () => {
-    let j;
+    let j, q;
     try {
       const r = await fetch(`/api/video/job/${id}`);
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || "gone");
       j = d.job;
+      q = d.quota;
     } catch (_) {
       clearInterval(videoPoll);
-      videoSay("Lost track of that render. Try again.", true);
-      videoUnlock();
+      videoSay("Lost track of that one. Check back in a moment.", true);
+      genRun.disabled = false;
       return;
     }
 
-    if (j.status === "running" || j.status === "queued") {
-      videoSay(j.stage === "waiting" ? "Queued…" : "Rendering…");
+    if (q) renderQuota(q);
+
+    if (j.status === "running") {
+      const secs = Math.round((Date.now() - started) / 1000);
+      videoSay(`Generating… ${secs}s so far.`);
       return;
     }
 
     clearInterval(videoPoll);
-    videoUnlock();
+    genRun.disabled = false;
 
     if (j.status === "failed") {
-      videoSay(j.error || "That render failed.", true);
+      videoSay(j.error || "That one didn't work. Your quota wasn't used.",
+               true);
       return;
     }
 
-    videoSay(`Ready — ${j.duration}s, ${(j.size_bytes / 1048576).toFixed(1)}MB`);
+    videoSay("");
     videoOut.src = j.url;
+    // The file lives on the provider's CDN, so this is a link out rather
+    // than a served file. `download` is a hint the browser may ignore
+    // cross-origin, which is why the label says what it is.
     videoDownload.href = j.url;
-    videoDownload.setAttribute("download", `edited-${j.id}.mp4`);
+    videoDownload.setAttribute("target", "_blank");
+    videoDownload.setAttribute("rel", "noopener");
+    videoDownload.setAttribute("download", `video-${j.id}.mp4`);
     videoResult.hidden = false;
-  }, 1200);
+  }, 4000);
+}
+
+// The "See Pro" button in the locked state. Opens the settings panel at
+// the plan section rather than a separate modal, so there is one place
+// in this app where a plan is chosen.
+const genUpgrade = document.getElementById("genUpgrade");
+if (genUpgrade) {
+  genUpgrade.addEventListener("click", (e) => {
+    e.preventDefault();
+    const pro = document.getElementById("planProBtn");
+    if (pro) {
+      const settings = document.getElementById("settingsBtn");
+      if (settings) settings.click();
+      setTimeout(() => pro.scrollIntoView(
+        { behavior: "smooth", block: "center" }), 120);
+    }
+  });
 }
 
 loadVideoLimits();

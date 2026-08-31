@@ -86,6 +86,24 @@ CREATE TABLE IF NOT EXISTS memories (
     created  TEXT NOT NULL
 );
 
+-- Video generations used, per owner, per calendar month.
+--
+-- Deliberately NOT a column on `credits`. Credits refill on a timer and
+-- are meant to be spent; this counts something that costs real money per
+-- use and must not refill, roll over, or be reachable by waiting two
+-- hours. Keeping them in separate tables makes that difference
+-- structural rather than a rule someone has to remember.
+--
+-- `month` is 'YYYY-MM'. Storing the period rather than a reset timestamp
+-- means there is no scheduled job to run and no clock to drift: the row
+-- for a past month simply stops being the one that is read.
+CREATE TABLE IF NOT EXISTS video_quota (
+    owner_id TEXT NOT NULL,
+    month    TEXT NOT NULL,
+    used     INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (owner_id, month)
+);
+
 CREATE TABLE IF NOT EXISTS custom_instructions (
     owner_id TEXT PRIMARY KEY,
     text     TEXT NOT NULL DEFAULT ''
@@ -400,6 +418,45 @@ def delete_verification_code(email):
 # separate conversations, the same idea as ChatGPT's Memory / Custom
 # Instructions.
 # ----------------------------------------------------------------------
+def video_used(owner_id, month):
+    """How many generations this owner has spent in `month`."""
+    conn = _connect()
+    row = conn.execute(
+        "SELECT used FROM video_quota WHERE owner_id=? AND month=?",
+        (owner_id, month)).fetchone()
+    return row["used"] if row else 0
+
+
+def video_consume(owner_id, month):
+    """Record one generation. -> the new total.
+
+    An UPSERT rather than read-modify-write: two requests arriving
+    together would otherwise both read the same count and both write
+    count+1, handing out a free generation to whoever raced.
+    """
+    conn = _connect()
+    with conn:
+        conn.execute(
+            "INSERT INTO video_quota (owner_id, month, used) VALUES (?,?,1) "
+            "ON CONFLICT(owner_id, month) DO UPDATE SET used = used + 1",
+            (owner_id, month))
+    return video_used(owner_id, month)
+
+
+def video_refund(owner_id, month):
+    """Give one back when a generation failed on the provider's side.
+
+    Charging for a clip that never arrived is the kind of thing people
+    remember, and the failure is ours to absorb - PixVerse does not bill
+    us for a rejected prompt either.
+    """
+    conn = _connect()
+    with conn:
+        conn.execute(
+            "UPDATE video_quota SET used = MAX(0, used - 1) "
+            "WHERE owner_id=? AND month=?", (owner_id, month))
+
+
 def load_memories(owner_id):
     conn = _connect()
     rows = conn.execute(

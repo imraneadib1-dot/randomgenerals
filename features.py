@@ -57,12 +57,13 @@ FEATURES = {
         # that a heavy user notices the ceiling.
         "max_memories": 25,
         "max_upload_mb": 20,
-        # --- video bay ---
-        # These are the honest ones. A render pins a core for its whole
-        # duration, and on a two-core VM that is the scarcest resource
-        # here - so the limits are set by what the machine can actually
-        # sustain rather than picked to make Pro look better.
-        "video_max_output_seconds": 60,
+        # --- video ---
+        # Generation costs real money per clip - roughly $0.13 for five
+        # seconds - so unlike everything else here it cannot be free at
+        # any volume. Free sees the bay and is told what it is.
+        "video_generation": False,
+        "video_clips_per_month": 0,
+        "video_max_seconds": 0,
         "video_max_quality": "standard",
         # --- image bay ---
         # The widest shapes are ~25% more pixels, so they cost ~25% more
@@ -88,9 +89,15 @@ FEATURES = {
         "voice": True,
         "max_memories": None,       # unlimited
         "max_upload_mb": 100,
-        # --- video bay ---
-        "video_max_output_seconds": 180,
-        "video_max_quality": "max",
+        # --- video ---
+        # Ten clips a month. At reseller rates that is about $1.30 of
+        # cost against $1.99 of revenue, which is thin but positive - and
+        # it is a hard count, not a credit balance, so it cannot be
+        # drained faster by anyone clever.
+        "video_generation": True,
+        "video_clips_per_month": 10,
+        "video_max_seconds": 8,
+        "video_max_quality": "1080p",
         # --- image bay ---
         "image_sizes": ("square", "portrait", "landscape", "wide", "tall"),
         "terminal_unrestricted": True,
@@ -139,6 +146,15 @@ def fallback_model(plan, requested, available):
         if model_allowed(plan, candidate):
             return candidate
     return None
+
+
+def video_quota_for(plan):
+    """Clips per calendar month for this plan. 0 means not available."""
+    return FEATURES[normalize_plan(plan)]["video_clips_per_month"]
+
+
+def video_allowed(plan):
+    return FEATURES[normalize_plan(plan)]["video_generation"]
 
 
 def normalize_plan(plan):
