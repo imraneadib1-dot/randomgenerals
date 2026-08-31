@@ -2,6 +2,7 @@ from flask import (Flask, render_template, request, Response, jsonify,
                    session, stream_with_context, redirect, url_for, abort)
 from dotenv import load_dotenv
 import hmac
+import time
 import json
 import os
 import re
@@ -699,6 +700,43 @@ USERS = load_users()
 threading.Thread(target=imagegen.preload, daemon=True).start()
 
 
+# IS THIS MACHINE ACTUALLY ABLE TO HOST THE MODEL?
+#
+# The answer differs so completely between deployments that hardcoding
+# either one is wrong. On the development laptop - an RTX 5050 - the
+# local model answers in 0.09s once resident, comfortably faster than the
+# hosted channel. On the Oracle VM, two ARM cores and no GPU, the same
+# question took 99.6 seconds and a 7B did not finish inside two minutes.
+#
+# So the preference order in BAY_ROUTES puts the app's own model first,
+# and this decides whether that preference is honoured. The warm-up at
+# boot already issues a real request; timing it costs nothing and answers
+# the question directly, rather than inferring it from a CPU count or a
+# GPU probe that would be wrong on the next host.
+_local_speed = {"warm_seconds": None}
+
+# A warm-up slower than this means the model loads and generates too
+# slowly for anyone to sit through. Generous on purpose: it has to clear
+# a cold model load, which is seconds even on good hardware, and the cost
+# of being wrong in the strict direction is routing away from a machine
+# that was fine.
+LOCAL_WARM_BUDGET_SECONDS = 25.0
+
+
+def _local_is_fast():
+    """Whether the local model should be the default anyone lands on.
+
+    Unknown means yes. The warm-up may not have finished on the first
+    request after boot, and assuming the worst there would send the very
+    first visitor to the hosted channel on a machine that runs the model
+    perfectly well.
+    """
+    seconds = _local_speed["warm_seconds"]
+    if seconds is None:
+        return True
+    return seconds <= LOCAL_WARM_BUDGET_SECONDS
+
+
 def _warm_providers():
     """Load the workhorse model at boot instead of in someone's request.
 
@@ -738,6 +776,7 @@ def _warm_providers():
         if not match:
             continue
         try:
+            started = time.monotonic()
             requests.post(
                 f"{OLLAMA_URL}/api/chat", headers=ollama_headers(),
                 json={
@@ -755,8 +794,12 @@ def _warm_providers():
                     "options": {"num_predict": 1, "num_ctx": 8192},
                 },
                 timeout=300)
+            # The warm-up is already a real request, so timing it is free
+            # and gives the one number that decides whether this hardware
+            # can host the product - see _local_is_fast().
+            _local_speed["warm_seconds"] = time.monotonic() - started
         except requests.exceptions.RequestException:
-            pass
+            _local_speed["warm_seconds"] = None
         return
 
 
@@ -2079,8 +2122,8 @@ def get_credits():
 # models and none of them llava).
 BAY_ROUTES = {
     "code": [
-        ("groq", "gpt-oss-120b"),
         ("ollama", "qwen2.5-coder"),
+        ("groq", "gpt-oss-120b"),
         ("ollama", "qwen3.5"),          # Ollama Cloud
         ("ollama", "gpt-oss"),          # Ollama Cloud
         ("ollama", "qwen2.5"),
@@ -2088,8 +2131,8 @@ BAY_ROUTES = {
     ],
     # Same local entry as code, on purpose. See above.
     "chat": [
-        ("groq", "gpt-oss-120b"),
         ("ollama", "qwen2.5-coder"),
+        ("groq", "gpt-oss-120b"),
         ("ollama", "qwen3.5"),          # Ollama Cloud
         ("ollama", "gpt-oss"),          # Ollama Cloud
         ("ollama", "qwen2.5"),
@@ -2150,9 +2193,23 @@ def _recommended_routes(providers):
     skipped instead of being recommended and then failing.
     """
     by_id = {p["id"]: p for p in providers if p.get("available")}
+    # On hardware that cannot run the model at a usable speed, the app's
+    # own channel is skipped for the DEFAULT only. It stays in the picker
+    # and still answers if someone chooses it deliberately - the judgement
+    # here is about what a visitor should land on without asking, not
+    # about what they are allowed to have.
+    skip_local = not _local_is_fast()
     out = {}
     for bay, ranked in BAY_ROUTES.items():
+        # Only skip local where something else in this bay could answer.
+        # Vision is the case that matters: Groq has no model that can see
+        # an image, so llava is not merely preferred there, it is the only
+        # option - and skipping it left the bay with no route at all.
+        has_alternative = any(
+            pid != "ollama" and pid in by_id for pid, _ in ranked)
         for provider_id, pattern in ranked:
+            if skip_local and has_alternative and provider_id == "ollama":
+                continue
             provider = by_id.get(provider_id)
             if not provider:
                 continue
@@ -2190,7 +2247,7 @@ def list_providers():
                     "off-device, so prompts leave this machine.")
         providers.append({
             "id": "groq",
-            "label": "Fast cloud",
+            "label": "RandomGenerals AI Turbo",
             "available": bool(groq_models),
             "models": groq_models,
             "model_info": [describe_model(m) for m in groq_models],
@@ -2280,12 +2337,19 @@ def ollama_provider():
     hardcoded dict so /api/providers reflects reality if Ollama isn't
     running or has no models pulled.
 
-    The label is computed, not fixed. "On this machine" is a claim about
-    where someone's prompt goes, and it stops being true the moment
-    OLLAMA_URL points at Ollama Cloud - which is a supported way to run
-    this. Showing the old label then would be the app lying about the one
-    thing it sells itself on, so the name and the note both follow the
-    endpoint.
+    THE LABEL IS THE PRODUCT NAME, THE NOTE IS THE TRUTH
+
+    Both channels are called RandomGenerals AI, because that is what this
+    is - a visitor did not come here to choose between vendors, and a
+    picker offering "Cloud" and "Fast cloud" was advertising suppliers
+    instead of the thing they came for.
+
+    What must not be lost in that is where a prompt actually goes, so
+    every label carries a note that says it plainly, and the note is
+    computed rather than fixed: "on our own hardware" stops being true
+    the moment OLLAMA_URL points at Ollama Cloud, which is a supported
+    way to run this. Branding decides the name; the endpoint decides the
+    sentence underneath it.
     """
     models, available = [], False
     try:
@@ -2299,17 +2363,18 @@ def ollama_provider():
 
     remote = ollama_is_remote()
     if models:
-        note = ("Served by Ollama Cloud, so prompts leave this machine."
-                if remote else None)
+        note = ("Runs off-device on Ollama Cloud, so prompts leave this "
+                "machine." if remote else
+                "Runs on this server's own hardware - prompts do not "
+                "leave it.")
     else:
         note = ("Ollama Cloud isn't answering - check OLLAMA_API_KEY."
                 if remote else
-                "The local models aren't running right now - cloud is "
-                "being used instead.")
+                "The on-device model isn't running right now.")
 
     return {
         "id": "ollama",
-        "label": "Ollama Cloud" if remote else "On this machine",
+        "label": "RandomGenerals AI",
         "available": available and bool(models),
         "models": models,
         "model_info": [describe_model(m) for m in models],
@@ -3012,8 +3077,26 @@ def video_edit():
     if err or not info:
         return jsonify({"error": err or "Could not read that video."}), 400
 
-    ops, source, skipped, err = videoedit.plan(
-        prompt, info["duration"], complete=_video_planner())
+    # TWO WAYS IN, ONE RENDERER
+    #
+    # The timeline editor sends ops it built by direct manipulation - a
+    # dragged trim handle, a tapped filter - and there is nothing for a
+    # language model to interpret in that. Sending them through plan()
+    # would mean rendering the ops into a sentence for a model to parse
+    # back into the same ops, which is slower, costs a request, and can
+    # only lose fidelity.
+    #
+    # They still go through validate(), which is the same gate the
+    # planner's output passes. The UI is not trusted just because it is
+    # ours: it is a browser, and every bound in the OPS table has to hold
+    # against a hand-written request either way.
+    direct = payload.get("ops")
+    if isinstance(direct, list) and direct:
+        ops, skipped, err = videoedit.validate(direct, info["duration"])
+        source = "timeline"
+    else:
+        ops, source, skipped, err = videoedit.plan(
+            prompt, info["duration"], complete=_video_planner())
 
     # A slower encoder preset pins a core for several times longer at the
     # same footage length, and on a two-core VM that is the scarcest

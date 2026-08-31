@@ -291,42 +291,222 @@
 
               <div class="video-meta" id="videoMeta"></div>
 
-              <!-- The prompt is the control. The sliders below still
-                   work and are better for finding an exact frame, so
-                   they stay - folded away, because reaching for them is
-                   the exception now. -->
-              <form class="video-ask" id="videoAsk">
-                <label class="video-ask-label" for="videoPrompt">
-                  Describe the edit
-                </label>
-                <textarea
-                  id="videoPrompt"
-                  class="video-prompt"
-                  rows="3"
-                  maxlength="600"
-                  placeholder="Write it however you'd say it out loud &mdash; as many changes as you want, in one go. &quot;Cut the first 4 seconds, make it vertical for tiktok on a blurred background, warm moody grade, yellow caption 'day one' over the first 3 seconds, then fade out.&quot;"
-                ></textarea>
-                <p class="video-ask-hint">
-                  Cutting, speed, reframing, cropping, colour, captions with
-                  their own timing, grain, stabilising, audio, fades, GIFs.
-                  Ask for several at once &mdash; anything it can't do gets
-                  named back to you rather than quietly dropped.
-                </p>
-                <div class="video-examples" id="videoExamples">
-                  <span class="video-examples-lead">Try</span>
-                  <button type="button" data-ex="vertical for tiktok with a blurred background">vertical + blur</button>
-                  <button type="button" data-ex="moody teal and orange grade with a slow zoom in">colour grade</button>
-                  <button type="button" data-ex="yellow caption &quot;YOUR TEXT&quot; over the first 3 seconds">timed caption</button>
-                  <button type="button" data-ex="crop to the left half and pad it to 16:9 with black bars">crop + bars</button>
-                  <button type="button" data-ex="cut out 5 to 10 seconds">cut the middle</button>
-                  <button type="button" data-ex="boomerang it and export as a gif">boomerang GIF</button>
-                  <button type="button" data-ex="stabilize the shaky footage, denoise it, and even out the audio">clean it up</button>
-                  <button type="button" data-ex="slow motion, film grain, fade out, export in high quality">slow-mo + grain</button>
+              <!-- THE TIMELINE
+                   Direct manipulation first, prompt second. Dragging a
+                   handle to the frame you want is not a slower way of
+                   writing "cut the first four seconds" - it is a
+                   different act, and the one people already know from
+                   every editor they have used. The prompt stays below,
+                   because a sentence is still better for compound edits
+                   ("vertical, moody, caption over the first 3s") that
+                   would be tedious to click out one control at a time. -->
+              <div class="tl" id="tl">
+                <div class="tl-toolbar">
+                  <button type="button" class="tl-play" id="tlPlay"
+                          aria-label="Play or pause">&#9654;</button>
+                  <span class="tl-time"><b id="tlNow">0:00.0</b>
+                    / <span id="tlDur">0:00.0</span></span>
+                  <div class="tl-spacer"></div>
+                  <button type="button" class="tl-chip" id="tlSetIn"
+                          title="Set the start to the playhead">Start here</button>
+                  <button type="button" class="tl-chip" id="tlSetOut"
+                          title="Set the end to the playhead">End here</button>
+                  <button type="button" class="tl-chip" id="tlReset">Reset</button>
                 </div>
-                <button type="submit" class="video-go" id="videoRun">
-                  Apply
+
+                <div class="tl-track" id="tlTrack">
+                  <div class="tl-strip" id="tlStrip" aria-hidden="true"></div>
+                  <div class="tl-shade tl-shade-l" id="tlShadeL"></div>
+                  <div class="tl-shade tl-shade-r" id="tlShadeR"></div>
+                  <div class="tl-sel" id="tlSel">
+                    <button type="button" class="tl-handle tl-handle-l"
+                            id="tlHandleL" aria-label="Trim start"></button>
+                    <button type="button" class="tl-handle tl-handle-r"
+                            id="tlHandleR" aria-label="Trim end"></button>
+                  </div>
+                  <div class="tl-head" id="tlHead"></div>
+                </div>
+                <div class="tl-readout">
+                  <span id="tlIn">0:00.0</span>
+                  <span class="tl-len" id="tlLen">whole clip</span>
+                  <span id="tlOut">0:00.0</span>
+                </div>
+
+                <nav class="tl-tabs" id="tlTabs">
+                  <button type="button" class="is-on" data-tab="speed">Speed</button>
+                  <button type="button" data-tab="frame">Frame</button>
+                  <button type="button" data-tab="colour">Colour</button>
+                  <button type="button" data-tab="text">Text</button>
+                  <button type="button" data-tab="audio">Audio</button>
+                  <button type="button" data-tab="export">Export</button>
+                </nav>
+
+                <div class="tl-panels">
+                  <section class="tl-panel is-on" data-panel="speed">
+                    <div class="tl-row">
+                      <label for="tlSpeed">Speed</label>
+                      <input type="range" id="tlSpeed" min="0.25" max="4"
+                             step="0.05" value="1" />
+                      <output id="tlSpeedOut">1.00&times;</output>
+                    </div>
+                    <div class="tl-chips" id="tlMotion">
+                      <button type="button" data-op="reverse">Reverse</button>
+                      <button type="button" data-op="boomerang">Boomerang</button>
+                    </div>
+                  </section>
+
+                  <section class="tl-panel" data-panel="frame">
+                    <div class="tl-chips" id="tlRatio">
+                      <button type="button" data-ratio="9:16">9:16</button>
+                      <button type="button" data-ratio="1:1">1:1</button>
+                      <button type="button" data-ratio="16:9">16:9</button>
+                      <button type="button" data-ratio="4:5">4:5</button>
+                    </div>
+                    <label class="tl-check">
+                      <input type="checkbox" id="tlBlurfill" />
+                      Fill the bars with a blurred copy
+                    </label>
+                    <div class="tl-chips" id="tlOrient">
+                      <button type="button" data-op="rotate">Rotate</button>
+                      <button type="button" data-op="flip">Flip</button>
+                    </div>
+                    <div class="tl-row">
+                      <label for="tlZoom">Slow zoom</label>
+                      <input type="range" id="tlZoom" min="0" max="0.6"
+                             step="0.05" value="0" />
+                      <output id="tlZoomOut">off</output>
+                    </div>
+                  </section>
+
+                  <section class="tl-panel" data-panel="colour">
+                    <div class="tl-chips tl-looks" id="tlLooks"></div>
+                    <div class="tl-row">
+                      <label for="tlBright">Brightness</label>
+                      <input type="range" id="tlBright" min="-0.4" max="0.4"
+                             step="0.02" value="0" />
+                      <output id="tlBrightOut">0</output>
+                    </div>
+                    <div class="tl-row">
+                      <label for="tlContrast">Contrast</label>
+                      <input type="range" id="tlContrast" min="0.5" max="2"
+                             step="0.05" value="1" />
+                      <output id="tlContrastOut">1.00</output>
+                    </div>
+                    <div class="tl-row">
+                      <label for="tlSat">Saturation</label>
+                      <input type="range" id="tlSat" min="0" max="3"
+                             step="0.05" value="1" />
+                      <output id="tlSatOut">1.00</output>
+                    </div>
+                    <div class="tl-row">
+                      <label for="tlTemp">Warmth</label>
+                      <input type="range" id="tlTemp" min="-1" max="1"
+                             step="0.05" value="0" />
+                      <output id="tlTempOut">0</output>
+                    </div>
+                    <div class="tl-chips" id="tlColourFx">
+                      <button type="button" data-op="vignette">Vignette</button>
+                      <button type="button" data-op="grain">Grain</button>
+                      <button type="button" data-op="sharpen">Sharpen</button>
+                      <button type="button" data-op="denoise">Denoise</button>
+                    </div>
+                  </section>
+
+                  <section class="tl-panel" data-panel="text">
+                    <input type="text" id="tlText" class="tl-input"
+                           maxlength="120" placeholder="Caption text" />
+                    <div class="tl-row tl-row-wrap">
+                      <select id="tlTextPos" aria-label="Caption position">
+                        <option value="bottom">Bottom</option>
+                        <option value="middle">Middle</option>
+                        <option value="top">Top</option>
+                      </select>
+                      <select id="tlTextSize" aria-label="Caption size">
+                        <option value="medium">Medium</option>
+                        <option value="small">Small</option>
+                        <option value="large">Large</option>
+                      </select>
+                      <select id="tlTextColor" aria-label="Caption colour">
+                        <option value="white">White</option>
+                        <option value="yellow">Yellow</option>
+                        <option value="black">Black</option>
+                        <option value="red">Red</option>
+                        <option value="orange">Orange</option>
+                        <option value="green">Green</option>
+                        <option value="blue">Blue</option>
+                        <option value="pink">Pink</option>
+                      </select>
+                      <label class="tl-check">
+                        <input type="checkbox" id="tlTextBox" checked /> Backing
+                      </label>
+                    </div>
+                    <div class="tl-row tl-row-wrap">
+                      <button type="button" class="tl-chip" id="tlTextFrom">
+                        Start at playhead
+                      </button>
+                      <button type="button" class="tl-chip" id="tlTextTo">
+                        End at playhead
+                      </button>
+                      <span class="tl-hint" id="tlTextWhen">shown for the whole clip</span>
+                    </div>
+                  </section>
+
+                  <section class="tl-panel" data-panel="audio">
+                    <label class="tl-check">
+                      <input type="checkbox" id="tlMute" /> Mute
+                    </label>
+                    <div class="tl-row">
+                      <label for="tlVol">Volume</label>
+                      <input type="range" id="tlVol" min="0" max="3"
+                             step="0.05" value="1" />
+                      <output id="tlVolOut">1.00&times;</output>
+                    </div>
+                    <label class="tl-check">
+                      <input type="checkbox" id="tlNorm" />
+                      Even out loudness
+                    </label>
+                  </section>
+
+                  <section class="tl-panel" data-panel="export">
+                    <div class="tl-row tl-row-wrap">
+                      <label class="tl-check" for="tlQuality">Quality</label>
+                      <select id="tlQuality">
+                        <option value="">Standard</option>
+                        <option value="draft">Draft &mdash; fastest</option>
+                        <option value="high">High</option>
+                        <option value="max">Max</option>
+                      </select>
+                      <label class="tl-check" for="tlScale2">Size</label>
+                      <select id="tlScale2">
+                        <option value="">Keep original</option>
+                        <option value="1080">1080p</option>
+                        <option value="720">720p</option>
+                        <option value="480">480p</option>
+                      </select>
+                    </div>
+                    <div class="tl-row">
+                      <label for="tlFadeIn">Fade in</label>
+                      <input type="range" id="tlFadeIn" min="0" max="5"
+                             step="0.1" value="0" />
+                      <output id="tlFadeInOut">off</output>
+                    </div>
+                    <div class="tl-row">
+                      <label for="tlFadeOut">Fade out</label>
+                      <input type="range" id="tlFadeOut" min="0" max="5"
+                             step="0.1" value="0" />
+                      <output id="tlFadeOutOut">off</output>
+                    </div>
+                    <label class="tl-check">
+                      <input type="checkbox" id="tlGif" /> Export as GIF
+                    </label>
+                  </section>
+                </div>
+
+                <div class="tl-applied" id="tlApplied" hidden></div>
+                <button type="button" class="video-go" id="tlApply">
+                  Export
                 </button>
-              </form>
+              </div>
 
               <details class="video-manual">
                 <summary>Or set the range by hand</summary>
@@ -857,5 +1037,9 @@
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
     <script src="{{ asset('script.js') }}"></script>
+    <!-- After script.js: the editor calls window.runVideoOps, which that
+         file defines. Loading it first would not crash - the call only
+         happens on a click - but the ordering states the dependency. -->
+    <script src="{{ asset('video-editor.js') }}"></script>
   </body>
 </html>

@@ -47,8 +47,13 @@ const BAY_META = {
   },
 };
 
+// Labels come from the server now - it is the only side that knows
+// whether the local channel is on this hardware or on Ollama Cloud, and
+// the label has to follow that. Kept as a fallback for a provider the
+// server names but does not label.
 const PROVIDER_META = {
   ollama: { label: "RandomGenerals AI" },
+  groq: { label: "RandomGenerals AI Turbo" },
   imagegen: { label: "Image" },
 };
 
@@ -2700,7 +2705,51 @@ if (videoAsk) {
 function videoUnlock() {
   if (videoGo) videoGo.disabled = false;
   if (videoRun) videoRun.disabled = false;
+  const apply = document.getElementById("tlApply");
+  if (apply) apply.disabled = false;
 }
+
+/* The timeline editor's way in. Exposed on window rather than imported,
+ * because video-editor.js is a plain script and this file owns the three
+ * things a render needs and it does not have: which clip is loaded, the
+ * job polling, and the result player.
+ *
+ * Deliberately the same endpoint and the same status/plan/poll path as
+ * the prompt box - the only difference is that `ops` travels instead of
+ * `prompt`, so there is one render flow to keep working rather than two. */
+window.runVideoOps = async function (ops) {
+  if (!videoClip || !Array.isArray(ops) || !ops.length) return;
+  const apply = document.getElementById("tlApply");
+  if (apply) apply.disabled = true;
+  if (videoRun) videoRun.disabled = true;
+  if (videoGo) videoGo.disabled = true;
+  videoResult.hidden = true;
+  videoShowPlan(null);
+  videoSay("Rendering…");
+
+  let d;
+  try {
+    const r = await fetch("/api/video/edit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: videoClip.name, ops }),
+    });
+    d = await r.json();
+    if (!r.ok) {
+      videoSay(d.error || "Could not start the render.", true);
+      videoShowPlan(null, null, d.skipped);
+      videoUnlock();
+      return;
+    }
+  } catch (_) {
+    videoSay("Could not reach the server.", true);
+    videoUnlock();
+    return;
+  }
+
+  videoShowPlan(d.steps, d.source, d.skipped);
+  pollVideoJob(d.job.id);
+};
 
 function pollVideoJob(id) {
   clearInterval(videoPoll);
