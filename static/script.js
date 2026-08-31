@@ -702,6 +702,11 @@ function renderChannelRow() {
   // One AI, one provider - a picker with a single button to click isn't a
   // choice, it's just an extra step. Auto-select it and hide the row
   // entirely; the model dropdown below still shows which model answers.
+  //
+  // The server already drops channels that cannot answer while any other
+  // one can (see /api/providers), so a single entry here usually means
+  // this deployment has exactly one working provider rather than that
+  // the others are broken.
   const showPicker = providers.length > 1;
   channelRow.style.display = showPicker ? "" : "none";
   patchBayLabel.style.display = showPicker ? "" : "none";

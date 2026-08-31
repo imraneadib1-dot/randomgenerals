@@ -33,6 +33,7 @@ import codeexec  # noqa: E402  sandboxed Python execution - see codeexec.py
 import moderation  # noqa: E402  content filtering - see moderation.py
 import features  # noqa: E402  per-tier feature flags - see features.py
 import gemini  # noqa: E402  cloud fallback for when this machine is off
+import groq_api  # noqa: E402  fast open-weight models - see groq_api.py
 import openai_api  # noqa: E402  OpenAI-compatible API - see openai_api.py
 import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
 import videoedit  # noqa: E402  ffmpeg-backed video bay - see videoedit.py
@@ -477,34 +478,49 @@ DEFAULT_MODE = "code"
 # ----------------------------------------------------------------------
 # WHAT A REQUEST COSTS
 #
-# The four bays do genuinely different amounts of work, and charging them
-# the same made the counter meaningless - a one-line chat reply and a
-# three-minute video render both moved it by the same amount, so nobody
-# could form any intuition about what anything costs.
+# Every request lands between CREDIT_MIN and CREDIT_MAX. The band is the
+# point: a floor means the counter always moves, so nothing is ever
+# mysteriously free, and a ceiling means no single request can empty an
+# allowance - which is what makes the number on screen predictable
+# enough to plan around. Before this a reply cost anywhere from 1 to
+# several hundred, and nobody could form any intuition from that.
 #
-# Each entry is calibrated to roughly what the work costs the machine
-# serving it, not to what feels expensive:
+# Within the band the four bays are still priced by roughly what they
+# cost the machine serving them:
 #
-#   chat   cheapest. Short replies, small context, and the reply length
-#          is already known from the token count, so it can be metered
-#          exactly rather than guessed at.
-#   code   the same metering, weighted heavier: the code bay runs a
-#          larger context window and a much higher output ceiling, so an
-#          average request genuinely costs more to serve.
-#   image  a flat base scaled by pixel count. A 1344x768 is about 1.25x
-#          the work of a 1024 square, and pricing it identically would
-#          make the largest option the obvious free lunch.
-#   video  the expensive one, and the only one whose cost is real CPU on
-#          this box rather than someone else's GPU. Priced by output
-#          seconds and by the encoder preset, because those are exactly
-#          what determine how long a core is pinned.
-CREDIT_COST_CHAT = 1  # floor, and the pre-flight "any balance at all" gate
+#   chat   metered on tokens actually generated. Cheapest per token,
+#          because a short reply on a small context is the least work
+#          anything here does.
+#   code   the same metering, weighted heavier - the code bay runs a
+#          larger context window and a much higher output ceiling.
+#   image  a flat base scaled by pixel count, since no token count
+#          exists and pixels are the only honest proxy.
+#   video  base plus per-second, scaled by encoder preset. The only bay
+#          whose cost is real CPU on this box, and a slow preset pins a
+#          core several times longer than a fast one for the same
+#          footage.
+CREDIT_MIN = 15
+CREDIT_MAX = 100
 
-# Tokens per credit, per bay. Higher number = cheaper.
-CREDIT_TOKENS_PER_UNIT = 60          # chat
-CREDIT_TOKENS_PER_UNIT_CODE = 35     # code - bigger context, longer output
+# Kept under its old name: it is also the pre-flight "is there any
+# balance at all" gate, and that gate should be the price of the
+# cheapest possible request, which is now the floor.
+CREDIT_COST_CHAT = CREDIT_MIN
 
-CREDIT_COST_IMAGE = 12               # base, before the size multiplier
+
+def _band(value):
+    """Anything chargeable, clamped into the published band."""
+    return max(CREDIT_MIN, min(CREDIT_MAX, int(round(value))))
+
+
+# Tokens per credit ABOVE the floor. Higher number = cheaper. Calibrated
+# so an ordinary reply sits near the bottom of the band and only a very
+# long one approaches the ceiling: at 40, a 300-token answer costs 23 and
+# it takes ~3,400 tokens to reach 100.
+CREDIT_TOKENS_PER_UNIT = 40          # chat
+CREDIT_TOKENS_PER_UNIT_CODE = 30     # code - bigger context, longer output
+
+CREDIT_COST_IMAGE = 25               # base, before the size multiplier
 CREDIT_IMAGE_SIZE_MULTIPLIER = {
     "square": 1.0,
     "portrait": 1.15,
@@ -513,8 +529,8 @@ CREDIT_IMAGE_SIZE_MULTIPLIER = {
     "tall": 1.25,
 }
 
-CREDIT_COST_VIDEO = 15               # base, before duration and quality
-CREDIT_VIDEO_PER_SECOND = 1.5
+CREDIT_COST_VIDEO = 20               # base, before duration and quality
+CREDIT_VIDEO_PER_SECOND = 1.2
 CREDIT_VIDEO_QUALITY_MULTIPLIER = {
     "draft": 0.7,
     "standard": 1.0,
@@ -532,16 +548,14 @@ def usage_based_cost(eval_count, mode="chat"):
     """
     per_unit = (CREDIT_TOKENS_PER_UNIT_CODE if mode == "code"
                 else CREDIT_TOKENS_PER_UNIT)
-    if not eval_count:
-        return CREDIT_COST_CHAT
-    return max(CREDIT_COST_CHAT, round(eval_count / per_unit))
+    return _band(CREDIT_MIN + (eval_count or 0) / per_unit)
 
 
 def image_cost(size):
     """Flat base times a size multiplier. No token count exists here, so
     pixels are the only honest proxy for work done."""
     mult = CREDIT_IMAGE_SIZE_MULTIPLIER.get(size, 1.0)
-    return max(1, round(CREDIT_COST_IMAGE * mult))
+    return _band(CREDIT_COST_IMAGE * mult)
 
 
 def video_cost(out_seconds, quality="standard"):
@@ -553,39 +567,38 @@ def video_cost(out_seconds, quality="standard"):
     """
     mult = CREDIT_VIDEO_QUALITY_MULTIPLIER.get(quality, 1.0)
     seconds = max(0.0, float(out_seconds or 0))
-    return max(1, round((CREDIT_COST_VIDEO
-                         + seconds * CREDIT_VIDEO_PER_SECOND) * mult))
+    return _band((CREDIT_COST_VIDEO + seconds * CREDIT_VIDEO_PER_SECOND)
+                 * mult)
 
 
-# The gap between the tiers is throughput, and it is deliberately wide:
-# 2,500 credits an hour on Free against 25,000 on Pro. Ten to one sounds
-# aggressive until you price it - Pro is $1.99, so the question is not
-# whether the ratio is generous but whether Free is usable on its own,
-# and 5,000 credits is roughly 80 chat replies, 400 images, or a couple
-# of dozen video renders per two-hour window.
+# Both tiers refill on the same two-hour clock; the difference is how
+# much is in the tank. Pro is a little over three times the throughput,
+# which is a narrower gap than a capability difference would give - so
+# what Pro actually sells is the model access, vision, unlimited memory
+# and the longer, higher-quality video renders, with the extra credits on
+# top rather than instead.
 #
 # Refill is a reset to the cap, not a trickle. That is the behaviour
-# people can actually reason about: "full again at half past" beats
-# working out an accrual rate.
+# people can reason about: "full again at half past" beats working out an
+# accrual rate.
 PLANS = {
     "free": {
         "label": "Free",
         "price": "$0",
-        "cap": 5000,
+        "cap": 3000,
         "refill_seconds": 2 * 60 * 60,  # 2 hours
-        "blurb": "5,000 credits, refilling every 2 hours. Fast chat and "
+        "blurb": "3,000 credits, refilling every 2 hours. Fast chat and "
                  "coding models, image generation, code execution, the "
                  "video bay, and web search.",
     },
     "pro": {
         "label": "Pro",
         "price": "$1.99/mo",
-        "cap": 25000,
-        "refill_seconds": 60 * 60,  # 1 hour
-        "blurb": "25,000 credits every hour - ten times the throughput. "
-                 "Plus the 7B model, vision, unlimited memory, long-form "
-                 "code, every image shape, and 3-minute max-quality video "
-                 "renders.",
+        "cap": 10000,
+        "refill_seconds": 2 * 60 * 60,  # 2 hours
+        "blurb": "10,000 credits every 2 hours, plus the 7B model, "
+                 "vision, unlimited memory, long-form code, every image "
+                 "shape, and 3-minute max-quality video renders.",
     },
 }
 STARTING_CREDITS = PLANS["free"]["cap"]
@@ -1626,6 +1639,8 @@ def openai_models():
     ids = list(ollama_provider().get("models") or [])
     if gemini.configured():
         ids += gemini.models()
+    if groq_api.configured():
+        ids += groq_api.models()
     return jsonify(openai_api.model_list(ids or ["randomgenerals"]))
 
 
@@ -1862,6 +1877,21 @@ def list_providers():
     providers = [ollama_provider()]
     # Only advertised when a key exists, so the picker never offers a
     # channel that would immediately fail.
+    # Groq before Gemini in the list: on this deployment it is both the
+    # faster channel and the one with the more generous request ceiling,
+    # so it is the sensible default to land on.
+    if groq_api.configured():
+        groq_models = groq_api.models()
+        providers.append({
+            "id": "groq",
+            "label": "Fast cloud",
+            "available": bool(groq_models),
+            "models": groq_models,
+            "model_info": [describe_model(m) for m in groq_models],
+            "note": "Open-weight models on dedicated accelerators. Runs "
+                    "off-device, so prompts leave this machine.",
+        })
+
     if gemini.configured():
         providers.append({
             "id": "gemini",
@@ -1872,6 +1902,19 @@ def list_providers():
             "note": "Used automatically when this machine is off. Runs "
                     "off-device, so prompts leave it.",
         })
+    # A channel that cannot answer is worse than one that is absent: it
+    # is a visible, disabled button labelled "On this machine", which on
+    # a hosted deployment reads as "the product is broken" rather than
+    # "this deployment has no local model". Nobody can act on it either -
+    # it is the server's hardware, not theirs.
+    #
+    # So it is dropped, but only while something else can answer. If
+    # nothing works at all, the dead channel is the only evidence of why,
+    # and hiding it would leave an empty picker and no explanation.
+    live = [p for p in providers if p["available"]]
+    if live:
+        providers = live
+
     return jsonify({
         "providers": providers,
         # Kept under its old name because the frontend reads it to decide
@@ -1894,6 +1937,9 @@ MODEL_DISPLAY_NAMES = {
     "qwen2.5-coder": ("Coder", "Tuned for writing and debugging code"),
     "qwen2.5": ("Core", "Best local accuracy for general questions"),
     "llava": ("Vision", "Can see and describe attached images"),
+    # groq - open weights on dedicated accelerators
+    "llama-3.3-70b-versatile": ("Turbo", "Large open model, answers fast"),
+    "llama-3.1-8b-instant": ("Turbo Lite", "Smaller and faster still"),
     # cloud
     "openai/gpt-oss-120b": ("Max", "Strongest overall - large cloud model"),
     "openai/gpt-oss-20b": ("Swift Cloud", "Fast cloud replies"),
@@ -2145,6 +2191,7 @@ def tool_event(payload):
 PROVIDER_STREAMERS = {
     "ollama": stream_ollama,
     "gemini": gemini.stream_chat,
+    "groq": groq_api.stream_chat,
 }
 
 
