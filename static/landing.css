@@ -2014,21 +2014,12 @@ body::before {
 /* The crest catches a little of the same light the vine does; the foot
    is the page's own ground, so the shapes dissolve into the section
    below instead of sitting on top of it as two cut-outs. */
-/* Sand, not page-blue. The old fill was two steps of the ground colour,
-   which is why the shapes read as abstract curves - nothing about them
-   said desert. These are the dune tones from the footage above: warm
-   grey-brown catching the last of the light at the ridge, falling
-   through a cooler mid into the page's own ground at the foot. */
+/* Taller than before, so the sand has room to be sand. At 240px the
+   shapes were mostly slope and the base was a hard horizontal line
+   against the page; the extra height lets the gradient reach the ground
+   colour gradually and the join disappear. */
 .dune-pass {
-  --dune-lit: #a68a63;
-  --dune-mid: #3a3f4c;
-  --dune-foot: #182a3a;
-}
-
-/* The lee slope. Darker than the body and semi-transparent so it reads
-   as the same sand in shadow rather than as a separate object. */
-.dune-face {
-  fill: rgb(var(--shade) / 0.62);
+  height: clamp(150px, 21vw, 300px);
 }
 
 /* The lit edge of the crest. Brighter than before and warmer, because
@@ -2044,19 +2035,24 @@ body::before {
 }
 
 /* The parting. scroll-scene.js writes --open from 0 to 1 across the last
-   screen of the strip; at rest the two dunes overlap in the middle and
-   at full open they have drawn back to either side. */
+   screen of the strip.
+
+   At 0 the two overlap across the whole centre and there is no way
+   through. At 1 they have drawn right back and the gap between them is
+   the pass. 16% each way rather than the old 7%: the paths now overlap
+   by roughly a third of the frame, so a small translation only thins the
+   overlap instead of opening anything. */
 .dune {
   --open: 0;
   transition: transform 0.1s linear;
 }
 
 .dune-left {
-  transform: translateX(calc(var(--open) * -7%));
+  transform: translateX(calc(var(--open) * -16%));
 }
 
 .dune-right {
-  transform: translateX(calc(var(--open) * 7%));
+  transform: translateX(calc(var(--open) * 16%));
 }
 
 @media (prefers-reduced-motion: reduce) {

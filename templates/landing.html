@@ -260,37 +260,44 @@
              the moment the clip or the palette changed. Decorative, so
              it is hidden from assistive tech entirely. -->
         <div class="dune-pass" id="dunePass" aria-hidden="true">
-          <svg viewBox="0 0 1440 240" preserveAspectRatio="none">
+          <svg viewBox="0 0 1440 300" preserveAspectRatio="none">
             <defs>
-              <!-- Lit along the ridge, falling into shadow toward the
-                   foot. That vertical run is what makes a filled curve
-                   read as a dune rather than as a shape: real sand is
-                   bright where it faces the light and dark in the lee,
-                   and a flat fill has neither. The last stop is the
-                   page's own ground, so the dune dissolves into the
-                   section below instead of sitting on it. -->
-              <linearGradient id="duneFillL" x1="0.15" y1="0" x2="0.55" y2="1">
-                <stop offset="0%" stop-color="var(--dune-lit)" />
-                <stop offset="14%" stop-color="var(--dune-mid)" />
-                <stop offset="100%" stop-color="var(--dune-foot)" />
+              <!-- Sand all the way down, not a thin lit edge on grey.
+                   The previous version put the mid-tone at 14%, so 85% of
+                   the visible dune was a cool grey and only a sliver was
+                   sand - which is exactly why it read as a blue slab with
+                   a gold line on it. The warm tones now hold most of the
+                   height and only meet the page ground at the very base. -->
+              <linearGradient id="duneFillL" x1="0.2" y1="0" x2="0.5" y2="1">
+                <stop offset="0%" stop-color="#d8bb86" />
+                <stop offset="18%" stop-color="#a98a5f" />
+                <stop offset="52%" stop-color="#6b5945" />
+                <stop offset="100%" stop-color="#182a3a" />
               </linearGradient>
-              <linearGradient id="duneFillR" x1="0.85" y1="0" x2="0.45" y2="1">
-                <stop offset="0%" stop-color="var(--dune-lit)" />
-                <stop offset="14%" stop-color="var(--dune-mid)" />
-                <stop offset="100%" stop-color="var(--dune-foot)" />
+              <linearGradient id="duneFillR" x1="0.8" y1="0" x2="0.5" y2="1">
+                <stop offset="0%" stop-color="#d8bb86" />
+                <stop offset="18%" stop-color="#a98a5f" />
+                <stop offset="52%" stop-color="#6b5945" />
+                <stop offset="100%" stop-color="#182a3a" />
               </linearGradient>
 
-              <!-- Sand grain. Fractal noise at low opacity, clipped to
-                   the dune bodies. Without it the fills are perfectly
-                   smooth, and nothing in a desert is - the eye reads
-                   that smoothness as vector art immediately. -->
+              <!-- The slipface: the steep lee side a dune falls away on.
+                   Vertical, dark at the top where it tucks under the
+                   crest, fading out before the base so it does not print
+                   a hard triangle onto the sand. -->
+              <linearGradient id="duneFace" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#0d1620" stop-opacity="0.72" />
+                <stop offset="70%" stop-color="#0d1620" stop-opacity="0.18" />
+                <stop offset="100%" stop-color="#0d1620" stop-opacity="0" />
+              </linearGradient>
+
               <filter id="duneGrain" x="0" y="0" width="100%" height="100%">
-                <feTurbulence type="fractalNoise" baseFrequency="0.9"
-                              numOctaves="3" seed="7" result="noise" />
+                <feTurbulence type="fractalNoise" baseFrequency="0.8"
+                              numOctaves="4" seed="11" result="noise" />
                 <feColorMatrix in="noise" type="saturate" values="0"
                                result="grey" />
                 <feComponentTransfer in="grey" result="soft">
-                  <feFuncA type="linear" slope="0.16" intercept="0" />
+                  <feFuncA type="linear" slope="0.13" intercept="0" />
                 </feComponentTransfer>
                 <feComposite in="soft" in2="SourceGraphic"
                              operator="in" result="grain" />
@@ -301,38 +308,44 @@
               </filter>
             </defs>
 
-            <!-- Two ridgelines, each with a slipface behind it.
-                 A dune is not one curve - it is a windward slope rising
-                 to a sharp crest and a steeper face falling away. The
-                 second, darker path on each side is that lee slope, and
-                 it is most of why these now read as sand with a form
-                 rather than as a filled arc. -->
+            <!-- The two dunes INTERLOCK at rest.
+                 Each one runs well past the centre - the left reaches
+                 x=1010, the right back to x=430 - so at --open:0 they
+                 overlap across the whole middle of the frame and read as
+                 one continuous ridge of sand with no way through. Only
+                 as they draw apart does a pass open between them.
+                 Previously each stopped at the midpoint, so there was
+                 always a visible notch and nothing to open.
+
+                 Each is drawn back-to-front: the far dune first, then
+                 the near one over it, which is what gives the overlap
+                 depth rather than looking like two flat cut-outs. -->
             <g class="dune dune-left">
               <path class="dune-body" fill="url(#duneFillL)"
                 filter="url(#duneGrain)"
-                d="M-140,240 L-140,112 C 40,58 210,46 360,96
-                   C 470,132 560,182 660,214 C 700,227 730,235 760,240 Z" />
-              <path class="dune-face"
-                d="M360,96 C 470,132 560,182 660,214
-                   C 700,227 730,235 760,240 L 470,240
-                   C 430,190 400,140 360,96 Z" />
+                d="M-220,300 L-220,150 C -40,74 140,52 300,96
+                   C 430,131 540,196 700,238 C 810,267 910,286 1010,300 Z" />
+              <path class="dune-face" fill="url(#duneFace)"
+                d="M300,96 C 430,131 540,196 700,238
+                   C 810,267 910,286 1010,300 L 520,300
+                   C 440,224 370,158 300,96 Z" />
               <path class="dune-rim" fill="none"
-                d="M-140,112 C 40,58 210,46 360,96
-                   C 470,132 560,182 660,214 C 700,227 730,235 760,240" />
+                d="M-220,150 C -40,74 140,52 300,96
+                   C 430,131 540,196 700,238 C 810,267 910,286 1010,300" />
             </g>
 
             <g class="dune dune-right">
               <path class="dune-body" fill="url(#duneFillR)"
                 filter="url(#duneGrain)"
-                d="M1580,240 L1580,100 C 1400,42 1230,38 1080,92
-                   C 970,132 880,184 780,216 C 740,229 710,236 680,240 Z" />
-              <path class="dune-face"
-                d="M1080,92 C 970,132 880,184 780,216
-                   C 740,229 710,236 680,240 L 980,240
-                   C 1020,188 1050,138 1080,92 Z" />
+                d="M1660,300 L1660,138 C 1480,62 1300,44 1140,90
+                   C 1010,127 900,192 740,234 C 630,263 530,284 430,300 Z" />
+              <path class="dune-face" fill="url(#duneFace)"
+                d="M1140,90 C 1010,127 900,192 740,234
+                   C 630,263 530,284 430,300 L 920,300
+                   C 1000,220 1070,152 1140,90 Z" />
               <path class="dune-rim" fill="none"
-                d="M1580,100 C 1400,42 1230,38 1080,92
-                   C 970,132 880,184 780,216 C 740,229 710,236 680,240" />
+                d="M1660,138 C 1480,62 1300,44 1140,90
+                   C 1010,127 900,192 740,234 C 630,263 530,284 430,300" />
             </g>
           </svg>
         </div>
