@@ -2617,10 +2617,20 @@ function applyVideoAccess(d) {
   // below apply. Running them first was a real bug: with no media key
   // set the function returned early with the bay locked, and the diagram
   // mode it should have fallen back to was never reached.
+  // DIAGRAM IS THE FLOOR, not the last resort of a broken chain.
+  //
+  // A media backend only wins if it can actually run. A configured Tripo
+  // key with a zero balance is configured and useless, and treating that
+  // as "3D mode" locked the whole bay behind a credits notice - with the
+  // diagram bay, which needs no key and no balance, sitting right there
+  // unreachable. Anything that cannot generate falls through to drawing.
+  const mediaUsable =
+    d.configured && (d.credits === undefined || d.credits === null
+                     || d.credits > 0);
   const kind =
-    d.kind === "model" ? "model"
-      : d.kind === "video" && d.configured ? "video"
-      : "diagram";
+    !mediaUsable ? "diagram"
+      : d.kind === "model" ? "model"
+      : "video";
 
   if (kind === "diagram") {
     genKind = "diagram";
@@ -2661,6 +2671,9 @@ function applyVideoAccess(d) {
   // value that is quietly ignored.
   // A key with no credits behind it is worse than no key: the bay looks
   // ready and fails on the first click. Say it before anyone types.
+  // Unreachable while diagrams are the floor above - kept because the
+  // moment another media bay exists that has no fallback, an empty
+  // balance has to say so rather than looking broken.
   if (d.kind === "model" && d.credits === 0) {
     genLocked.hidden = false;
     genLockedText.textContent =
