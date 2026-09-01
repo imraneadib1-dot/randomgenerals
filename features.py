@@ -62,6 +62,18 @@ FEATURES = {
         "vision": False,            # can attach images, model can't see them
         # --- capabilities ---
         "deep_mode": True,          # moved to free deliberately
+        # THE CALCULATOR IS NOT A PAID FEATURE
+        #
+        # This was folded into external_connectors, so the whole tool
+        # loop - including running Python - was Pro-only. The effect was
+        # that a free user asking 4839 * 2718 got the model's arithmetic
+        # in its head, which was measurably wrong, while a paying one got
+        # the right answer from a tool. Charging for correctness is the
+        # wrong thing to charge for.
+        #
+        # Connecting your OWN apps stays paid: that is a capability, and
+        # it costs this server outbound requests. Being right is not.
+        "builtin_tools": True,
         "image_generation": True,
         "code_execution": True,
         "web_search": True,
@@ -106,6 +118,7 @@ FEATURES = {
         "premium_models": True,
         "vision": True,
         "deep_mode": True,
+        "builtin_tools": True,
         "image_generation": True,
         "code_execution": True,
         "web_search": True,
@@ -244,6 +257,7 @@ def public_flags(plan):
         "max_upload_mb": f["max_upload_mb"],
         "terminal_unrestricted": f["terminal_unrestricted"],
         "external_connectors": f["external_connectors"],
+        "builtin_tools": f["builtin_tools"],
         "max_output_tokens_code": f["max_output_tokens_code"],
         "pro_model_families": sorted(PRO_MODELS),
         "video_max_output_seconds": f["video_max_seconds"],

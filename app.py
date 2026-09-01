@@ -486,6 +486,17 @@ CHAT_SYSTEM_PROMPT = (
     "State assumptions when a question is underspecified (radians or "
     "degrees, real or complex, inclusive or exclusive bounds) instead of "
     "silently picking one.\n"
+    # Observed, not hypothetical. Asked for 4839 * 2718 with no tools
+    # available, the model wrote "let us run this in Python", then
+    # "running this gives us 13287002" - a number it had invented,
+    # and the wrong one. A fabricated tool result is worse than no
+    # tool, because it hands the reader a reason to trust it.
+    "Never say you ran code, looked something up, or checked a result "
+    "unless you actually called a tool and read what it returned. If "
+    "you cannot run it, do the arithmetic openly and say it was done "
+    "by hand. Inventing an output and attributing it to Python is "
+    "worse than an ordinary mistake: it tells the reader the number "
+    "was verified when it was not.\n"
 
     # Physics fails differently from maths. The arithmetic is usually
     # fine; what goes wrong is picking the wrong relation, dropping a
@@ -766,6 +777,8 @@ def plan_perks():
         ("Chat and coding models, both on the fast channel", True),
         ("Image generation, diagrams, the code runner, web search "
          "and voice", True),
+        ("Runs Python and searches the web on its own, so arithmetic "
+         "and current facts are checked rather than recalled", True),
         ("Remembers up to %d things" % free["max_memories"], True),
         ("%dMB uploads" % free["max_upload_mb"], True),
     ]
@@ -776,10 +789,8 @@ def plan_perks():
          True),
         ("<strong>Image understanding</strong> - it sees what you attach",
          True),
-        ("<strong>Tools it runs itself</strong> - maths, the code runner "
-         "and web search, without being asked twice", True),
-        ("<strong>Connect your own apps</strong> - paste a link and it can "
-         "use whatever is behind it", True),
+        ("<strong>Connect your own apps</strong> - paste a link and it "
+         "can use whatever is behind it", True),
         ("Unlimited memory - no %d-item cap" % free["max_memories"], True),
         ("Code replies up to {:,} tokens, against {:,}".format(
             pro["max_output_tokens_code"],
@@ -803,7 +814,7 @@ def plan_perks():
     free_list += [
         ("Image understanding", False),
         ("Priority when the site is busy", False),
-        ("Tools and app connections", False),
+        ("Connecting your own apps", False),
     ]
     return {"free": free_list, "pro": pro_list}
 
@@ -3951,9 +3962,18 @@ def _run_tool_loop(model, history, specs, provider="groq",
     convo = list(history)
     for _ in range(MAX_TOOL_ROUNDS):
         turn = PROVIDER_TURNS.get(provider, groq_api.chat_once)
-        msg, err = turn(
-            model, convo, tools=specs,
-            options={"num_predict": 900, "temperature": 0.2})
+        try:
+            msg, err = turn(
+                model, convo, tools=specs,
+                options={"num_predict": 900, "temperature": 0.2})
+        except groq_api.RateLimited:
+            # The budget can drain between _groq_has_room() and this call,
+            # and the loop's own turns are what drain it. chat_once raises
+            # rather than returning an error, so without this the whole
+            # request dies on a rate limit that the streaming path handles
+            # gracefully two functions later. Tools are an enhancement;
+            # losing them costs a less-checked answer, not the answer.
+            return history, notes
         if err or not msg:
             # The loop is an enhancement, not a requirement - fall
             # through to a normal answer rather than failing.
@@ -4134,17 +4154,23 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     tool_specs = None
     tool_notes = []
     connector_map = {}
+    # The loop spends an extra non-streamed turn before the answer, so it
+    # is offered only while the shared per-minute budget can carry one.
+    # Under pressure the reply still happens, just without tools - which
+    # is the same degradation every other part of this channel makes.
     if (provider in PROVIDER_TURNS
-            and features.FEATURES[plan]["external_connectors"]):
+            and features.FEATURES[plan]["builtin_tools"]
+            and _groq_has_room(plan)):
         tool_specs = tools.available_specs(
             allow_images=(mode != "image"),
             allow_code=True,
             allow_web=True,
         )
-        # Whatever this account has connected joins the built-in tools,
-        # so a pasted link is usable in the same breath as web search.
-        extra, connector_map = _connector_tools(current_owner_id())
-        tool_specs = tool_specs + extra
+        # Connected apps are the part that stays paid, so they join the
+        # list only for a plan that has them.
+        if features.FEATURES[plan]["external_connectors"]:
+            extra, connector_map = _connector_tools(current_owner_id())
+            tool_specs = tool_specs + extra
         # Say the tools exist, in the same breath as offering them.
         # Promising a calculator to a session that has none is worse
         # than silence, so this rides with tool_specs rather than being
