@@ -690,15 +690,18 @@ html.time-night .night-moon {
   background: var(--surface);
   color: var(--ink);
 }
+/* This was a near-white gradient with light text on it: #DFE2DC on
+   #DDE0E3 measures 1.01:1, so the selected conversation - the one thing
+   in the list you most need to be able to read - was very nearly
+   invisible. It also carried the same stray blue border as the old user
+   bubble, from a palette this app no longer uses.
+   Raised surface and a gold edge instead: 8.08:1, and selection is now
+   shown by the accent rule below rather than by inverting the row. */
 .thread-item.active {
-  background: linear-gradient(
-    120deg,
-    rgba(255, 255, 255, 0.85),
-    var(--bay-soft)
-  );
-  border-color: rgba(59, 130, 246, 0.22);
+  background: var(--surface-raised);
+  border-color: var(--border-strong);
   color: var(--ink);
-  box-shadow: var(--shadow-soft);
+  box-shadow: none;
 }
 .thread-item.active .thread-title {
   color: var(--ink);
@@ -1263,6 +1266,9 @@ html.time-night .night-moon {
 .msg {
   display: flex;
   flex-direction: column;
+  /* Assistant replies set their own measure in ch; this cap is for the
+     user's own messages, which should stay visibly shorter than the
+     answer they provoked. */
   max-width: 85%;
   animation: msgIn 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
@@ -1318,29 +1324,52 @@ html.time-night .night-moon {
 
 .msg.user .msg-bubble {
   background: var(--user-bubble);
-  border: 1px solid rgba(59, 130, 246, 0.16);
+  /* Was rgba(59,130,246,...) - a BLUE border, left over from a palette
+     this app no longer uses. There is no blue anywhere else in the
+     scheme, so it read as a stray. */
+  border: 1px solid rgba(160, 131, 72, 0.22);
   color: var(--ink);
   border-bottom-right-radius: 6px;
   white-space: pre-wrap;
 }
 
+/* NOT A BUBBLE ANY MORE.
+   It was a near-white gradient - rgba(255,255,255,0.75) - with a gold
+   border, a coloured left stripe and a drop shadow, sitting inside a
+   dark navy app. Four decorations around text that has to be read for
+   minutes at a time, and a light box in a dark room is the one that
+   costs the most.
+   An assistant reply is the content of this page, not an object on it.
+   A user message is a short thing someone said, so that keeps its
+   bubble - the asymmetry is the point, and it is what removes the need
+   for the coloured stripe to tell them apart. */
 .msg.assistant .msg-bubble {
-  background: linear-gradient(
-    160deg,
-    rgba(255, 255, 255, 0.75),
-    var(--bay-soft)
-  );
-  border: 1px solid var(--border-strong);
-  border-left: 3px solid var(--msg-color, var(--bay));
-  border-bottom-left-radius: 6px;
-  box-shadow: var(--shadow-soft);
-  transition: border-color 0.2s ease;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 2px 0 0;
+  color: var(--ink);
+  /* A measure, not a percentage. Prose is read by the line, and a line
+     longer than about 70 characters loses the eye on the way back to
+     the left edge - which a percentage width cannot express, because it
+     depends on the viewport rather than on the text. */
+  max-width: 68ch;
 }
 
+/* A thin caret rather than a full block: at 14.5px a solid ▍ is a
+   flashing rectangle the width of a character, which pulls the eye
+   away from the words appearing next to it. */
 .msg.assistant.streaming .msg-bubble::after {
-  content: "▍";
-  color: var(--msg-color, var(--bay));
-  animation: blink 1s step-start infinite;
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--msg-color, var(--bay));
+  border-radius: 1px;
+  animation: blink 1.05s step-start infinite;
 }
 
 @keyframes blink {
@@ -1645,10 +1674,14 @@ html.time-night .night-moon {
   background: var(--surface-raised);
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
-  border: 1px solid var(--border-strong);
+  /* Quiet until it is being used. --border-strong is gold at 34%, which
+     drew a permanent yellow rectangle around the busiest element on the
+     page; the accent now arrives on focus, where it means something. */
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 8px 8px 8px 16px;
-  box-shadow: var(--shadow-soft);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16), 0 8px 28px rgba(0, 0, 0, 0.22);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
   transition:
     border-color 0.2s ease,
     box-shadow 0.2s ease;
@@ -3556,4 +3589,95 @@ html.time-night .night-moon {
     animation: none;
   }
   .thinking-dots i { opacity: 0.7; }
+}
+
+
+/* ---- reading -----------------------------------------------------------
+   The assistant reply is now prose on the page rather than a box, so it
+   needs the typographic care a box was standing in for: a rhythm between
+   blocks, headings that step down rather than shout, and code that reads
+   as a quotation rather than as a widget.
+   ------------------------------------------------------------------------ */
+.msg.assistant .msg-bubble > * + * { margin-top: 0.85em; }
+.msg.assistant .msg-bubble p { margin: 0; }
+
+.msg.assistant .msg-bubble h1,
+.msg.assistant .msg-bubble h2,
+.msg.assistant .msg-bubble h3 {
+  font-family: var(--font-display, inherit);
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1.3em 0 0;
+  color: var(--ink);
+}
+.msg.assistant .msg-bubble h1 { font-size: 1.28em; }
+.msg.assistant .msg-bubble h2 { font-size: 1.15em; }
+.msg.assistant .msg-bubble h3 { font-size: 1.03em; }
+
+.msg.assistant .msg-bubble ul,
+.msg.assistant .msg-bubble ol { margin: 0; padding-left: 1.25em; }
+.msg.assistant .msg-bubble li + li { margin-top: 0.35em; }
+
+/* A left rule instead of a filled panel: it marks the quotation without
+   putting a second background colour on the page. */
+.msg.assistant .msg-bubble blockquote {
+  margin: 0;
+  padding-left: 14px;
+  border-left: 2px solid var(--border);
+  color: var(--ink-soft);
+}
+
+.msg.assistant .msg-bubble :not(pre) > code {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.12em 0.36em;
+  font-size: 0.9em;
+}
+
+/* The composer earns the accent by being used. */
+.composer-form:focus-within {
+  border-color: var(--border-strong);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16), 0 10px 34px rgba(0, 0, 0, 0.3),
+    0 0 0 3px rgba(160, 131, 72, 0.1);
+}
+
+/* ---- starters ----------------------------------------------------------
+   An empty screen with a greeting says hello and nothing else. These say
+   what the thing in front of you is for, in the form of something you
+   can click - which is also the fastest way to find out whether the app
+   is any good at the thing you came for.
+   ------------------------------------------------------------------------ */
+.starters {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 26px;
+  max-width: 560px;
+}
+
+.starters button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink-soft);
+  border-radius: 999px;
+  padding: 8px 15px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.16s ease, border-color 0.16s ease,
+    transform 0.16s ease, background 0.16s ease;
+}
+.starters button:hover {
+  color: var(--ink);
+  border-color: var(--border-strong);
+  background: var(--surface-raised);
+  transform: translateY(-1px);
+}
+.starters button:active { transform: translateY(0); }
+
+@media (prefers-reduced-motion: reduce) {
+  .starters button { transition: none; }
+  .starters button:hover { transform: none; }
 }

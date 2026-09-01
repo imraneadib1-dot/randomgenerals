@@ -412,6 +412,58 @@ function relativeTime(iso) {
 /* ----------------------------------------------------------------
    Bay switcher — Code / Chat / Image
    ---------------------------------------------------------------- */
+// One line each, per bay. Deliberately concrete rather than clever: a
+// starter that reads "Explain quantum computing" teaches nothing about
+// what this app is good at, whereas one that names a real task shows
+// both the capability and the phrasing that gets the best out of it.
+const STARTERS = {
+  code: [
+    "Debug this stack trace",
+    "Write a Python script to rename files by date",
+    "Explain this regex",
+    "Refactor a function to be testable",
+  ],
+  chat: [
+    "Why is the sky blue?",
+    "A ball is thrown up at 20 m/s — how high?",
+    "Explain entropy without the word disorder",
+    "Plan a week of meals for two",
+  ],
+  image: [
+    "A lighthouse in a storm, oil painting",
+    "Neon Tokyo alley in the rain",
+    "Macro shot of frost on a leaf",
+    "A lone tree on a salt flat at dusk",
+  ],
+  video: [],
+};
+
+function renderStarters() {
+  if (!emptyState) return;
+  const old = emptyState.querySelector(".starters");
+  if (old) old.remove();
+  const list = STARTERS[currentBay] || [];
+  if (!list.length) return;
+
+  const wrap = document.createElement("div");
+  wrap.className = "starters";
+  list.forEach((text) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = text;
+    b.addEventListener("click", () => {
+      // Fills the box rather than sending. A starter is a suggestion,
+      // and sending it outright takes the edit away from someone who
+      // wanted to change two words of it first.
+      messageInput.value = text;
+      messageInput.focus();
+      messageInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    wrap.appendChild(b);
+  });
+  emptyState.appendChild(wrap);
+}
+
 function updateEmptyState() {
   // The eyebrow/title/sub/hints elements are kept in the DOM and left
   // empty rather than deleted: BAY_META still carries the copy, the
@@ -419,6 +471,7 @@ function updateEmptyState() {
   // genuinely needs an explanation can unhide one of these without the
   // markup having to be rebuilt.
   if (typeof renderGreeting === "function") renderGreeting();
+  renderStarters();
 }
 
 function showEmptyState() {
