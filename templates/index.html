@@ -524,6 +524,8 @@
                     aria-selected="false">Appearance</button>
             <button class="modal-tab" data-tab="memory" role="tab"
                     aria-selected="false">Personalization</button>
+            <button class="modal-tab" data-tab="apps" role="tab"
+                    aria-selected="false">Connected apps</button>
             <button class="modal-tab" data-tab="data" role="tab"
                     aria-selected="false">Data controls</button>
             <button class="modal-tab" data-tab="plan" role="tab"
@@ -532,6 +534,42 @@
                     aria-selected="false">About</button>
           </nav>
           <div class="settings-content">
+
+        <!-- Connected apps tab -->
+        <div class="modal-panel" id="appsPanel" hidden>
+          <div class="appearance-section">
+            <label class="memory-label">Connect an app</label>
+            <p class="memory-hint">
+              Paste a link. If it points at an API this reads what that
+              API can do and the assistant can then use it while
+              answering &mdash; searching it, listing from it, creating in
+              it. Anything else is connected as a page it can read.
+            </p>
+            <input type="url" id="connectorUrl" class="tl-input"
+                   placeholder="https://example.com/openapi.json"
+                   autocomplete="off" />
+            <input type="password" id="connectorToken" class="tl-input"
+                   placeholder="Access token (only if the app needs one)"
+                   autocomplete="off" />
+            <p class="memory-hint">
+              A token is stored on this server and sent only to the app it
+              belongs to. It is never shown again once saved.
+            </p>
+            <div class="data-actions">
+              <button type="button" class="btn-secondary" id="connectorAdd">
+                Connect
+              </button>
+            </div>
+            <p class="memory-hint" id="connectorStatus"></p>
+          </div>
+
+          <div class="memory-divider"></div>
+
+          <div class="appearance-section">
+            <label class="memory-label">Connected</label>
+            <div id="connectorList"></div>
+          </div>
+        </div>
 
         <!-- Account tab -->
         <div class="modal-panel" id="accountPanel">

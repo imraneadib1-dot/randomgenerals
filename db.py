@@ -104,6 +104,27 @@ CREATE TABLE IF NOT EXISTS video_quota (
     PRIMARY KEY (owner_id, month)
 );
 
+CREATE TABLE IF NOT EXISTS connectors (
+    id       TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    title    TEXT NOT NULL DEFAULT '',
+    kind     TEXT NOT NULL DEFAULT 'link',
+    url      TEXT NOT NULL DEFAULT '',
+    base_url TEXT NOT NULL DEFAULT '',
+    -- The discovered operation list, as JSON. Cached at connect time
+    -- rather than re-fetched per message: a spec is a document that
+    -- changes on deploys, not per request, and re-downloading it on
+    -- every chat turn would add a round trip to someone else's server
+    -- before this app could answer anything.
+    operations TEXT NOT NULL DEFAULT '[]',
+    -- Optional API token. Never leaves the server: load_connectors()
+    -- strips it, the same way public_user() strips password_hash, so a
+    -- token cannot come back out through the settings panel that put it
+    -- in.
+    token    TEXT NOT NULL DEFAULT '',
+    created  TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS custom_instructions (
     owner_id TEXT PRIMARY KEY,
     text     TEXT NOT NULL DEFAULT ''
@@ -395,7 +416,8 @@ def delete_user(user_id, email=None):
     conn = _connect()
     removed = 0
     with conn:
-        for table in ("threads", "credits", "memories", "custom_instructions"):
+        for table in ("threads", "credits", "memories",
+                      "custom_instructions", "connectors"):
             cur = conn.execute(
                 "DELETE FROM %s WHERE owner_id = ?" % table, (user_id,))
             removed += cur.rowcount or 0
@@ -408,6 +430,64 @@ def delete_user(user_id, email=None):
         cur = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         removed += cur.rowcount or 0
     return removed
+
+
+def load_connectors(owner_id, with_tokens=False):
+    """The apps this owner has connected.
+
+    Tokens are stripped unless the caller explicitly asks. Only the tool
+    dispatcher has a reason to see one, and everything else - the
+    settings list especially - would otherwise hand a secret back to the
+    browser that submitted it.
+    """
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT id, title, kind, url, base_url, operations, token, created "
+        "FROM connectors WHERE owner_id = ? ORDER BY created",
+        (owner_id,)).fetchall()
+    out = []
+    for r in rows:
+        item = {
+            "id": r["id"], "title": r["title"], "kind": r["kind"],
+            "url": r["url"], "base_url": r["base_url"],
+            "created": r["created"],
+            "has_token": bool(r["token"]),
+        }
+        try:
+            item["operations"] = json.loads(r["operations"] or "[]")
+        except (ValueError, TypeError):
+            item["operations"] = []
+        if with_tokens:
+            item["token"] = r["token"]
+        out.append(item)
+    return out
+
+
+def save_connector(owner_id, connector):
+    """Insert or replace one connected app."""
+    conn = _connect()
+    with conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO connectors "
+            "(id, owner_id, title, kind, url, base_url, operations, token, "
+            " created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (connector["id"], owner_id, connector.get("title", ""),
+             connector.get("kind", "link"), connector.get("url", ""),
+             connector.get("base_url", ""),
+             json.dumps(connector.get("operations") or []),
+             connector.get("token", ""), connector.get("created", "")))
+    return connector["id"]
+
+
+def delete_connector(owner_id, connector_id):
+    """Scoped to the owner, so an id from another account is a no-op
+    rather than someone else's connection being removed."""
+    conn = _connect()
+    with conn:
+        cur = conn.execute(
+            "DELETE FROM connectors WHERE id = ? AND owner_id = ?",
+            (connector_id, owner_id))
+    return (cur.rowcount or 0) > 0
 
 
 def save_verification_code(email, code, expires_at):

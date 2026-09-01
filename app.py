@@ -37,6 +37,8 @@ import features  # noqa: E402  per-tier feature flags - see features.py
 import stats  # noqa: E402  owner-only usage figures - see stats.py
 import groq_api  # noqa: E402  fast open-weight models - see groq_api.py
 import openai_api  # noqa: E402  OpenAI-compatible API - see openai_api.py
+import connectors  # noqa: E402  pasted links, turned into tools
+import openrouter_api  # noqa: E402  the only channel serving Kimi
 import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
 import pixverse  # noqa: E402  paid text-to-video - see pixverse.py
 import hfvideo  # noqa: E402  free-tier text-to-video - see hfvideo.py
@@ -776,6 +778,8 @@ def plan_perks():
          True),
         ("<strong>Tools it runs itself</strong> - maths, the code runner "
          "and web search, without being asked twice", True),
+        ("<strong>Connect your own apps</strong> - paste a link and it can "
+         "use whatever is behind it", True),
         ("Unlimited memory - no %d-item cap" % free["max_memories"], True),
         ("Code replies up to {:,} tokens, against {:,}".format(
             pro["max_output_tokens_code"],
@@ -2323,6 +2327,71 @@ def get_plans():
     })
 
 
+@app.route("/api/connectors", methods=["GET"])
+def list_connectors():
+    """What this account has connected. Tokens are never included."""
+    items = db.load_connectors(current_owner_id())
+    return jsonify({"connectors": [
+        {"id": i["id"], "title": i["title"], "kind": i["kind"],
+         "url": i["url"], "operations": len(i["operations"]),
+         "has_token": i["has_token"], "created": i["created"]}
+        for i in items]})
+
+
+@app.route("/api/connectors", methods=["POST"])
+def add_connector():
+    """Paste a link; work out what it is; keep it.
+
+    The discovery fetch happens here rather than at chat time so the
+    person pasting finds out immediately whether it worked, and gets a
+    sentence they can act on if it did not.
+    """
+    payload = request.get_json(force=True, silent=True) or {}
+    url = (payload.get("url") or "").strip()
+    token = (payload.get("token") or "").strip()
+
+    plan = features.normalize_plan(current_account()[0].get("plan"))
+    if not features.FEATURES[plan]["external_connectors"]:
+        return jsonify({
+            "error": "Connecting apps is a Pro feature.",
+        }), 403
+
+    owner_id = current_owner_id()
+    existing = db.load_connectors(owner_id)
+    if len(existing) >= MAX_CONNECTORS:
+        return jsonify({
+            "error": "You can connect up to %d apps. Remove one first."
+                     % MAX_CONNECTORS,
+        }), 400
+
+    found, err = connectors.discover(url, token or None)
+    if err:
+        return jsonify({"error": err}), 400
+
+    found["id"] = uuid.uuid4().hex[:16]
+    found["token"] = token
+    found["created"] = datetime.datetime.now(
+        datetime.timezone.utc).isoformat()
+    db.save_connector(owner_id, found)
+    return jsonify({
+        "ok": True,
+        "connector": {
+            "id": found["id"], "title": found["title"],
+            "kind": found["kind"], "url": found["url"],
+            "operations": len(found.get("operations") or []),
+            "has_token": bool(token), "created": found["created"],
+        },
+    })
+
+
+@app.route("/api/connectors/<connector_id>", methods=["DELETE"])
+def remove_connector(connector_id):
+    removed = db.delete_connector(current_owner_id(), connector_id)
+    if not removed:
+        return jsonify({"error": "No such connection."}), 404
+    return jsonify({"ok": True})
+
+
 @app.route("/api/features", methods=["GET"])
 def get_features():
     """What this account is allowed to do, for the UI to gate on.
@@ -2472,6 +2541,13 @@ def get_credits():
 # score.)
 BAY_ROUTES = {
     "code": [
+        # Kimi first, asked for by name. It is coding-tuned and it is the
+        # reason openrouter_api exists - Groq serves no Moonshot model at
+        # all, so this line is unreachable without OPENROUTER_API_KEY and
+        # gpt-oss below carries the bay exactly as before until one is
+        # set. That is deliberate: this is the one model in the table
+        # that costs money per message.
+        ("openrouter", "kimi-k2.7-code"),
         ("groq", "gpt-oss-120b"),
         ("ollama", "gemma3:1b"),
         ("ollama", "gemma3"),
@@ -2612,6 +2688,20 @@ def list_providers():
             "models": groq_models,
             "model_info": [describe_model(m, plan) for m in groq_models],
             "note": note,
+        })
+
+    if openrouter_api.configured():
+        or_models = openrouter_api.models()
+        providers.append({
+            "id": "openrouter",
+            "label": "Kimi",
+            "available": bool(or_models),
+            "models": or_models,
+            "model_info": [describe_model(m, plan) for m in or_models],
+            "note": ("Moonshot's Kimi, which is coding-tuned and strong at "
+                     "maths. Runs off-device, and unlike the other "
+                     "channels it is billed per message to this server's "
+                     "OpenRouter key."),
         })
 
     live = [p for p in providers if p["available"]]
@@ -2949,7 +3039,75 @@ def tool_event(payload):
 PROVIDER_STREAMERS = {
     "ollama": stream_ollama,
     "groq": groq_api.stream_chat,
+    "openrouter": openrouter_api.stream_chat,
 }
+
+# The non-streamed turn each hosted provider uses inside the tool loop.
+# Ollama is absent on purpose: tool calling is offered on the hosted
+# channels only - see the note above tool_specs in _stream_reply.
+PROVIDER_TURNS = {
+    "groq": groq_api.chat_once,
+    "openrouter": openrouter_api.chat_once,
+}
+
+# Per account. Each connection adds its operation list to every request
+# on that channel, so this is a prompt-size ceiling as much as a
+# tidiness one.
+MAX_CONNECTORS = 8
+
+
+# ----------------------------------------------------------------------
+# Connected apps
+#
+# A pasted link becomes a tool the model can call. Discovery, the SSRF
+# guard and the actual calling all live in connectors.py; what is here is
+# the plumbing between that and a chat turn.
+# ----------------------------------------------------------------------
+def _connector_tools(owner_id):
+    """-> (tool specs, {tool name: connector}).
+
+    The map is what turns a tool name back into the connection it came
+    from, including its token, which never leaves the server.
+    """
+    specs, by_name = [], {}
+    try:
+        saved = db.load_connectors(owner_id, with_tokens=True)
+    except Exception:                       # noqa: BLE001
+        return [], {}
+    for item in saved:
+        spec = connectors.tool_spec(item)
+        name = spec["function"]["name"]
+        # Two connections whose titles slugify the same would otherwise
+        # collide and the second would silently shadow the first.
+        if name in by_name:
+            name = "%s_%s" % (name, item["id"][:6])
+            spec["function"]["name"] = name
+        specs.append(spec)
+        by_name[name] = item
+    return specs, by_name
+
+
+def _dispatch_tool(name, raw_args, connector_map):
+    """One tool call, whether it is built in or a connected app."""
+    item = (connector_map or {}).get(name)
+    if item is None:
+        return tools.dispatch(name, raw_args)
+    if isinstance(raw_args, dict):
+        args = raw_args
+    else:
+        try:
+            args = json.loads(raw_args or "{}")
+        except (ValueError, TypeError):
+            return {"text": "Your arguments were not valid JSON. Call the "
+                            "tool again with correct JSON.", "display": None}
+        if not isinstance(args, dict):
+            return {"text": "Arguments must be a JSON object.",
+                    "display": None}
+    try:
+        text = connectors.call(item, args, token=item.get("token"))
+    except Exception as e:                  # noqa: BLE001 - same contract as
+        text = "That connection failed: %s" % e   # tools.dispatch: never raise
+    return {"text": text, "display": None}
 
 
 @app.route("/api/web-search", methods=["POST"])
@@ -3753,7 +3911,8 @@ def _canned_reply(thread, text):
 MAX_TOOL_ROUNDS = 3
 
 
-def _run_tool_loop(model, history, specs):
+def _run_tool_loop(model, history, specs, provider="groq",
+                   connector_map=None):
     """Let the model call tools until it is ready to answer.
 
     -> (history with the tool exchange appended, notes).
@@ -3765,7 +3924,8 @@ def _run_tool_loop(model, history, specs):
     notes = []
     convo = list(history)
     for _ in range(MAX_TOOL_ROUNDS):
-        msg, err = groq_api.chat_once(
+        turn = PROVIDER_TURNS.get(provider, groq_api.chat_once)
+        msg, err = turn(
             model, convo, tools=specs,
             options={"num_predict": 900, "temperature": 0.2})
         if err or not msg:
@@ -3784,7 +3944,8 @@ def _run_tool_loop(model, history, specs):
         for call in calls:
             fn = (call.get("function") or {})
             name = fn.get("name") or ""
-            result = tools.dispatch(name, fn.get("arguments"))
+            result = _dispatch_tool(name, fn.get("arguments"),
+                                    connector_map)
             notes.append(name)
             convo.append({
                 "role": "tool",
@@ -3848,6 +4009,21 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # mattering.
     fell_back_to_cloud = False
     plan = features.normalize_plan(current_account()[0].get("plan"))
+
+    # Kimi is first in the code bay but it is the only route here that
+    # needs a paid key, so a request naming it on a server without one -
+    # a stale tab, a saved preference, an older client - must not become
+    # a dead reply. It degrades to the free fast channel, and to the
+    # local model after that, the same way every other channel does.
+    if provider == "openrouter" and not openrouter_api.configured():
+        if groq_api.configured() and groq_api.models():
+            provider = "groq"
+            model = groq_api.PREFERRED[0]
+        else:
+            local = _local_alternative(mode)
+            if local:
+                provider, model = "ollama", local
+
     if provider == "groq":
         if not _groq_has_room(plan):
             local = _local_alternative(mode)
@@ -3930,12 +4106,18 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # whole and unseen, and only the final answer is streamed.
     tool_specs = None
     tool_notes = []
-    if provider == "groq" and features.FEATURES[plan]["external_connectors"]:
+    connector_map = {}
+    if (provider in PROVIDER_TURNS
+            and features.FEATURES[plan]["external_connectors"]):
         tool_specs = tools.available_specs(
             allow_images=(mode != "image"),
             allow_code=True,
             allow_web=True,
         )
+        # Whatever this account has connected joins the built-in tools,
+        # so a pasted link is usable in the same breath as web search.
+        extra, connector_map = _connector_tools(current_owner_id())
+        tool_specs = tool_specs + extra
         # Say the tools exist, in the same breath as offering them.
         # Promising a calculator to a session that has none is worse
         # than silence, so this rides with tool_specs rather than being
@@ -3944,7 +4126,9 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
             history = ([{"role": "system",
                          "content": history[0]["content"] + TOOL_USE_PROMPT}]
                        + history[1:])
-        history, tool_notes = _run_tool_loop(model, history, tool_specs)
+        history, tool_notes = _run_tool_loop(
+            model, history, tool_specs, provider=provider,
+            connector_map=connector_map)
 
     def generate():
         nonlocal provider, model, streamer, fell_back_to_cloud
