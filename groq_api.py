@@ -70,6 +70,24 @@ PREFERRED = [
 _NON_CHAT = ("whisper", "guard", "embed", "tts", "playai",
              "orpheus", "canopylabs")
 
+# TWO MODELS, DELIBERATELY.
+#
+# The catalogue offers seven chat models and most of them are worse at
+# everything this app does. allam-2-7b is Arabic-tuned and answered an
+# English test prompt with something unrelated; the compound models are
+# slower for no gain here; gpt-oss-20b lost to its larger sibling on
+# maths. Offering them is not choice, it is a menu of ways to get a
+# worse answer.
+#
+# So the picker shows the two that were actually measured best - one for
+# code, one for chat - and nothing else. An empty allow-list means "show
+# everything", which is what a fresh deployment against a different key
+# should do rather than showing nothing at all.
+EXPOSED_MODELS = (
+    "openai/gpt-oss-120b",     # code
+    "qwen/qwen3.8-27b",        # chat, and best measured at maths/physics
+)
+
 # THE LIMIT THAT ACTUALLY BINDS
 #
 # The free tier is 1,000 requests a day but only 8,000 TOKENS A MINUTE,
@@ -263,10 +281,13 @@ def models():
             return []
         r.raise_for_status()
         found = [m.get("id", "") for m in r.json().get("data", [])]
-        out = sorted(
-            m for m in found
-            if m and not any(bad in m.lower() for bad in _NON_CHAT)
-        )
+        usable = [m for m in found
+                  if m and not any(bad in m.lower() for bad in _NON_CHAT)]
+        # Narrowed to the shortlist, but only if the shortlist is
+        # actually present - a key whose catalogue does not include them
+        # gets everything it does have, rather than an empty picker.
+        shortlist = [m for m in usable if m in EXPOSED_MODELS]
+        out = sorted(shortlist) if shortlist else sorted(usable)
         _models_cache.update({"at": now, "models": out or FALLBACK_MODELS,
                               "error": ""})
         return _models_cache["models"]

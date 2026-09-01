@@ -763,13 +763,18 @@ function renderChannelRow() {
   // one can (see /api/providers), so a single entry here usually means
   // this deployment has exactly one working provider rather than that
   // the others are broken.
-  const showPicker = providers.length > 1;
+  // A provider marked hidden is plumbing, not a choice: the local
+  // channel stays configured so it can answer an attached image and
+  // catch a rate-limited request, but nobody should be picking it from
+  // a menu. See ollama_provider() in app.py for why it survives at all.
+  const shown = providers.filter((p) => !p.hidden);
+  const showPicker = shown.length > 1;
   channelRow.style.display = showPicker ? "" : "none";
   patchBayLabel.style.display = showPicker ? "" : "none";
   if (!showPicker) return;
 
   channelRow.innerHTML = "";
-  providers.forEach((p) => {
+  shown.forEach((p) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "channel-btn" + (p.available ? " online" : "");

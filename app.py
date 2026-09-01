@@ -2470,6 +2470,26 @@ def ollama_provider(plan=None):
     return {
         "id": "ollama",
         "label": "RandomGenerals AI",
+        # HIDDEN FROM THE PICKER, NOT REMOVED.
+        #
+        # Two jobs remain that the hosted channel cannot do, so the
+        # models stay installed and reachable even though nobody picks
+        # them:
+        #
+        #   1. VISION. Groq's catalogue has no model that can see an
+        #      image, so an attached picture is answered by gemma3:4b or
+        #      it is not answered at all.
+        #   2. THE RATE LIMIT. Groq's free tier is 8,000 tokens a minute
+        #      shared across every visitor. At the current output ceiling
+        #      that is a handful of replies before the window drains, and
+        #      without something underneath it the site simply stops
+        #      answering - which is exactly the failure this deployment
+        #      already had once.
+        #
+        # The frontend hides any provider carrying this flag, so the
+        # picker shows the two chosen models and the fallback stays
+        # invisible until it is needed.
+        "hidden": True,
         "available": available and bool(models),
         "models": models,
         "model_info": [describe_model(m, plan) for m in models],
