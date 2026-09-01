@@ -40,6 +40,7 @@ import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
 import pixverse  # noqa: E402  paid text-to-video - see pixverse.py
 import hfvideo  # noqa: E402  free-tier text-to-video - see hfvideo.py
 import tripo3d  # noqa: E402  text-to-3D generation - see tripo3d.py
+import tools  # noqa: E402  model-callable tools - see tools.py
 
 # The one AI this app talks to: Ollama, running locally (llama3.2 pulled
 # already). Runs fully on this machine - no cloud call, no API key - but
@@ -3159,6 +3160,38 @@ DIAGRAM_SYSTEM_PROMPT = (
     "body does not parse."
 )
 
+# TOOLS, AND THE PROMPT THAT WAS ARGUING WITH THEM
+#
+# The tool loop was wired and correct - exercised directly it called
+# run_python and returned 13152402 - and it still never fired through
+# the chat route. The MATHS section above tells the model to work
+# things out step by step in the reply, and it obeyed: it wrote the
+# multiplication out, then stated 13153242, which is wrong.
+#
+# Having a calculator and being told to do it in your head is not a
+# wiring bug, it is a contradiction in the instructions. This says
+# which one wins and when.
+TOOL_USE_PROMPT = (
+    "\nTOOLS\n"
+    "You can run Python, search the web, and generate images. Use "
+    "them - a tool that returns the answer beats reasoning that "
+    "might.\n"
+    "Run the code for arithmetic with more than a couple of digits, "
+    "for anything with many steps, and for any date, unit or "
+    "financial calculation. Working it out in prose is exactly where "
+    "a confident wrong number comes from - and the working looks "
+    "just as convincing when the total is wrong.\n"
+    "Search the web when the answer depends on anything current: "
+    "prices, versions, releases, who holds a post, what happened "
+    "recently. Do not guess and do not apologise for not knowing - "
+    "look it up.\n"
+    "Do not use a tool for something you already know. Looking up "
+    "the boiling point of water wastes a second of somebody time "
+    "and tells them you cannot tell the difference.\n"
+    "When a tool answers, use its result. Do not restate a number "
+    "you calculated yourself over one the tool returned.\n"
+)
+
 
 def _clean_mermaid(text):
     """Strip the wrapping a model adds even when told not to.
@@ -3460,6 +3493,55 @@ def _canned_reply(thread, text):
     return streaming_response(generate())
 
 
+# How many times the model may reach for a tool before it has to
+# answer. Three covers search-then-refine-then-answer, which is the
+# deepest useful pattern here; beyond that a model is usually looping
+# on a question the tools cannot settle, and every round costs a
+# request against a per-minute budget shared by everyone on the site.
+MAX_TOOL_ROUNDS = 3
+
+
+def _run_tool_loop(model, history, specs):
+    """Let the model call tools until it is ready to answer.
+
+    -> (history with the tool exchange appended, notes).
+
+    Never raises: a tool that fails returns its error as the tool
+    result, so the model can say what went wrong instead of the whole
+    reply dying on a failed search.
+    """
+    notes = []
+    convo = list(history)
+    for _ in range(MAX_TOOL_ROUNDS):
+        msg, err = groq_api.chat_once(
+            model, convo, tools=specs,
+            options={"num_predict": 900, "temperature": 0.2})
+        if err or not msg:
+            # The loop is an enhancement, not a requirement - fall
+            # through to a normal answer rather than failing.
+            return history, notes
+        calls = msg.get("tool_calls") or []
+        if not calls:
+            return convo, notes
+
+        convo.append({
+            "role": "assistant",
+            "content": msg.get("content") or "",
+            "tool_calls": calls,
+        })
+        for call in calls:
+            fn = (call.get("function") or {})
+            name = fn.get("name") or ""
+            result = tools.dispatch(name, fn.get("arguments"))
+            notes.append(name)
+            convo.append({
+                "role": "tool",
+                "tool_call_id": call.get("id"),
+                "content": result.get("text") or "",
+            })
+    return convo, notes
+
+
 def _stream_reply(thread, provider, model, web_results, files, strength):
     """Builds the system prompt + history from thread["messages"] as it
     currently stands, streams a reply, and persists + charges for it once
@@ -3580,18 +3662,48 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     usage = {}
     stream_kwargs["usage"] = usage
 
-    # Model-driven tool calling is not wired up. It only ever ran on the
-    # cloud provider, which has been removed - Ollama's tool support
-    # varies by model, and a small local model that hallucinates a tool
-    # call answers worse than one that just talks. tools.py is kept
-    # because the hard parts (schemas, dispatch that never raises, size
-    # caps) are done and tested, ready if a provider that supports it
-    # comes back. Web search, the code sandbox and image generation all
-    # still work; the user drives them from the UI as before.
+    # MODEL-DRIVEN TOOLS
+    #
+    # This was switched off when the cloud provider was removed, on the
+    # grounds that a small local model which hallucinates a tool call
+    # answers worse than one that just talks. That reasoning still holds
+    # for Ollama - and no longer applies to the hosted channel, which is
+    # back. Both models it serves were checked before this was wired:
+    # asked to look something up, gpt-oss-120b and qwen3.8-27b each
+    # returned a well-formed web_search call with a sensible query.
+    #
+    # So tools are offered on the hosted channel only. The loop runs
+    # BEFORE the stream opens: a tool call arrives as a name and a JSON
+    # blob, and half of either is useless, so those turns are fetched
+    # whole and unseen, and only the final answer is streamed.
+    tool_specs = None
+    tool_notes = []
+    if provider == "groq" and features.FEATURES[plan]["external_connectors"]:
+        tool_specs = tools.available_specs(
+            allow_images=(mode != "image"),
+            allow_code=True,
+            allow_web=True,
+        )
+        # Say the tools exist, in the same breath as offering them.
+        # Promising a calculator to a session that has none is worse
+        # than silence, so this rides with tool_specs rather than being
+        # baked into the base prompt.
+        if history and history[0].get("role") == "system":
+            history = ([{"role": "system",
+                         "content": history[0]["content"] + TOOL_USE_PROMPT}]
+                       + history[1:])
+        history, tool_notes = _run_tool_loop(model, history, tool_specs)
 
     def generate():
         nonlocal provider, model, streamer, fell_back_to_cloud
         full_reply = ""
+        # Announce the tools that ran BEFORE the prose starts. They have
+        # already finished by this point - the loop resolves them before
+        # a stream is opened - so each is emitted as done rather than
+        # started. An answer that quietly consulted the web is harder to
+        # trust than one that says it did.
+        for name in tool_notes:
+            yield tool_event({"tool": name, "status": "done"})
         try:
             try:
                 for piece in streamer(model, history, **stream_kwargs):

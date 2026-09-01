@@ -345,6 +345,28 @@ def _to_messages(history):
     out = []
     for m in history:
         role = m.get("role")
+
+        # A tool result, and the assistant turn that asked for it, both
+        # have to survive intact or the model cannot see what came back.
+        # The old shape dropped anything that was not system/user/
+        # assistant and required non-empty content - and an assistant
+        # message carrying tool_calls has EMPTY content by design, so it
+        # was silently deleted, which broke the loop before it started.
+        if role == "tool":
+            out.append({
+                "role": "tool",
+                "tool_call_id": m.get("tool_call_id"),
+                "content": (m.get("content") or "")[:8000],
+            })
+            continue
+        if role == "assistant" and m.get("tool_calls"):
+            out.append({
+                "role": "assistant",
+                "content": m.get("content") or "",
+                "tool_calls": m["tool_calls"],
+            })
+            continue
+
         text = (m.get("content") or "").strip()
         if not text:
             continue
@@ -352,6 +374,49 @@ def _to_messages(history):
             role = "user"
         out.append({"role": role, "content": text})
     return out
+
+
+def chat_once(model, history, tools=None, options=None, timeout=120):
+    """One non-streamed turn. -> (message dict, error).
+
+    The tool loop needs the WHOLE message before it can act - a tool call
+    arrives as a name and a JSON argument blob, and half of either is
+    useless. Streaming is for the final answer, which _stream_reply()
+    still handles; this is for the turns in between, which nobody sees.
+    """
+    if not configured():
+        return None, "Groq is not configured."
+    body = {
+        "model": model,
+        "messages": _to_messages(history),
+        "stream": False,
+    }
+    if tools:
+        body["tools"] = tools
+        body["tool_choice"] = "auto"
+    opts = options or {}
+    if opts.get("num_predict"):
+        body["max_tokens"] = int(opts["num_predict"])
+    if "temperature" in opts:
+        body["temperature"] = opts["temperature"]
+    if _supports_effort(model):
+        effort = opts.get("reasoning_effort", DEFAULT_EFFORT)
+        if effort in VALID_EFFORTS:
+            body["reasoning_effort"] = effort
+    try:
+        r = requests.post(API_ROOT + "/chat/completions", json=body,
+                          headers=_headers(), timeout=timeout)
+    except requests.exceptions.RequestException as e:
+        return None, "Could not reach Groq: %s" % e
+    note_limits(r.headers)
+    if r.status_code == 429:
+        raise RateLimited("per-minute token budget exhausted")
+    if r.status_code != 200:
+        return None, "Groq error %d" % r.status_code
+    try:
+        return r.json()["choices"][0]["message"], None
+    except (ValueError, KeyError, IndexError):
+        return None, "Groq returned an unreadable response."
 
 
 def stream_chat(model, history, options=None, images=None, usage=None):
@@ -377,6 +442,14 @@ def stream_chat(model, history, options=None, images=None, usage=None):
         "messages": _to_messages(history),
         "stream": True,
     }
+    # Tools travel with the request when the caller supplies them. The
+    # agent loop resolves calls before this point, so by the time a
+    # stream is opened the model has what it asked for and should be
+    # writing prose - but the schemas stay attached in case it wants a
+    # second round.
+    if (options or {}).get("tools"):
+        body["tools"] = options["tools"]
+        body["tool_choice"] = "auto"
     opts = options or {}
     if "temperature" in opts:
         body["temperature"] = opts["temperature"]

@@ -47,25 +47,6 @@
       href="{{ asset('landing.css') }}"
     />
 
-    <!-- Applied BEFORE the stylesheet paints, not on DOMContentLoaded.
-         A saved theme read after first paint means every visitor who
-         chose Moon watches the page load in Desert and then flip, which
-         looks like a bug rather than a preference being honoured.
-         Inline and synchronous is the only way to beat that.
-
-         Wrapped in try/catch because localStorage throws outright in
-         some privacy modes, and a theme preference is not worth taking
-         the page down for. -->
-    <script>
-      (function () {
-        try {
-          var t = localStorage.getItem("rg-theme");
-          if (t === "moon") {
-            document.documentElement.setAttribute("data-theme", "moon");
-          }
-        } catch (e) {}
-      })();
-    </script>
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -89,16 +70,6 @@
         <a href="#faq">FAQ</a>
       </nav>
       <div class="nav-actions">
-        <button
-          type="button"
-          class="theme-toggle"
-          id="themeToggle"
-          aria-pressed="false"
-          title="Switch between the desert and moon themes"
-        >
-          <span class="theme-toggle-dot" aria-hidden="true"></span>
-          <span class="theme-toggle-label" id="themeToggleLabel">Desert</span>
-        </button>
         {% if not signed_in %}
         <a class="btn btn-ghost" href="/app">Sign in</a>
         {% endif %}
@@ -150,22 +121,16 @@
                playing video - seeking into an unbuffered range stalls,
                and the whole effect depends on the seek landing at once.
                The file is about 1MB, so fetching it up front is cheap. -->
-          <!-- Both sources are named here rather than built in JS, so
-               the swap is a string already in the document and the
-               asset() cache-busting applies to each. -->
           <video
             class="film-video"
             id="sceneVideo"
             disablepictureinpicture
             src="{{ asset('video/desert-vines.mp4') }}"
-            data-src-desert="{{ asset('video/desert-vines.mp4') }}"
-            data-src-moon="{{ asset('video/moon.mp4') }}"
             muted
             playsinline
             preload="auto"
             tabindex="-1"
           ></video>
-          <div class="scene-stars" aria-hidden="true"></div>
           <div class="film-scrim"></div>
         </div>
 
@@ -504,10 +469,10 @@
             <div class="price">$1.99<span>/mo</span></div>
             <ul>
               <li><strong>Priority on the fast channel</strong> — stays quick when the site is busy</li>
-              <li><strong>AI video generation</strong> — 10 clips a month</li>
+              <li><strong>Tools</strong> — it runs code and searches the web to answer you</li>
               <li><strong>Image understanding</strong> — it sees what you attach</li>
               <li><strong>Unlimited memory</strong> — no 25-item cap</li>
-              <li>Long-form code · 100MB uploads</li>
+              <li>Long-form code · 100MB uploads · every image shape</li>
               <li>25,000 credits, refilling every hour</li>
             </ul>
             <a class="btn btn-primary btn-block" href="/app">Go Pro</a>
