@@ -571,14 +571,21 @@ html.time-night .night-moon {
 /* ============================================================
    Shell — two floating glass cards below the topbar
    ============================================================ */
+/* FLAT, NOT FLOATING.
+   The sidebar and the main column used to be two rounded cards with
+   borders, shadows and a 16px moat around and between them - which
+   drew two large squares on the screen and made the reading column
+   narrower for no gain. They are now flush panes divided by a single
+   hairline, so the only edges on screen are the ones that separate
+   something from something else. */
 .app {
   position: relative;
   z-index: 1;
   flex: 1;
   min-height: 0;
   display: flex;
-  gap: 16px;
-  padding: 16px;
+  gap: 0;
+  padding: 0;
   overflow: hidden;
 }
 
@@ -588,9 +595,11 @@ html.time-night .night-moon {
   background: var(--panel);
   -webkit-backdrop-filter: blur(22px);
   backdrop-filter: blur(22px);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
+  /* One divider, on the side that actually divides. */
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
   display: flex;
   flex-direction: column;
   padding: 16px 12px 12px;
@@ -1111,9 +1120,9 @@ html.time-night .night-moon {
   background: var(--panel);
   -webkit-backdrop-filter: blur(22px);
   backdrop-filter: blur(22px);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
   overflow: hidden;
 }
 
@@ -3369,11 +3378,38 @@ html.time-night .night-moon {
 }
 .gen-sub { margin: 0; font-size: 13px; color: var(--text-soft, #a9ada5); }
 
+/* No box. A short sentence explaining why a bay is empty does not need
+   a card around it - the card was the only thing making it look like a
+   component that had failed to load. */
 .gen-locked {
-  border: 1px solid var(--line); border-radius: 14px;
-  padding: 18px; text-align: center; background: var(--ink-1, #1e3346);
+  border: 0;
+  padding: 28px 18px;
+  text-align: center;
+  background: none;
 }
-.gen-locked p { margin: 0 0 12px; color: var(--text-soft, #a9ada5); font-size: 14px; }
+.gen-locked p {
+  margin: 0 0 14px;
+  color: var(--text-soft, #a9ada5);
+  font-size: 14px;
+}
+/* This was rendering as a default browser-blue underlined anchor - it is
+   an <a> with a button class, and .btn was never defined in this
+   stylesheet (it lives in landing.css). Styled here as what it is. */
+#genUpgrade {
+  display: inline-block;
+  text-decoration: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 8px 18px;
+  font-size: 13px;
+  color: var(--ink, #dfe2dc);
+  background: transparent;
+  transition: border-color 0.18s ease, color 0.18s ease;
+}
+#genUpgrade:hover {
+  color: var(--accent-ink, #d6bb80);
+  border-color: var(--accent-ink, #d6bb80);
+}
 
 .gen-form { display: block; }
 
@@ -3422,4 +3458,102 @@ html.time-night .night-moon {
 @media (max-width: 640px) {
   .gen-controls { gap: 10px; }
   .gen-ctl { flex: 1 1 100%; }
+}
+
+
+/* ---- thinking ---------------------------------------------------------
+   What this replaces: a single blinking block cursor, shown for the whole
+   wait. On the hosted channel that is under a second and it reads as a
+   flicker; on the local one it can be twenty, and a stationary bar for
+   twenty seconds is indistinguishable from a page that has hung.
+
+   Three things happen at once here, and each one answers a different
+   question a waiting person is asking:
+
+     the dots      - is it alive?      (a travelling wave, never still)
+     the shimmer   - is it working?    (a sweep across the bubble)
+     the label     - on what?          (named by the caller)
+
+   All of it is transform and opacity, which the compositor animates
+   without touching layout, so it costs nothing while a reply streams in
+   behind it.
+   ---------------------------------------------------------------------- */
+.thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 0;
+}
+
+.thinking-dots {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 5px;
+  height: 14px;
+}
+
+.thinking-dots i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--msg-color, var(--bay, currentColor));
+  opacity: 0.45;
+  animation: thinkWave 1.25s ease-in-out infinite;
+}
+
+/* A travelling wave, not three dots blinking together: the stagger is
+   what makes it read as motion in a direction rather than as a pulse. */
+.thinking-dots i:nth-child(2) { animation-delay: 0.16s; }
+.thinking-dots i:nth-child(3) { animation-delay: 0.32s; }
+
+@keyframes thinkWave {
+  0%, 70%, 100% { transform: translateY(0) scale(1); opacity: 0.4; }
+  35%           { transform: translateY(-6px) scale(1.18); opacity: 1; }
+}
+
+.thinking-label {
+  font-size: 12.5px;
+  color: var(--muted, #a9ada5);
+  letter-spacing: 0.01em;
+}
+
+/* The sweep. A gradient wider than the bubble, slid across it - so the
+   highlight travels rather than the whole surface brightening. */
+.msg.assistant.streaming .msg-bubble.is-thinking {
+  position: relative;
+  overflow: hidden;
+}
+.msg.assistant.streaming .msg-bubble.is-thinking::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.07) 42%,
+    rgba(255, 255, 255, 0.13) 50%,
+    rgba(255, 255, 255, 0.07) 58%,
+    transparent 80%);
+  background-size: 220% 100%;
+  animation: thinkSweep 1.9s linear infinite;
+}
+
+@keyframes thinkSweep {
+  from { background-position: 140% 0; }
+  to   { background-position: -60% 0; }
+}
+
+/* The old cursor stays, but only once text is actually arriving - it is
+   a caret then, which is what a caret is for. */
+.msg.assistant.streaming .msg-bubble.is-thinking::after {
+  content: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-dots i,
+  .msg.assistant.streaming .msg-bubble.is-thinking::before {
+    animation: none;
+  }
+  .thinking-dots i { opacity: 0.7; }
 }

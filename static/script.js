@@ -1301,6 +1301,32 @@ function handleToolEvent(msgEl, evt) {
   }
 }
 
+/* The waiting state. Built as real elements rather than a CSS pseudo so
+   the three dots can carry independent animation delays, and so the
+   label can say what is being waited for. Removed by clearThinking() the
+   moment the first character of the reply arrives. */
+function showThinking(bubble, label) {
+  if (!bubble) return;
+  bubble.classList.add("is-thinking");
+  const wrap = document.createElement("span");
+  wrap.className = "thinking";
+  const dots = document.createElement("span");
+  dots.className = "thinking-dots";
+  dots.append(document.createElement("i"), document.createElement("i"),
+              document.createElement("i"));
+  const text = document.createElement("span");
+  text.className = "thinking-label";
+  text.textContent = label || "Thinking";
+  wrap.append(dots, text);
+  bubble.replaceChildren(wrap);
+}
+
+function clearThinking(bubble) {
+  if (!bubble || !bubble.classList.contains("is-thinking")) return;
+  bubble.classList.remove("is-thinking");
+  bubble.replaceChildren();
+}
+
 async function consumeStream(res, bubble) {
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -1323,6 +1349,7 @@ async function consumeStream(res, bubble) {
       if (start === -1) break;
       const end = buf.indexOf(SEP, start + 1);
       if (end === -1) break;              // incomplete - wait for more
+      clearThinking(bubble);
       visible += buf.slice(0, start);
       try {
         handleToolEvent(msgEl, JSON.parse(buf.slice(start + 1, end)));
@@ -1333,7 +1360,13 @@ async function consumeStream(res, bubble) {
     }
 
     const cut = buf.indexOf(SEP);
-    renderContent(bubble, visible + (cut === -1 ? buf : buf.slice(0, cut)));
+    const sofar = visible + (cut === -1 ? buf : buf.slice(0, cut));
+    // Only once there is something to show. renderContent() would blow
+    // the indicator away by itself, but the is-thinking CLASS would
+    // survive - leaving the shimmer running underneath the reply and the
+    // caret suppressed for the rest of the stream.
+    if (sofar) clearThinking(bubble);
+    renderContent(bubble, sofar);
     chatLog.parentElement.scrollTop = chatLog.parentElement.scrollHeight;
   }
   const cut = buf.indexOf(SEP);
@@ -1361,6 +1394,10 @@ async function sendChatMessage(text) {
   sendBtn.disabled = false;
   sendBtn.title = "Stop generating";
   topbarModelChip.textContent = model;
+  // Named for what is actually happening: Deep mode searches the web
+  // before it writes anything, and "Thinking" during a search is the
+  // kind of small lie that makes a wait feel longer than it is.
+  showThinking(bubble, useWebSearch ? "Searching the web" : "Thinking");
 
   const controller = new AbortController();
   activeStreamController = controller;
@@ -1474,6 +1511,7 @@ async function sendImagePrompt(text) {
   sendBtn.classList.add("is-streaming");
   sendBtn.title = "Generating…";
   sendBtn.disabled = true; // one-shot request, nothing to stream/abort
+  showThinking(bubble, "Drawing");
 
   const status = document.createElement("div");
   status.className = "search-status";
@@ -1532,6 +1570,7 @@ async function regenerateLast(oldMsgEl) {
   sendBtn.classList.add("is-streaming");
   sendBtn.title = "Stop generating";
   topbarModelChip.textContent = model;
+  showThinking(bubble, "Thinking");
 
   const controller = new AbortController();
   activeStreamController = controller;

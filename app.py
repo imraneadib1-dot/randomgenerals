@@ -2588,9 +2588,23 @@ def delete_thread(tid):
 # ----------------------------------------------------------------------
 _VISION_MODEL_HINTS = ("vision", "llava", "moondream", "minicpm-v", "bakllava")
 
+# Gemma 3 is multimodal FROM 4B UPWARDS ONLY. 1b and 270m are text-only,
+# so a substring match on "gemma3" would claim the default chat model can
+# see pictures when it cannot.
+#
+# This list is why attachments silently stopped working: vision moved
+# from llava to gemma3:4b and this function was not told. It returned
+# False for the new model, _stream_reply() builds images_b64 only when
+# it returns True, and so the picture was dropped on the floor before
+# the request was ever made - no error anywhere, just a model answering
+# as though nothing had been attached.
+_VISION_MODEL_EXACT = ("gemma3:4b", "gemma3:12b", "gemma3:27b")
+
 
 def is_vision_model(model):
     name = (model or "").lower()
+    if any(name.startswith(m) for m in _VISION_MODEL_EXACT):
+        return True
     return any(hint in name for hint in _VISION_MODEL_HINTS)
 
 
