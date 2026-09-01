@@ -3096,6 +3096,132 @@ def _video_quota_view(owner_id, plan, signed_in=True):
     }
 
 
+# ----------------------------------------------------------------------
+# Diagrams. The fourth bay, and the only generative one that is free
+# at any volume - because the drawing happens in the visitor's
+# browser.
+#
+# The server's whole job is to get a language model to emit valid
+# Mermaid; mermaid.js turns that into an SVG client-side. There is no
+# render, no GPU, no per-call cost, and nothing to meter beyond the
+# chat credits the model call already spends. That is the difference
+# between this and the video bay it replaced: a clip cost real money
+# per second on hardware this deployment does not have.
+# ----------------------------------------------------------------------
+DIAGRAM_SYSTEM_PROMPT = (
+    "You draw diagrams as Mermaid source. Output ONLY the Mermaid "
+    "code - no prose, no explanation, and no markdown fences.\n\n"
+    # Each line below is a way the output has actually been seen to
+    # break a render, not a style preference.
+    "Pick the diagram type that fits: flowchart for processes and "
+    "architecture, sequenceDiagram for messages between parties, "
+    "erDiagram for schemas, stateDiagram-v2 for state machines, "
+    "classDiagram for types, gantt for schedules.\n"
+    "Quote every label containing a space, bracket, slash or "
+    "punctuation. Node[Send request] parses; Node[Send request (v2)] "
+    "does not unless quoted.\n"
+    "Keep node ids short and alphanumeric, and never reuse an id for "
+    "two different nodes.\n"
+    "Aim for 6-14 nodes. A diagram that does not fit on a screen is a "
+    "worse answer than one that leaves out a detail.\n"
+    "Do not set styles, themes or colours - the page supplies those, "
+    "and a hardcoded colour is unreadable in one of the two themes."
+)
+
+
+def _clean_mermaid(text):
+    """Strip the wrapping a model adds even when told not to.
+
+    Fences are the common one; a leading "Here is the diagram:" is
+    frequent enough to be worth removing rather than failing on.
+    """
+    body = (text or "").strip()
+    if "```" in body:
+        parts = body.split("```")
+        # The longest fenced block is the diagram; prose around it
+        # is not.
+        blocks = [p for i, p in enumerate(parts) if i % 2 == 1]
+        if blocks:
+            body = max(blocks, key=len)
+            first, _, rest = body.partition(chr(10))
+            if first.strip().lower() in ("mermaid", "mmd"):
+                body = rest
+    lines = [l for l in body.splitlines() if l.strip()]
+    # Drop any preamble before the first line that opens a diagram.
+    starts = ("flowchart", "graph", "sequencediagram", "erdiagram",
+              "statediagram", "classdiagram", "gantt", "pie",
+              "mindmap", "journey", "timeline", "gitgraph")
+    for i, l in enumerate(lines):
+        if l.strip().lower().startswith(starts):
+            return chr(10).join(lines[i:]).strip()
+    return chr(10).join(lines).strip()
+
+
+@app.route("/api/diagram", methods=["POST"])
+def diagram_route():
+    payload = request.get_json(force=True, silent=True) or {}
+    prompt = (payload.get("prompt") or "").strip()
+    if not prompt:
+        return jsonify({"error": "Describe what you want drawn."}), 400
+
+    blocked = moderation.check_message(prompt)
+    if blocked is not None:
+        return jsonify({"error": blocked}), 400
+
+    account_credits, save_account = current_account()
+    apply_refill(account_credits)
+    save_account()
+    if account_credits["balance"] < CREDIT_COST_CHAT:
+        return jsonify({
+            "error": "Out of credits. They will refill automatically.",
+            "credits": credits_view(account_credits),
+        }), 402
+
+    # Routed like the code bay: a diagram is source, and the model
+    # that writes the best code writes the best Mermaid.
+    plan = features.normalize_plan(account_credits.get("plan"))
+    providers = [ollama_provider(plan)]
+    if groq_api.configured():
+        groq_models = groq_api.models()
+        providers.append({"id": "groq", "available": bool(groq_models),
+                          "models": groq_models,
+                          "model_info": []})
+    route = _recommended_routes(providers, plan).get("code") or {}
+    provider = route.get("provider") or "ollama"
+    model = route.get("model")
+    if not model:
+        return jsonify({"error": "No model is available right now."}), 503
+
+    streamer = PROVIDER_STREAMERS.get(provider)
+    history = [{"role": "system", "content": DIAGRAM_SYSTEM_PROMPT},
+               {"role": "user", "content": prompt}]
+    opts = {"num_predict": 900, "temperature": 0.2, "num_ctx": 8192}
+    try:
+        text = "".join(streamer(model, history, options=opts))
+    except groq_api.RateLimited:
+        # Same failover the chat bay uses: a drained per-minute budget
+        # should degrade to the local model, not surface as an error.
+        local = _local_alternative("code")
+        if not local:
+            return jsonify({
+                "error": "The fast channel is busy and no local model "
+                         "is running. Try again in a moment.",
+            }), 503
+        text = "".join(
+            PROVIDER_STREAMERS["ollama"](local, history, options=opts))
+
+    source = _clean_mermaid(text)
+    if not source:
+        return jsonify({
+            "error": "The model did not return a diagram. Try "
+                     "describing it differently.",
+        }), 502
+
+    spend_credits(usage_based_cost(len(source) // 4, mode="code"))
+    return jsonify({"source": source, "model": model,
+                    "provider": provider})
+
+
 @app.route("/api/video/status", methods=["GET"])
 def video_status():
     """What the bay should render before anyone types anything."""

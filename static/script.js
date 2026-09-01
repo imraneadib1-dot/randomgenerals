@@ -438,6 +438,39 @@ const STARTERS = {
   video: [],
 };
 
+// The chips inside the generation bay, which are separate from the chat
+// starters: this bay has its own examples element in the markup.
+const GEN_EXAMPLES = {
+  diagram: [
+    ["OAuth flow", "How an OAuth 2.0 authorization code flow works, including the token exchange"],
+    ["DB schema", "A database schema for a blog with users, posts, comments and tags"],
+    ["Request path", "How a browser request reaches a Flask app behind a Cloudflare tunnel"],
+    ["State machine", "The states of an online order from placed to delivered or refunded"],
+  ],
+};
+
+function renderGenExamples(kind) {
+  const box = document.getElementById("genExamples");
+  if (!box) return;
+  const list = GEN_EXAMPLES[kind];
+  if (!list) return;               // media bays keep their own markup
+  box.textContent = "";
+  const lead = document.createElement("span");
+  lead.className = "gen-examples-lead";
+  lead.textContent = "Try";
+  box.appendChild(lead);
+  list.forEach(([label, prompt]) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    b.addEventListener("click", () => {
+      genPrompt.value = prompt;
+      genPrompt.focus();
+    });
+    box.appendChild(b);
+  });
+}
+
 function renderStarters() {
   if (!emptyState) return;
   const old = emptyState.querySelector(".starters");
@@ -2576,6 +2609,43 @@ function renderQuota(q) {
    pay for it - a bay that simply is not there sells nothing. */
 function applyVideoAccess(d) {
   const q = d.quota || {};
+
+  // WHAT THIS BAY IS DECIDED FIRST.
+  //
+  // Diagrams have no provider behind them - the model writes Mermaid and
+  // the browser draws it - so none of the "is a key configured" checks
+  // below apply. Running them first was a real bug: with no media key
+  // set the function returned early with the bay locked, and the diagram
+  // mode it should have fallen back to was never reached.
+  const kind =
+    d.kind === "model" ? "model"
+      : d.kind === "video" && d.configured ? "video"
+      : "diagram";
+
+  if (kind === "diagram") {
+    genKind = "diagram";
+    genLocked.hidden = true;
+    genForm.hidden = false;
+    if (genTitle) genTitle.textContent = "Draw a diagram";
+    if (genSub) {
+      genSub.textContent =
+        "Describe a system, a flow or a schema and see it drawn.";
+    }
+    if (genPrompt) {
+      genPrompt.placeholder =
+        "How an OAuth 2.0 authorization code flow works, "
+        + "including the token exchange";
+    }
+    if (genQuotaEl) genQuotaEl.textContent = "";
+    renderGenExamples("diagram");
+    // None of the media controls mean anything for a diagram.
+    ["genSeconds", "genRatio", "genQuality"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el && el.closest(".gen-ctl")) el.closest(".gen-ctl").hidden = true;
+    });
+    return;
+  }
+
   if (!d.configured) {
     genLocked.hidden = false;
     // The server says which key is missing; show that rather than a
@@ -2598,21 +2668,45 @@ function applyVideoAccess(d) {
     genForm.hidden = true;
     return;
   }
-  genKind = d.kind === "model" ? "model" : "video";
+  genKind = d.kind === "model" ? "model"
+    : d.kind === "video" && d.configured ? "video"
+    : "diagram";
   if (genTitle) {
     genTitle.textContent =
-      genKind === "model" ? "Make a 3D model" : "Make a video";
+      genKind === "model" ? "Make a 3D model"
+      : genKind === "video" ? "Make a video"
+      : "Draw a diagram";
   }
   if (genSub) {
     genSub.textContent =
       genKind === "model"
         ? "Describe an object and get back a 3D model you can spin."
-        : "Describe a shot and get it back as a clip, up to "
-          + d.max_seconds + "s.";
+        : genKind === "video"
+        ? "Describe a shot and get it back as a clip, up to "
+          + d.max_seconds + "s."
+        : "Describe a system, a flow or a schema and see it drawn.";
   }
-  if (genPrompt && genKind === "model") {
-    genPrompt.placeholder =
-      "A weathered brass diving helmet with a cracked glass port";
+  if (genPrompt) {
+    if (genKind === "model") {
+      genPrompt.placeholder =
+        "A weathered brass diving helmet with a cracked glass port";
+    } else if (genKind === "diagram") {
+      genPrompt.placeholder =
+        "How an OAuth 2.0 authorization code flow works, "
+        + "including the token exchange";
+    }
+  }
+  // The diagram bay has no provider behind it, so nothing is locked and
+  // none of the media controls apply.
+  if (genKind === "diagram") {
+    genLocked.hidden = true;
+    genForm.hidden = false;
+    if (genQuotaEl) genQuotaEl.textContent = "";
+    ["genSeconds", "genRatio", "genQuality"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el && el.closest(".gen-ctl")) el.closest(".gen-ctl").hidden = true;
+    });
+    return;
   }
   // A mesh has no duration, so the length slider means nothing here.
   const lengthCtl = document.getElementById("genSeconds");
@@ -2674,13 +2768,135 @@ if (genExamples) {
   });
 }
 
+/* ----------------------------------------------------------------
+   Diagram bay
+
+   The only generative bay with no provider bill behind it: the server
+   returns Mermaid source and the browser draws it. That is why it can
+   be free at any volume on hardware that could not afford video - the
+   expensive step happens on the viewer's machine, not the server's.
+
+   Synchronous, so it skips the job/polling machinery the video and 3D
+   backends need. One request, one diagram.
+   ---------------------------------------------------------------- */
+let mermaidReady = false;
+
+function initMermaid() {
+  if (mermaidReady || !window.mermaid) return mermaidReady;
+  try {
+    window.mermaid.initialize({
+      startOnLoad: false,
+      // securityLevel strict: the source comes from a language model,
+      // and mermaid can emit click handlers and inline HTML if asked.
+      // Nothing here needs either.
+      securityLevel: "strict",
+      theme: "dark",
+      themeVariables: {
+        background: "transparent",
+        primaryColor: "#2a4155",
+        primaryTextColor: "#dfe2dc",
+        primaryBorderColor: "#a08348",
+        lineColor: "#7fa3bd",
+        fontFamily: "Inter, system-ui, sans-serif",
+      },
+    });
+    mermaidReady = true;
+  } catch (_) {
+    mermaidReady = false;
+  }
+  return mermaidReady;
+}
+
+async function drawDiagram(source) {
+  const out = document.getElementById("diagramOut");
+  const srcBox = document.getElementById("diagramSrc");
+  const code = document.getElementById("diagramCode");
+  if (!out) return;
+
+  code.textContent = source;
+  srcBox.hidden = false;
+  // #diagramOut lives INSIDE #videoResult, which sendDiagram hides on
+  // the way in. Showing the SVG without showing its container left a
+  // fully-rendered diagram - 13 nodes, measured - invisible on the page.
+  videoResult.hidden = false;
+  if (videoOut) videoOut.hidden = true;
+  if (modelOut) modelOut.hidden = true;
+  if (videoDownload) videoDownload.hidden = true;
+
+  if (!initMermaid()) {
+    // The CDN did not answer. The source is still the useful artefact,
+    // so it is shown rather than an apology.
+    out.className = "diagram-out is-error";
+    out.textContent =
+      "The diagram renderer could not load. The source is below.";
+    out.hidden = false;
+    srcBox.open = true;
+    return;
+  }
+
+  try {
+    const id = "mmd" + Date.now();
+    const { svg } = await window.mermaid.render(id, source);
+    out.className = "diagram-out";
+    out.innerHTML = svg;
+    out.hidden = false;
+  } catch (err) {
+    // A parse failure is the model's mistake, not the user's. Show what
+    // it wrote so the line can be fixed or the prompt rephrased.
+    out.className = "diagram-out is-error";
+    out.textContent =
+      "That diagram did not parse. The source is below - usually one "
+      + "line needs quoting.";
+    out.hidden = false;
+    srcBox.open = true;
+  }
+}
+
+async function sendDiagram(prompt) {
+  const out = document.getElementById("diagramOut");
+  const srcBox = document.getElementById("diagramSrc");
+  if (out) out.hidden = true;
+  if (srcBox) srcBox.hidden = true;
+  videoResult.hidden = true;
+  genRun.disabled = true;
+  videoSay("Drawing\u2026");
+
+  let d;
+  try {
+    const r = await fetch("/api/diagram", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    });
+    d = await r.json();
+    if (!r.ok) {
+      videoSay(d.error || "Could not draw that.", true);
+      genRun.disabled = false;
+      return;
+    }
+  } catch (_) {
+    videoSay("Could not reach the server.", true);
+    genRun.disabled = false;
+    return;
+  }
+
+  videoSay("");
+  genRun.disabled = false;
+  await drawDiagram(d.source);
+  loadCredits();
+}
+
 if (genForm) {
   genForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const prompt = (genPrompt.value || "").trim();
     if (!prompt) {
-      videoSay("Describe the video you want.", true);
+      videoSay("Describe what you want drawn.", true);
       genPrompt.focus();
+      return;
+    }
+    if (genKind === "diagram") {
+      await sendDiagram(prompt);
       return;
     }
 

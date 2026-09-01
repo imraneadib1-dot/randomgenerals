@@ -115,8 +115,8 @@
           role="tab"
           aria-selected="false"
         >
-          <span class="bay-icon">▶</span>
-          <span>Video</span>
+          <span class="bay-icon">◇</span>
+          <span>Diagram</span>
         </button>
       </div>
 
@@ -277,9 +277,9 @@
                  same thing - it makes footage, it cannot change footage
                  you already have. -->
             <div class="gen-head">
-              <h2 class="gen-title" id="genTitle">Make a video</h2>
+              <h2 class="gen-title" id="genTitle">Draw a diagram</h2>
               <p class="gen-sub" id="genSub">
-                Describe a shot and get it back as a clip.
+                Describe a system, a flow or a schema and see it drawn.
               </p>
             </div>
 
@@ -294,7 +294,7 @@
                 class="video-prompt"
                 rows="3"
                 maxlength="900"
-                placeholder="A slow aerial push over dunes at sunrise, warm light raking across the ridges, fine sand blowing off the crests, cinematic."
+                placeholder="How an OAuth 2.0 authorization code flow works, including the token exchange"
               ></textarea>
 
               <div class="gen-controls">
@@ -363,6 +363,14 @@
                 ar
                 hidden
               ></model-viewer>
+              <!-- Drawn in the browser. The server never renders an
+                   image, which is the whole reason this bay can be free
+                   on hardware that could not afford video. -->
+              <div class="diagram-out" id="diagramOut" hidden></div>
+              <details class="diagram-src" id="diagramSrc" hidden>
+                <summary>Diagram source</summary>
+                <pre><code id="diagramCode"></code></pre>
+              </details>
               <a class="video-download" id="videoDownload" download>
                 Download
               </a>
@@ -857,6 +865,13 @@
     <script
       type="module"
       src="https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js"
+    ></script>
+    <!-- Mermaid draws the diagram bay's output client-side. Deferred:
+         nothing else on the page waits for it, and the bay renders the
+         moment it arrives. -->
+    <script
+      defer
+      src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.1/mermaid.min.js"
     ></script>
     <script src="{{ asset('script.js') }}"></script>
   </body>
