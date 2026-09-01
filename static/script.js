@@ -2548,6 +2548,12 @@ const genSub = document.getElementById("genSub");
 const videoStatusEl = document.getElementById("videoStatus");
 const videoResult = document.getElementById("videoResult");
 const videoOut = document.getElementById("videoOut");
+const modelOut = document.getElementById("modelOut");
+const genTitle = document.getElementById("genTitle");
+// "video" or "model" - what this bay currently produces, from
+// /api/video/status. The two share a route, a quota and a job table;
+// only the output element and the wording differ.
+let genKind = "video";
 const videoDownload = document.getElementById("videoDownload");
 
 let videoPoll = null;
@@ -2583,6 +2589,27 @@ function applyVideoAccess(d) {
   // The free backend has no quality or aspect controls behind it, so
   // hide the ones that would do nothing rather than let someone set a
   // value that is quietly ignored.
+  genKind = d.kind === "model" ? "model" : "video";
+  if (genTitle) {
+    genTitle.textContent =
+      genKind === "model" ? "Make a 3D model" : "Make a video";
+  }
+  if (genSub) {
+    genSub.textContent =
+      genKind === "model"
+        ? "Describe an object and get back a 3D model you can spin."
+        : "Describe a shot and get it back as a clip, up to "
+          + d.max_seconds + "s.";
+  }
+  if (genPrompt && genKind === "model") {
+    genPrompt.placeholder =
+      "A weathered brass diving helmet with a cracked glass port";
+  }
+  // A mesh has no duration, so the length slider means nothing here.
+  const lengthCtl = document.getElementById("genSeconds");
+  if (lengthCtl && lengthCtl.closest(".gen-ctl")) {
+    lengthCtl.closest(".gen-ctl").hidden = genKind === "model";
+  }
   const freeTier = !!d.free_tier;
   const shapeCtl = document.getElementById("genRatio");
   const qualityCtl = document.getElementById("genQuality");
@@ -2695,7 +2722,11 @@ function pollVideoJob(id) {
   // nearly done. An invented percentage that sticks is worse than an
   // honest label.
   const started = Date.now();
-  videoSay("Generating… this usually takes a minute or two.");
+  videoSay(
+    genKind === "model"
+      ? "Building the model… usually under a minute."
+      : "Generating… this usually takes a minute or two.",
+  );
   videoPoll = setInterval(async () => {
     let j, q;
     try {
@@ -2729,7 +2760,21 @@ function pollVideoJob(id) {
     }
 
     videoSay("");
-    videoOut.src = j.url;
+    if (genKind === "model") {
+      // model-viewer takes the URL on `src` like an <img> and fetches it
+      // itself. Cross-origin is fine - Tripo serves the GLB with
+      // permissive CORS, which is why it is not proxied through here.
+      modelOut.src = j.url;
+      modelOut.setAttribute("alt", j.prompt || "Generated 3D model");
+      modelOut.hidden = false;
+      videoOut.hidden = true;
+      videoDownload.textContent = "Download GLB";
+    } else {
+      videoOut.src = j.url;
+      videoOut.hidden = false;
+      modelOut.hidden = true;
+      videoDownload.textContent = "Download MP4";
+    }
     // The file lives on the provider's CDN, so this is a link out rather
     // than a served file. `download` is a hint the browser may ignore
     // cross-origin, which is why the label says what it is.

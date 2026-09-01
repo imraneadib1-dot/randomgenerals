@@ -277,7 +277,7 @@
                  same thing - it makes footage, it cannot change footage
                  you already have. -->
             <div class="gen-head">
-              <h2 class="gen-title">Make a video</h2>
+              <h2 class="gen-title" id="genTitle">Make a video</h2>
               <p class="gen-sub" id="genSub">
                 Describe a shot and get it back as a clip.
               </p>
@@ -344,11 +344,27 @@
             <div class="video-status" id="videoStatus" hidden></div>
 
             <div class="video-result" id="videoResult" hidden>
+              <!-- Two possible outputs, one of which is shown. A clip is
+                   a <video>; a mesh needs a renderer, and <model-viewer>
+                   is Google's web component wrapping three.js - orbit,
+                   pinch-zoom and a sensible default light rig without
+                   this app taking on a 3D engine of its own. -->
               <video class="video-preview" id="videoOut" controls playsinline
                      disablepictureinpicture
-                     controlslist="noremoteplayback"></video>
+                     controlslist="noremoteplayback" hidden></video>
+              <model-viewer
+                id="modelOut"
+                class="model-preview"
+                camera-controls
+                touch-action="pan-y"
+                auto-rotate
+                shadow-intensity="1"
+                exposure="1.05"
+                ar
+                hidden
+              ></model-viewer>
               <a class="video-download" id="videoDownload" download>
-                Download MP4
+                Download
               </a>
             </div>
           </div>
@@ -835,6 +851,13 @@
     />
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+    <!-- GLB viewer for the 3D bay. type=module + defer so it does not
+         block first paint; the element degrades to nothing if it fails
+         to load, and the download link still works. -->
+    <script
+      type="module"
+      src="https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js"
+    ></script>
     <script src="{{ asset('script.js') }}"></script>
   </body>
 </html>

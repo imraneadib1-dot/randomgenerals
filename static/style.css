@@ -3681,3 +3681,30 @@ html.time-night .night-moon {
   .starters button { transition: none; }
   .starters button:hover { transform: none; }
 }
+
+
+/* ---- 3D output --------------------------------------------------------
+   Sized like the video preview it sits beside, so switching what the bay
+   makes does not change the shape of the page. A dark ground rather than
+   a light one: a mesh arrives untextured often enough that the backdrop
+   is doing real work, and grey-on-grey hides exactly the silhouette you
+   are trying to judge.
+   ---------------------------------------------------------------------- */
+.model-preview {
+  width: 100%;
+  height: 420px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: radial-gradient(
+    120% 90% at 50% 15%,
+    rgba(223, 226, 220, 0.09),
+    rgba(20, 41, 66, 0.9) 70%);
+  --poster-color: transparent;
+}
+
+.model-hint {
+  font-size: 12px;
+  color: var(--ink-faint, #7a7e74);
+  margin-top: 8px;
+  text-align: center;
+}

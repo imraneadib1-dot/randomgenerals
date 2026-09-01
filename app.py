@@ -39,6 +39,7 @@ import openai_api  # noqa: E402  OpenAI-compatible API - see openai_api.py
 import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
 import pixverse  # noqa: E402  paid text-to-video - see pixverse.py
 import hfvideo  # noqa: E402  free-tier text-to-video - see hfvideo.py
+import tripo3d  # noqa: E402  text-to-3D generation - see tripo3d.py
 
 # The one AI this app talks to: Ollama, running locally (llama3.2 pulled
 # already). Runs fully on this machine - no cloud call, no API key - but
@@ -3039,6 +3040,21 @@ VIDEO_JOBS_LOCK = threading.Lock()
 # than showing "not switched on" to everyone. Both expose the same
 # start()/result() pair, so nothing below this line knows which answered.
 def _video_backend():
+    """Whichever generator this bay can actually run.
+
+    3D FIRST, and the reason is arithmetic rather than preference. The
+    video backends were measured on this deployment: PixVerse has no free
+    tier at any volume, and Hugging Face's free allowance turned out to be
+    about three clips a MONTH site-wide - three succeeded and the fourth
+    was refused. A bay promising two a day on top of that fails on its
+    first visitor.
+
+    Tripo hands new accounts 2,000 credits at roughly 20 a generation,
+    so the same free quota buys about a hundred models instead of three
+    clips. A mesh is one asset; a clip is a hundred rendered frames.
+    """
+    if tripo3d.configured():
+        return tripo3d, "tripo"
     if pixverse.configured():
         return pixverse, "pixverse"
     if hfvideo.configured():
@@ -3094,11 +3110,18 @@ def video_status():
         # useless - it gives whoever runs the server nothing to do, and
         # this bay has two possible backends, so "no key" is ambiguous
         # without naming which key.
-        "detail": "" if backend else hfvideo.unavailable_reason(),
+        # Names the cheapest way to switch the bay on, which is the
+        # 3D key - a free Tripo account buys ~100 models against Hugging
+        # Face's ~3 clips.
+        "detail": "" if backend else tripo3d.unavailable_reason(),
         # Named so the bay can say what it is using, and so "free tier,
         # may run out" is something the page can explain rather than a
         # surprise at the moment it happens.
         "free_tier": backend_name == "huggingface",
+        # "video" or "model" - the bay renders a <video> or a GLB viewer,
+        # and the copy differs, so the client is told rather than
+        # guessing from the backend name.
+        "kind": "model" if backend_name == "tripo" else "video",
         "quota": _video_quota_view(current_owner_id(), plan, signed_in),
         "max_seconds": pixverse.MAX_SECONDS,
         "min_seconds": pixverse.MIN_SECONDS,
@@ -3118,8 +3141,8 @@ def video_generate():
     backend, backend_name = _video_backend()
     if backend is None:
         return jsonify({
-            "error": "Video generation isn't set up on this server yet.",
-            "detail": hfvideo.unavailable_reason(),
+            "error": "Generation isn't set up on this server yet.",
+            "detail": tripo3d.unavailable_reason(),
         }), 503
 
     account, _ = current_account()
@@ -3175,9 +3198,10 @@ def video_generate():
             ratio=payload.get("ratio") or "16:9",
         )
     else:
-        # The free backend has no quality or aspect controls - the models
-        # behind it produce a fixed shape, and offering settings that do
-        # nothing is worse than not offering them.
+        # Neither the free video backend nor the 3D one has quality or
+        # aspect controls - a mesh has no aspect ratio and LTX produces a
+        # fixed shape - so offering settings that do nothing is worse
+        # than not offering them.
         video_id, err = backend.start(prompt, seconds=seconds)
     if err:
         db.video_refund(owner, month)
@@ -3211,8 +3235,10 @@ def video_job(job_id):
     if job["status"] == "running":
         # Asked of whichever backend started it, not of whichever is
         # configured now - a key added mid-render must not orphan a job.
-        started_with = (pixverse if job.get("backend") == "pixverse"
-                        else hfvideo)
+        started_with = {
+            "pixverse": pixverse,
+            "tripo": tripo3d,
+        }.get(job.get("backend"), hfvideo)
         state, url, err = started_with.result(job["video_id"])
         if state == "done":
             job.update({"status": "done", "url": url})
