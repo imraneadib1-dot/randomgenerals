@@ -2589,6 +2589,15 @@ function applyVideoAccess(d) {
   // The free backend has no quality or aspect controls behind it, so
   // hide the ones that would do nothing rather than let someone set a
   // value that is quietly ignored.
+  // A key with no credits behind it is worse than no key: the bay looks
+  // ready and fails on the first click. Say it before anyone types.
+  if (d.kind === "model" && d.credits === 0) {
+    genLocked.hidden = false;
+    genLockedText.textContent =
+      "3D generation is set up but the account has no credits left.";
+    genForm.hidden = true;
+    return;
+  }
   genKind = d.kind === "model" ? "model" : "video";
   if (genTitle) {
     genTitle.textContent =

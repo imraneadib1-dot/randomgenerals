@@ -3122,6 +3122,11 @@ def video_status():
         # and the copy differs, so the client is told rather than
         # guessing from the backend name.
         "kind": "model" if backend_name == "tripo" else "video",
+        # Credits left, when the backend can report them. A configured
+        # key with an empty balance is indistinguishable from a working
+        # one until someone waits on a job that cannot start, so the bay
+        # asks up front and says so instead.
+        "credits": (tripo3d.balance() if backend_name == "tripo" else None),
         "quota": _video_quota_view(current_owner_id(), plan, signed_in),
         "max_seconds": pixverse.MAX_SECONDS,
         "min_seconds": pixverse.MIN_SECONDS,

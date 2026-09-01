@@ -8,11 +8,17 @@ out to be roughly THREE CLIPS A MONTH site-wide - measured, not
 estimated: three succeeded and the fourth was refused. A bay offering
 two a day on top of that is a promise that fails on the first visitor.
 
-3D is a different economic shape. A mesh is a single asset rather than a
-hundred rendered frames, so it costs the provider far less, and Tripo
-hands new accounts 2,000 credits at roughly 20 a generation - about a
-hundred models before anything is owed. That is enough to actually run
-the feature rather than demonstrate it.
+3D is a cheaper thing to make - a mesh is a single asset rather than a
+hundred rendered frames - but CHEAPER IS NOT FREE, and this module was
+written believing it was. A search result said new Tripo accounts get
+2,000 credits; the balance endpoint on a real new account returns
+{"balance": 0}. The claim was repeated here and in the setup copy before
+anyone checked it, which is the wrong order.
+
+So this needs a funded account. It is still the cheapest generative bay
+on offer - a model is around $0.20 against $0.45 for a PixVerse clip -
+but nothing here is free, and balance() exists so the app can say that
+before someone waits on a job that cannot start.
 
 THE API
 
@@ -55,7 +61,7 @@ def configured():
 def unavailable_reason():
     if not api_key():
         return ("3D generation needs a Tripo API key - set TRIPO_API_KEY "
-                "on the server. New accounts get 2,000 free credits.")
+                "on the server.")
     return ""
 
 
@@ -64,6 +70,27 @@ def _headers():
         "Authorization": "Bearer " + api_key(),
         "Content-Type": "application/json",
     }
+
+
+def balance():
+    """Credits left on the account, or None if it cannot be read.
+
+    Worth a call: Tripo answers 403 for an empty balance as readily as
+    for a bad key, so without this the app cannot tell "you have not
+    paid" from "your key is wrong" - and sends whoever is debugging it
+    to regenerate a key that was never the problem.
+    """
+    if not configured():
+        return None
+    try:
+        r = requests.get(API_ROOT + "/user/balance",
+                         headers=_headers(), timeout=15)
+        data = r.json()
+    except (requests.exceptions.RequestException, ValueError):
+        return None
+    if data.get("code") not in (0, None):
+        return None
+    return (data.get("data") or {}).get("balance")
 
 
 def start(prompt, seconds=None):
@@ -92,17 +119,20 @@ def start(prompt, seconds=None):
     except requests.exceptions.RequestException as e:
         return None, "Could not reach the 3D service: %s" % e
 
-    if r.status_code in (401, 403):
-        return None, "The 3D service rejected the key."
+    # The BODY first, then the status. Tripo answers 403 for "no credit"
+    # as well as for a bad key, and reading the status alone reported an
+    # empty balance as a rejected key - which sends whoever is debugging
+    # it to regenerate a key that was never the problem.
     try:
         data = r.json()
     except ValueError:
+        if r.status_code in (401, 403):
+            return None, "The 3D service rejected the key."
         return None, "The 3D service returned an unreadable response."
-
-    # Tripo answers 200 with a non-zero `code` for most failures, so the
-    # HTTP status is not the check that matters.
     if data.get("code") not in (0, None):
         return None, _friendly(data.get("message") or str(data.get("code")))
+    if r.status_code in (401, 403):
+        return None, "The 3D service rejected the key."
 
     task = (data.get("data") or {}).get("task_id")
     if not task:
