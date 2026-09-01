@@ -724,6 +724,22 @@
                entirely until there's an actual subscription to describe. -->
           <div class="sub-dashboard" id="subDashboard" hidden>
             <div class="sub-row">
+              <span class="sub-label">Account</span>
+              <span class="sub-value" id="subEmailValue"></span>
+            </div>
+            <div class="sub-row">
+              <span class="sub-label">Email</span>
+              <span class="sub-value" id="subVerifiedValue"></span>
+            </div>
+            <div class="sub-row">
+              <span class="sub-label">Member since</span>
+              <span class="sub-value" id="subSinceValue"></span>
+            </div>
+            <div class="sub-row">
+              <span class="sub-label">Credits</span>
+              <span class="sub-value" id="subCreditsValue"></span>
+            </div>
+            <div class="sub-row">
               <span class="sub-label">Current plan</span>
               <span class="sub-value" id="subPlanValue">Free</span>
             </div>
@@ -734,6 +750,10 @@
             <div class="sub-row" id="subRenewalRow" hidden>
               <span class="sub-label" id="subRenewalLabel">Renews</span>
               <span class="sub-value" id="subRenewalValue"></span>
+            </div>
+            <div class="sub-row" id="subPaymentRow" hidden>
+              <span class="sub-label">Payment handled by</span>
+              <span class="sub-value" id="subPaymentValue"></span>
             </div>
             <button
               type="button"

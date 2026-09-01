@@ -868,7 +868,7 @@ threading.Thread(target=imagegen.preload, daemon=True).start()
 # boot already issues a real request; timing it costs nothing and answers
 # the question directly, rather than inferring it from a CPU count or a
 # GPU probe that would be wrong on the next host.
-_local_speed = {"warm_seconds": None}
+_local_speed: dict[str, float | None] = {"warm_seconds": None}
 
 # A warm-up slower than this means the model loads and generates too
 # slowly for anyone to sit through. Generous on purpose: it has to clear
@@ -2000,6 +2000,7 @@ def billing_subscription():
     if not uid or uid not in USERS:
         return jsonify({"error": "Sign in first."}), 401
     user = USERS[uid]
+    credits = credits_view(user["credits"])
     return jsonify({
         "plan": user["plan"],
         "plan_label": PLANS[user["plan"]]["label"],
@@ -2007,8 +2008,27 @@ def billing_subscription():
         "status": user.get("subscription_status"),
         "current_period_end": user.get("current_period_end"),
         "cancel_at_period_end": bool(user.get("cancel_at_period_end")),
-        "billing_live": billing_live(),
-        "has_billing_account": bool(user.get("stripe_customer_id")),
+        "billing_live": billing_live() or paddle_billing.configured(),
+        # Which processor holds the card, so the panel can name it rather
+        # than saying "your payment provider".
+        "processor": "Paddle" if paddle_billing.configured() else "Stripe",
+        # Paddle was missing here. This checked only for a Stripe customer
+        # id, so on a Paddle deployment - which this one is - a paying
+        # subscriber never saw the button that manages their own
+        # subscription.
+        "has_billing_account": bool(user.get("stripe_customer_id")
+                                    or user.get("paddle_customer_id")),
+        # The account itself. The panel is where someone goes to check
+        # what they are being charged for, and "which account is this?"
+        # is part of that question.
+        "email": user.get("email") or "",
+        "email_verified": bool(user.get("email_verified")),
+        "created": user.get("created") or "",
+        "credits": {
+            "balance": credits.get("balance"),
+            "cap": credits.get("cap"),
+            "next_refill_in": credits.get("next_refill_in"),
+        },
     })
 
 
@@ -2365,8 +2385,10 @@ def add_connector():
         }), 400
 
     found, err = connectors.discover(url, token or None)
-    if err:
-        return jsonify({"error": err}), 400
+    if err or not found:
+        return jsonify({
+            "error": err or "Nothing usable was found at that link.",
+        }), 400
 
     found["id"] = uuid.uuid4().hex[:16]
     found["token"] = token
@@ -3667,6 +3689,10 @@ def diagram_route():
         return jsonify({"error": "No model is available right now."}), 503
 
     streamer = PROVIDER_STREAMERS.get(provider)
+    if streamer is None:
+        return jsonify({
+            "error": "No model is available right now.",
+        }), 503
     history = [{"role": "system", "content": DIAGRAM_SYSTEM_PROMPT},
                {"role": "user", "content": prompt}]
     opts = {"num_predict": 900, "temperature": 0.2, "num_ctx": 8192}
@@ -3843,7 +3869,7 @@ def video_job(job_id):
         started_with = {
             "pixverse": pixverse,
             "tripo": tripo3d,
-        }.get(job.get("backend"), hfvideo)
+        }.get(job.get("backend") or "", hfvideo)
         state, url, err = started_with.result(job["video_id"])
         if state == "done":
             job.update({"status": "done", "url": url})
@@ -4058,7 +4084,8 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # far more than the model-swap cost alone. 8192 tokens is generous for
     # a chat conversation and keeps the whole model comfortably inside
     # VRAM, so it runs on GPU only.
-    combined_options = dict(CODE_MODEL_OPTIONS) if mode == "code" else {}
+    combined_options: dict[str, Any] = (
+        dict(CODE_MODEL_OPTIONS) if mode == "code" else {})
     # 8192 for chat, 16384 for code. Measured on this GPU: 16384 stays
     # entirely in VRAM, 32768 spills to CPU and collapses throughput.
     # Code is where the extra context actually pays - a long file plus

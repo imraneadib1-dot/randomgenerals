@@ -447,10 +447,10 @@ def stream_chat(model, history, options=None, images=None, usage=None):
     # stream is opened the model has what it asked for and should be
     # writing prose - but the schemas stay attached in case it wants a
     # second round.
-    if (options or {}).get("tools"):
-        body["tools"] = options["tools"]
-        body["tool_choice"] = "auto"
     opts = options or {}
+    if opts.get("tools"):
+        body["tools"] = opts["tools"]
+        body["tool_choice"] = "auto"
     if "temperature" in opts:
         body["temperature"] = opts["temperature"]
     if "top_p" in opts:

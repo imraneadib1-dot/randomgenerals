@@ -40,7 +40,7 @@ _LEGACY_FILES = {
 _GUEST_OWNER = "guest"  # sentinel row in `credits` for the shared, signed-out pool
 
 _lock = threading.Lock()
-_conn = None
+_conn: sqlite3.Connection | None = None
 
 
 SCHEMA = """
@@ -190,11 +190,11 @@ def _connect():
         _conn.executescript(SCHEMA)
         _conn.commit()
         _migrate_columns(_conn)
-        _migrate_legacy_json()
+        _migrate_legacy_json(_conn)
     return _conn
 
 
-def _migrate_legacy_json():
+def _migrate_legacy_json(conn):
     """One-time import from the old JSON files into empty tables.
 
     Runs at most once per table: if `users` already has rows, signup data
@@ -203,7 +203,6 @@ def _migrate_legacy_json():
     The check is per-table so a database that already has users but was
     never handed any legacy threads still picks those up.
     """
-    conn = _conn
     base = os.path.dirname(DB_PATH)
 
     def _read_json(name):

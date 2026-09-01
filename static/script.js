@@ -2294,6 +2294,12 @@ const subRenewalRow = document.getElementById("subRenewalRow");
 const subRenewalLabel = document.getElementById("subRenewalLabel");
 const subRenewalValue = document.getElementById("subRenewalValue");
 const managePlanBtn = document.getElementById("managePlanBtn");
+const subEmailValue = document.getElementById("subEmailValue");
+const subVerifiedValue = document.getElementById("subVerifiedValue");
+const subSinceValue = document.getElementById("subSinceValue");
+const subCreditsValue = document.getElementById("subCreditsValue");
+const subPaymentRow = document.getElementById("subPaymentRow");
+const subPaymentValue = document.getElementById("subPaymentValue");
 
 async function loadSubscription() {
   if (!currentUser) {
@@ -2309,6 +2315,37 @@ async function loadSubscription() {
     const s = await res.json();
     subDashboard.hidden = false;
     subPlanValue.textContent = `${s.plan_label} · ${s.price}`;
+
+    // Who this account is, not only what it is subscribed to. This panel
+    // is where someone comes to check what they are being charged for,
+    // and it used to appear only once there was a paid subscription -
+    // so a free account saw an empty tab and no way to tell which email
+    // it belonged to.
+    subEmailValue.textContent = s.email || "—";
+    subVerifiedValue.textContent = s.email_verified
+      ? "Verified"
+      : "Not verified";
+    subVerifiedValue.classList.toggle("is-cancelling", !s.email_verified);
+    subSinceValue.textContent = s.created
+      ? new Date(s.created).toLocaleDateString(undefined, {
+          year: "numeric", month: "long", day: "numeric",
+        })
+      : "—";
+    if (s.credits && s.credits.balance != null) {
+      const mins = Math.round((s.credits.next_refill_in || 0) / 60);
+      subCreditsValue.textContent =
+        `${s.credits.balance.toLocaleString()} of ` +
+        `${(s.credits.cap || 0).toLocaleString()}` +
+        (mins > 0 ? ` · refills in ${mins} min` : " · refilling now");
+    } else {
+      subCreditsValue.textContent = "—";
+    }
+
+    subPaymentRow.hidden = !s.has_billing_account;
+    if (s.has_billing_account) {
+      subPaymentValue.textContent =
+        `${s.processor} — card details never touch this server`;
+    }
 
     subStatusRow.hidden = !s.status;
     if (s.status) subStatusValue.textContent = s.status;
