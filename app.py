@@ -3150,8 +3150,7 @@ DIAGRAM_SYSTEM_PROMPT = (
     "Aim for 6-14 nodes. A diagram that does not fit on a screen is a "
     "worse answer than one that leaves out a detail.\n"
     "Do not set styles, themes or colours - the page supplies those, "
-    "and a hardcoded colour is unreadable in one of the two themes.
-"
+    "and a hardcoded colour is unreadable in one of the two themes.\n"
     # Measured: this was the single parse failure in a 12-diagram run,
     # graded by the real renderer. The model wrote `class Queen {}` for
     # pieces with no listed members, and mermaid rejects an empty body.
