@@ -1490,6 +1490,26 @@ def auth_logout():
 ALLOW_MOCK_UPGRADE = os.environ.get("ALLOW_MOCK_UPGRADE") == "1"
 
 
+def _may_mock_upgrade(user):
+    """Whether THIS user may grant themselves Pro without paying.
+
+    The env var alone was never safe enough for a deployment that is
+    live on a public tunnel: switching it on to give the owner Pro also
+    gives it to every visitor for as long as it stays on, and the whole
+    reason it gets switched on is that somebody is in a hurry.
+
+    So it is now two conditions, not one. The flag says the escape hatch
+    exists on this instance; ADMIN_EMAIL says whose it is. With
+    ADMIN_EMAIL unset there is no owner and the hatch stays shut for
+    everybody, which is the same fail-closed rule /stats uses.
+    """
+    if not ALLOW_MOCK_UPGRADE:
+        return False
+    if not ADMIN_EMAIL:
+        return False
+    return (user.get("email") or "").strip().lower() == ADMIN_EMAIL
+
+
 def _apply_plan(user, plan):
     user["plan"] = plan
     user["credits"]["plan"] = plan
@@ -1614,7 +1634,7 @@ def subscribe():
                 return jsonify({"error": f"Could not start checkout: {e}"}), 502
             return jsonify({"checkout_url": checkout.url})
 
-        if not ALLOW_MOCK_UPGRADE:
+        if not _may_mock_upgrade(user):
             # Say precisely what's wrong rather than a generic "not
             # configured" - "your key is a placeholder" and "you haven't
             # set a key" need different actions from whoever runs this.
