@@ -2916,19 +2916,33 @@ VIDEO_JOBS = {}
 VIDEO_JOBS_LOCK = threading.Lock()
 
 
-def _video_month():
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m")
+def _video_period_key(plan):
+    """The bucket this generation counts against.
+
+    'YYYY-MM-DD' for a daily plan, 'YYYY-MM' for a monthly one. Storing
+    the period rather than a reset timestamp means there is no scheduled
+    job and no clock to drift: yesterday's row simply stops being the
+    one that gets read.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if features.video_period_for(plan) == "day":
+        return now.strftime("%Y-%m-%d")
+    return now.strftime("%Y-%m")
 
 
-def _video_quota_view(owner_id, plan):
-    allowed = features.video_quota_for(plan)
-    used = db.video_used(owner_id, _video_month()) if allowed else 0
+def _video_quota_view(owner_id, plan, signed_in=True):
+    limit = features.video_quota_for(plan)
+    period = _video_period_key(plan)
+    used = db.video_used(owner_id, period) if limit else 0
     return {
-        "allowed": features.video_allowed(plan),
+        "allowed": features.video_allowed(plan) and signed_in,
+        "needs_account": (features.video_needs_account(plan)
+                          and not signed_in),
         "used": used,
-        "limit": allowed,
-        "remaining": max(0, allowed - used),
-        "month": _video_month(),
+        "limit": limit,
+        "remaining": max(0, limit - used),
+        "period": features.video_period_for(plan),
+        "resets": period,
     }
 
 
@@ -2937,9 +2951,10 @@ def video_status():
     """What the bay should render before anyone types anything."""
     account, _ = current_account()
     plan = features.normalize_plan(account.get("plan"))
+    signed_in = bool(session.get("user_id"))
     return jsonify({
         "configured": pixverse.configured(),
-        "quota": _video_quota_view(current_owner_id(), plan),
+        "quota": _video_quota_view(current_owner_id(), plan, signed_in),
         "max_seconds": pixverse.MAX_SECONDS,
         "min_seconds": pixverse.MIN_SECONDS,
         "default_seconds": pixverse.DEFAULT_SECONDS,
@@ -2962,11 +2977,22 @@ def video_generate():
 
     account, _ = current_account()
     plan = features.normalize_plan(account.get("plan"))
+    signed_in = bool(session.get("user_id"))
     if not features.video_allowed(plan):
         return jsonify({
-            "error": "Video generation is a Pro feature.",
+            "error": "Video generation isn't available on your plan.",
             "upgrade_required": True,
         }), 402
+    # Not an upsell - a cost control. The quota is keyed on the owner id,
+    # and a signed-out owner id is just a cookie: clearing it mints a new
+    # identity with a fresh allowance. For a feature billed per call that
+    # is an open tap, so free generation needs a real account.
+    if features.video_needs_account(plan) and not signed_in:
+        return jsonify({
+            "error": "Make a free account to generate videos - it takes a "
+                     "moment, and it's how the daily limit is kept fair.",
+            "needs_account": True,
+        }), 401
 
     # The image bar, not the chat one: a generated clip is a published
     # artefact in exactly the way a generated picture is, and the same
@@ -2977,13 +3003,14 @@ def video_generate():
         return jsonify({"error": blocked}), 400
 
     owner = current_owner_id()
-    month = _video_month()
+    month = _video_period_key(plan)
     limit = features.video_quota_for(plan)
     if db.video_used(owner, month) >= limit:
+        period = features.video_period_for(plan)
         return jsonify({
-            "error": "You've used all %d video generations for this month. "
-                     "The count resets on the 1st." % limit,
-            "quota": _video_quota_view(owner, plan),
+            "error": "You've used all %d video generations for this %s." % (
+                limit, period),
+            "quota": _video_quota_view(owner, plan, signed_in),
         }), 402
 
     # Counted BEFORE the call, not after. Two requests arriving together
@@ -3001,7 +3028,8 @@ def video_generate():
     if err:
         db.video_refund(owner, month)
         return jsonify({"error": err,
-                        "quota": _video_quota_view(owner, plan)}), 502
+                        "quota": _video_quota_view(owner, plan,
+                                                   signed_in)}), 502
 
     job_id = uuid.uuid4().hex[:12]
     with VIDEO_JOBS_LOCK:
@@ -3012,7 +3040,7 @@ def video_generate():
         }
     return jsonify({
         "job": {"id": job_id, "status": "running"},
-        "quota": _video_quota_view(owner, plan),
+        "quota": _video_quota_view(owner, plan, signed_in),
     })
 
 
@@ -3024,6 +3052,7 @@ def video_job(job_id):
             return jsonify({"error": "Unknown job"}), 404
         job = dict(job)
 
+    plan_now = features.normalize_plan(current_account()[0].get("plan"))
     if job["status"] == "running":
         state, url, err = pixverse.result(job["video_id"])
         if state == "done":
@@ -3034,7 +3063,7 @@ def video_job(job_id):
             # not carry it. Refunded once, at the moment the failure is
             # first observed - polling again finds status "failed" and
             # does not reach here a second time.
-            db.video_refund(job["owner"], _video_month())
+            db.video_refund(job["owner"], _video_period_key(plan_now))
         with VIDEO_JOBS_LOCK:
             if job_id in VIDEO_JOBS:
                 VIDEO_JOBS[job_id].update(job)

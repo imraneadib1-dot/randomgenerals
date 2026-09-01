@@ -71,13 +71,23 @@ FEATURES = {
         "max_memories": 25,
         "max_upload_mb": 20,
         # --- video ---
-        # Generation costs real money per clip - roughly $0.13 for five
-        # seconds - so unlike everything else here it cannot be free at
-        # any volume. Free sees the bay and is told what it is.
-        "video_generation": False,
-        "video_clips_per_month": 0,
-        "video_max_seconds": 0,
-        "video_max_quality": "standard",
+        # THE ONE FEATURE THAT SPENDS CASH PER USE
+        #
+        # ~$0.13 a clip through a reseller, up to $0.15/sec direct, with
+        # no free tier at any volume. Every number here is money leaving
+        # the account, so the two knobs are deliberately separate: how
+        # many, and how often the count resets.
+        #
+        # Free is DAILY and requires a real account. Guests are excluded
+        # not to upsell them but because a guest is a cookie - clearing
+        # it mints a new identity with a fresh allowance, and for a
+        # feature billed per call that is an open tap, not a leak.
+        "video_generation": True,
+        "video_clips": 2,
+        "video_period": "day",
+        "video_requires_account": True,
+        "video_max_seconds": 5,
+        "video_max_quality": "720p",
         # --- image bay ---
         # The widest shapes are ~25% more pixels, so they cost ~25% more
         # to generate. Free gets the three everyday shapes.
@@ -103,12 +113,14 @@ FEATURES = {
         "max_memories": None,       # unlimited
         "max_upload_mb": 100,
         # --- video ---
-        # Ten clips a month. At reseller rates that is about $1.30 of
-        # cost against $1.99 of revenue, which is thin but positive - and
-        # it is a hard count, not a credit balance, so it cannot be
-        # drained faster by anyone clever.
+        # Daily too, or Pro would be the smaller allowance: 2 a day is
+        # ~60 a month, against the 10 a month Pro used to get. A paid
+        # tier that gives less than the free one is not a pricing
+        # decision, it is a bug.
         "video_generation": True,
-        "video_clips_per_month": 10,
+        "video_clips": 10,
+        "video_period": "day",
+        "video_requires_account": True,
         "video_max_seconds": 8,
         "video_max_quality": "1080p",
         # --- image bay ---
@@ -164,8 +176,24 @@ def fallback_model(plan, requested, available):
 
 
 def video_quota_for(plan):
-    """Clips per calendar month for this plan. 0 means not available."""
-    return FEATURES[normalize_plan(plan)]["video_clips_per_month"]
+    """How many clips, per period. 0 means not available."""
+    return FEATURES[normalize_plan(plan)]["video_clips"]
+
+
+def video_period_for(plan):
+    """'day' or 'month' - which clock the count resets on."""
+    return FEATURES[normalize_plan(plan)]["video_period"]
+
+
+def video_needs_account(plan):
+    """Whether generation requires being signed in.
+
+    True for every tier. The quota is keyed on the owner id, and a
+    signed-out owner id is a cookie value - so without this the limit is
+    "two clips per browser profile", which is not a limit at all when
+    each one costs money.
+    """
+    return FEATURES[normalize_plan(plan)]["video_requires_account"]
 
 
 def video_allowed(plan):
