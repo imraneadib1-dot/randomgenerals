@@ -464,6 +464,26 @@ CHAT_SYSTEM_PROMPT = (
     "State assumptions when a question is underspecified (radians or "
     "degrees, real or complex, inclusive or exclusive bounds) instead of "
     "silently picking one.\n"
+
+    # Physics fails differently from maths. The arithmetic is usually
+    # fine; what goes wrong is picking the wrong relation, dropping a
+    # factor that belongs to the geometry, or quietly changing units
+    # halfway. Each line below names one of those.
+    "\nPHYSICS\n"
+    "Name the principle before using it - conservation of energy, "
+    "Newton's second law, the work-energy theorem - so a wrong choice "
+    "is visible as a wrong choice rather than hidden inside algebra.\n"
+    "Carry units through every step and check the final ones match what "
+    "was asked. A number whose units come out as m/s^2 when the question "
+    "wanted m/s is wrong no matter how clean the working looked.\n"
+    "Watch the terms that depend on the shape of the object. A rolling "
+    "body has rotational kinetic energy as well as translational, and "
+    "its moment of inertia depends on whether it is a sphere, a "
+    "cylinder or a hoop - dropping that term is the single most common "
+    "way an otherwise correct energy argument gives the wrong speed.\n"
+    "State the constants you used (g = 9.81 m/s^2, c = 3.00e8 m/s) and "
+    "say when you have idealised something away - no friction, no air "
+    "resistance, a point mass.\n"
     "For word problems, define what each variable means before using it. "
     "Most wrong answers to word problems are right answers to a "
     "different question.\n"
@@ -2140,23 +2160,38 @@ def get_credits():
 # qwen3.5 and gemma4, because the cloud catalogue carries neither
 # qwen2.5 nor llava (checked against ollama.com/api/tags, which lists 19
 # models and none of them llava).
+# DIFFERENT MODELS FOR DIFFERENT BAYS, CHOSEN BY MEASUREMENT
+#
+# Both hosted models were scored on six maths and physics problems with
+# verifiable answers - rolling-body dynamics, an improper integral, dice
+# probability, modular exponentiation, photon energy, SHM. Both got 6/6,
+# so accuracy did not separate them and the split is made on how they
+# WRITE rather than what they know:
+#
+#   gpt-oss-120b answers in LaTeX and \boxed{}. Excellent in a code bay,
+#     where output is read as source and formatting is expected.
+#   qwen3.8-27b states results in plain prose. Better in a chat bay,
+#     where an answer should read as a sentence.
+#
+# (A warning for whoever tunes this next: the first two versions of that
+# benchmark scored gpt-oss-120b 3/6 twice, and both times the model was
+# right and the GRADER was wrong - it could not see a bare "9" or a
+# \frac{1}{8}. Check what the model actually wrote before believing a
+# score.)
 BAY_ROUTES = {
     "code": [
-        ("ollama", "gemma3:1b"),
         ("groq", "gpt-oss-120b"),
+        ("ollama", "gemma3:1b"),
         ("ollama", "gemma3"),
         ("ollama", "qwen3.5"),          # Ollama Cloud
         ("ollama", "gpt-oss"),          # Ollama Cloud
-        ("ollama", "qwen2.5-coder"),
     ],
-    # Same local entry as code, on purpose. See above.
     "chat": [
-        ("ollama", "gemma3:1b"),
+        ("groq", "qwen3.8-27b"),
         ("groq", "gpt-oss-120b"),
+        ("ollama", "gemma3:1b"),
         ("ollama", "gemma3"),
         ("ollama", "qwen3.5"),          # Ollama Cloud
-        ("ollama", "gpt-oss"),          # Ollama Cloud
-        ("ollama", "qwen2.5"),
     ],
     # Reading an attached image, not generating one - the Image bay's
     # pictures come from imagegen.py and never touch a chat model.
@@ -2324,8 +2359,9 @@ MODEL_DISPLAY_NAMES = {
     "llama-3.3-70b-versatile": ("Turbo", "Large open model, answers fast"),
     "llama-3.1-8b-instant": ("Turbo Lite", "Smaller and faster still"),
     # cloud
-    "openai/gpt-oss-120b": ("Max", "Strongest overall - large cloud model"),
+    "openai/gpt-oss-120b": ("Max", "Strongest for code, and 6/6 on maths and physics"),
     "openai/gpt-oss-20b": ("Swift Cloud", "Fast cloud replies"),
+    "qwen/qwen3.8-27b": ("Reason", "Best at maths and physics - answers in plain prose"),
     "qwen/qwen3.6-27b": ("Core Cloud", "Balanced cloud model"),
     "allam-2-7b": ("Arabic", "Tuned for Arabic language"),
 }
