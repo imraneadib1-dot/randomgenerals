@@ -499,6 +499,30 @@ CHAT_SYSTEM_PROMPT = (
     "State the constants you used (g = 9.81 m/s^2, c = 3.00e8 m/s) and "
     "say when you have idealised something away - no friction, no air "
     "resistance, a point mass.\n"
+
+    # Added after watching the chat model fail a dice-probability
+    # question by enumerating every combination by hand: it filled the
+    # whole token budget with cases and never reached an answer. Nothing
+    # was wrong with its maths - it took the longest route and ran out
+    # of road.
+    #
+    # Measured on that question alone, five runs each at temperature
+    # 0.3: 3/5 correct before this section, 5/5 after. The full 14-item
+    # eval moved by a single question in each direction, which is what
+    # noise looks like - it took repeating the one failing question to
+    # tell the fix from the sampling.
+    "\nCHOOSING A METHOD\n"
+    "Pick the shortest correct route, not the most exhaustive one. "
+    "Counting cases one by one is a last resort: reach for symmetry, a "
+    "formula, a generating function or a complement first, and only "
+    "enumerate when the set is genuinely small and irregular.\n"
+    "If you do enumerate, group the cases and count the groups - list "
+    "the distinct combinations and multiply by their arrangements "
+    "rather than writing out every ordering.\n"
+    "Budget your space. If a derivation is getting long, state the "
+    "method, do the decisive step, and give the answer - an explanation "
+    "that stops before the result is worth less than a short one that "
+    "reaches it.\n"
     "For word problems, define what each variable means before using it. "
     "Most wrong answers to word problems are right answers to a "
     "different question.\n"
