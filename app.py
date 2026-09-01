@@ -37,7 +37,8 @@ import stats  # noqa: E402  owner-only usage figures - see stats.py
 import groq_api  # noqa: E402  fast open-weight models - see groq_api.py
 import openai_api  # noqa: E402  OpenAI-compatible API - see openai_api.py
 import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
-import pixverse  # noqa: E402  text-to-video generation - see pixverse.py
+import pixverse  # noqa: E402  paid text-to-video - see pixverse.py
+import hfvideo  # noqa: E402  free-tier text-to-video - see hfvideo.py
 
 # The one AI this app talks to: Ollama, running locally (llama3.2 pulled
 # already). Runs fully on this machine - no cloud call, no API key - but
@@ -3025,6 +3026,30 @@ VIDEO_JOBS = {}
 VIDEO_JOBS_LOCK = threading.Lock()
 
 
+# TWO BACKENDS, ONE BAY
+#
+# PixVerse is better and costs about $0.45 a clip with no free tier at
+# any volume. Hugging Face's free allowance is the only genuinely free
+# path that survived checking - Pollinations is images only, and
+# Cloudflare Workers AI, which already serves this app's images, has no
+# video model in its catalogue.
+#
+# Paid first when a key exists, because someone who has paid should get
+# what they paid for; free otherwise, so the bay works at all rather
+# than showing "not switched on" to everyone. Both expose the same
+# start()/result() pair, so nothing below this line knows which answered.
+def _video_backend():
+    if pixverse.configured():
+        return pixverse, "pixverse"
+    if hfvideo.configured():
+        return hfvideo, "huggingface"
+    return None, None
+
+
+def video_configured():
+    return _video_backend()[0] is not None
+
+
 def _video_period_key(plan):
     """The bucket this generation counts against.
 
@@ -3061,8 +3086,14 @@ def video_status():
     account, _ = current_account()
     plan = features.normalize_plan(account.get("plan"))
     signed_in = bool(session.get("user_id"))
+    backend, backend_name = _video_backend()
     return jsonify({
-        "configured": pixverse.configured(),
+        "configured": backend is not None,
+        "backend": backend_name,
+        # Named so the bay can say what it is using, and so "free tier,
+        # may run out" is something the page can explain rather than a
+        # surprise at the moment it happens.
+        "free_tier": backend_name == "huggingface",
         "quota": _video_quota_view(current_owner_id(), plan, signed_in),
         "max_seconds": pixverse.MAX_SECONDS,
         "min_seconds": pixverse.MIN_SECONDS,
@@ -3079,9 +3110,11 @@ def video_generate():
     if not prompt:
         return jsonify({"error": "Describe the video you want."}), 400
 
-    if not pixverse.configured():
+    backend, backend_name = _video_backend()
+    if backend is None:
         return jsonify({
             "error": "Video generation isn't set up on this server yet.",
+            "detail": hfvideo.unavailable_reason(),
         }), 503
 
     account, _ = current_account()
@@ -3128,12 +3161,19 @@ def video_generate():
     # PixVerse never accepted the job.
     db.video_consume(owner, month)
 
-    video_id, err = pixverse.start(
-        prompt,
-        seconds=pixverse.clamp_seconds(payload.get("seconds")),
-        quality=payload.get("quality") or "720p",
-        ratio=payload.get("ratio") or "16:9",
-    )
+    seconds = pixverse.clamp_seconds(payload.get("seconds"))
+    if backend_name == "pixverse":
+        video_id, err = backend.start(
+            prompt,
+            seconds=seconds,
+            quality=payload.get("quality") or "720p",
+            ratio=payload.get("ratio") or "16:9",
+        )
+    else:
+        # The free backend has no quality or aspect controls - the models
+        # behind it produce a fixed shape, and offering settings that do
+        # nothing is worse than not offering them.
+        video_id, err = backend.start(prompt, seconds=seconds)
     if err:
         db.video_refund(owner, month)
         return jsonify({"error": err,
@@ -3144,6 +3184,7 @@ def video_generate():
     with VIDEO_JOBS_LOCK:
         VIDEO_JOBS[job_id] = {
             "id": job_id, "owner": owner, "video_id": video_id,
+            "backend": backend_name,
             "status": "running", "url": None, "error": "",
             "prompt": prompt, "started": now_iso(),
         }
@@ -3163,7 +3204,11 @@ def video_job(job_id):
 
     plan_now = features.normalize_plan(current_account()[0].get("plan"))
     if job["status"] == "running":
-        state, url, err = pixverse.result(job["video_id"])
+        # Asked of whichever backend started it, not of whichever is
+        # configured now - a key added mid-render must not orphan a job.
+        started_with = (pixverse if job.get("backend") == "pixverse"
+                        else hfvideo)
+        state, url, err = started_with.result(job["video_id"])
         if state == "done":
             job.update({"status": "done", "url": url})
         elif state == "failed":

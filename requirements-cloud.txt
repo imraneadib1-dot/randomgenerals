@@ -30,3 +30,9 @@ sympy==1.14.0
 # arrives as 768x768; _fit() scales it to the size the app promised.
 # Pure wheels on ARM, so it adds no build step on the Oracle VM.
 Pillow==12.3.0
+
+# Free-tier text-to-video (hfvideo.py). Pure Python, no torch - the
+# client only speaks HTTP to Hugging Face, which routes to whichever
+# provider is serving the model. Optional: without HF_TOKEN set,
+# hfvideo.configured() is False and the bay simply says so.
+huggingface_hub>=0.34

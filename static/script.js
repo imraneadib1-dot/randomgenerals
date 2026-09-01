@@ -2577,6 +2577,14 @@ function applyVideoAccess(d) {
     genForm.hidden = true;
     return;
   }
+  // The free backend has no quality or aspect controls behind it, so
+  // hide the ones that would do nothing rather than let someone set a
+  // value that is quietly ignored.
+  const freeTier = !!d.free_tier;
+  const shapeCtl = document.getElementById("genRatio");
+  const qualityCtl = document.getElementById("genQuality");
+  if (shapeCtl) shapeCtl.closest(".gen-ctl").hidden = freeTier;
+  if (qualityCtl) qualityCtl.closest(".gen-ctl").hidden = freeTier;
   if (!q.allowed) {
     genLocked.hidden = false;
     genLockedText.textContent =
