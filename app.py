@@ -2453,6 +2453,32 @@ def ollama_reachable():
     return ok
 
 
+_TAGS_TTL = 15
+_tags_cache = {"at": 0.0, "models": [], "ok": False}
+
+
+def _ollama_tags():
+    """-> (model names, reachable). Cached for a few seconds.
+
+    Failures are cached too, and deliberately: when Ollama is down every
+    request would otherwise pay the full connect timeout, turning one
+    outage into a slow site rather than a degraded one.
+    """
+    now = time.time()
+    if now - _tags_cache["at"] < _TAGS_TTL:
+        return list(_tags_cache["models"]), _tags_cache["ok"]
+    try:
+        r = requests.get(f"{OLLAMA_URL}/api/tags",
+                         headers=ollama_headers(), timeout=3)
+        r.raise_for_status()
+        models = [m["name"] for m in r.json().get("models", [])]
+        ok = True
+    except (requests.exceptions.RequestException, ValueError, KeyError):
+        models, ok = [], False
+    _tags_cache.update({"at": now, "models": models, "ok": ok})
+    return list(models), ok
+
+
 def ollama_provider(plan=None):
     """The Ollama-served models. Kept as a function rather than a
     hardcoded dict so /api/providers reflects reality if Ollama isn't
@@ -2472,15 +2498,14 @@ def ollama_provider(plan=None):
     way to run this. Branding decides the name; the endpoint decides the
     sentence underneath it.
     """
-    models, available = [], False
-    try:
-        r = requests.get(f"{OLLAMA_URL}/api/tags",
-                         headers=ollama_headers(), timeout=3)
-        r.raise_for_status()
-        models = [m["name"] for m in r.json().get("models", [])]
-        available = True
-    except requests.exceptions.RequestException:
-        pass
+    # The installed model list changes when someone runs `ollama pull`,
+    # which is approximately never on a running server - but it was being
+    # fetched over HTTP on every /api/providers call, inside
+    # _local_alternative() on every failover, and twice more per
+    # /v1/chat/completions. A short cache turns all of those into one
+    # request every few seconds without making a genuinely new model wait
+    # noticeably to appear.
+    models, available = _ollama_tags()
 
     remote = ollama_is_remote()
     if models:

@@ -34,6 +34,7 @@ someone else's CDN either way, and downloading several megabytes onto a
 two-core VM to serve it again is work that buys nothing.
 """
 import os
+import time
 
 import requests
 
@@ -72,25 +73,43 @@ def _headers():
     }
 
 
-def balance():
+# A balance moves only when someone generates something, and the page
+# asks for it on every load of the bay. Uncached it made /api/video/status
+# a 683ms endpoint against ~105ms for everything else - a third of a
+# second of somebody's page load spent confirming a number that had not
+# changed. Two minutes is far longer than a page view and far shorter
+# than anyone would notice a stale figure.
+_BALANCE_TTL = 120
+_balance_cache = {"at": 0.0, "value": None}
+
+
+def balance(force=False):
     """Credits left on the account, or None if it cannot be read.
 
-    Worth a call: Tripo answers 403 for an empty balance as readily as
+    Worth knowing: Tripo answers 403 for an empty balance as readily as
     for a bad key, so without this the app cannot tell "you have not
     paid" from "your key is wrong" - and sends whoever is debugging it
     to regenerate a key that was never the problem.
     """
     if not configured():
         return None
+    now = time.time()
+    if not force and now - _balance_cache["at"] < _BALANCE_TTL:
+        return _balance_cache["value"]
     try:
         r = requests.get(API_ROOT + "/user/balance",
                          headers=_headers(), timeout=15)
         data = r.json()
     except (requests.exceptions.RequestException, ValueError):
-        return None
+        # Keep serving the last known figure rather than reporting
+        # "unknown" on a blip - a transient failure should not make the
+        # bay look unconfigured.
+        return _balance_cache["value"]
     if data.get("code") not in (0, None):
-        return None
-    return (data.get("data") or {}).get("balance")
+        return _balance_cache["value"]
+    value = (data.get("data") or {}).get("balance")
+    _balance_cache.update({"at": now, "value": value})
+    return value
 
 
 def start(prompt, seconds=None):
