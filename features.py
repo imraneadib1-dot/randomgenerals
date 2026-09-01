@@ -246,7 +246,7 @@ def public_flags(plan):
         "external_connectors": f["external_connectors"],
         "max_output_tokens_code": f["max_output_tokens_code"],
         "pro_model_families": sorted(PRO_MODELS),
-        "video_max_output_seconds": f["video_max_output_seconds"],
+        "video_max_output_seconds": f["video_max_seconds"],
         "video_max_quality": f["video_max_quality"],
         "image_sizes": list(f["image_sizes"]),
     }

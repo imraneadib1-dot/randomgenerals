@@ -27,6 +27,13 @@
    UI chrome. JetBrains Mono is reserved for things that are code.
    ============================================================ */
 :root {
+  /* Destructive red, light enough to read on the dark ground (7.98:1).
+     The light theme redefines it - this value on a white panel is
+     2.14:1, which is unreadable, and the delete control is the last
+     place in the app where a label should be hard to read. */
+  --danger: #ff8f8f;
+  --danger-edge: rgba(255, 143, 143, 0.5);
+
   /* The five, by name. Everything below is expressed in terms of these,
      so re-sampling the photograph re-themes the whole app. */
   --tan-deep: #7a6335;
@@ -3882,7 +3889,7 @@ html.time-night .night-moon {
 .btn-secondary:hover { color: var(--ink); border-color: var(--border-strong); }
 /* Destructive, so it is coloured only on hover - a permanently red
    button in a settings list reads as a warning about the whole page. */
-.btn-danger:hover { color: #ff8f8f; border-color: rgba(255, 143, 143, 0.5); }
+.btn-danger:hover { color: var(--danger); border-color: var(--danger-edge); }
 
 /* Motion off means off, including the things that animate by default. */
 html[data-motion="reduced"] *,
@@ -3936,6 +3943,10 @@ html[data-motion="reduced"] *::after {
    than going white.
    ====================================================================== */
 :root[data-theme="light"] {
+  /* 6.41:1 on the light panel. */
+  --danger: #b42318;
+  --danger-edge: rgba(180, 35, 24, 0.45);
+
   --sky-top: #ffffff;
   --sky-mid: #f7f5f0;
   --sky-bottom: #efece4;

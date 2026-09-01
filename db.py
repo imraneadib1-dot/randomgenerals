@@ -380,6 +380,36 @@ def save_users(users):
 # ----------------------------------------------------------------------
 # Email verification codes - one active code per email, single-use.
 # ----------------------------------------------------------------------
+def delete_user(user_id, email=None):
+    """Remove an account and everything scoped to it. -> rows removed.
+
+    Every table that keys on owner_id is cleared here explicitly rather
+    than left to a foreign key: the schema does not declare one for
+    threads or credits, so a DELETE on users alone would leave an
+    orphaned conversation history keyed to an id nobody can log into -
+    invisible, undeletable, and still on disk.
+
+    One transaction, so a failure halfway cannot leave an account that
+    is half gone: still able to log in, with its memories missing.
+    """
+    conn = _connect()
+    removed = 0
+    with conn:
+        for table in ("threads", "credits", "memories", "custom_instructions"):
+            cur = conn.execute(
+                "DELETE FROM %s WHERE owner_id = ?" % table, (user_id,))
+            removed += cur.rowcount or 0
+        cur = conn.execute("DELETE FROM video_quota WHERE owner_id = ?",
+                           (user_id,))
+        removed += cur.rowcount or 0
+        if email:
+            conn.execute("DELETE FROM verification_codes WHERE email = ?",
+                         (email,))
+        cur = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        removed += cur.rowcount or 0
+    return removed
+
+
 def save_verification_code(email, code, expires_at):
     conn = _connect()
     with _lock:

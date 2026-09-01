@@ -2,6 +2,7 @@ from flask import (Flask, render_template, request, Response, jsonify,
                    session, stream_with_context, redirect, url_for, abort)
 from dotenv import load_dotenv
 import hmac
+import secrets
 import time
 import json
 import os
@@ -41,6 +42,7 @@ import pixverse  # noqa: E402  paid text-to-video - see pixverse.py
 import hfvideo  # noqa: E402  free-tier text-to-video - see hfvideo.py
 import tripo3d  # noqa: E402  text-to-3D generation - see tripo3d.py
 import tools  # noqa: E402  model-callable tools - see tools.py
+import mailer  # noqa: E402  verification email - see mailer.py
 
 # The one AI this app talks to: Ollama, running locally (llama3.2 pulled
 # already). Runs fully on this machine - no cloud call, no API key - but
@@ -690,9 +692,12 @@ PLANS = {
         "price": "$0",
         "cap": 2000,
         "refill_seconds": 2 * 60 * 60,  # 2 hours
-        "blurb": "2,000 credits, refilling every 2 hours. Fast chat and "
-                 "coding models, image generation, code execution, the "
-                 "video bay, and web search.",
+        # Kept in step with what the code actually does. It has said
+        # "the video bay" since that bay became a diagram bay, and a
+        # plan description is the last place anyone thinks to update.
+        "blurb": "2,000 credits, refilling every 2 hours. Chat and "
+                 "coding models, image generation, diagrams, the "
+                 "sandboxed code runner, and web search.",
     },
     "pro": {
         "label": "Pro",
@@ -703,16 +708,100 @@ PLANS = {
         # a Pro one for at most one - on an allowance twelve times larger
         # that it should rarely reach in the first place.
         "refill_seconds": 60 * 60,      # 1 hour
+        # Every clause here was checked against features.py. It used
+        # to promise "the 7B model", which was removed when this server
+        # moved to Gemma, and "3-minute max-quality video renders",
+        # which no funded backend can produce.
         "blurb": "25,000 credits, refilling every hour - 12x the free "
                  "allowance, twice as often. Priority on the fast "
                  "channel when the site is busy, so your replies stay "
                  "quick while free sessions fall back to the local "
-                 "model. Plus vision, the 7B model, unlimited memory, "
-                 "long-form code, every image shape, and 3-minute "
-                 "max-quality video renders.",
+                 "model. Plus tools the model can use on its own, "
+                 "image understanding, unlimited memory, long-form "
+                 "code, a larger context window, 100MB uploads and "
+                 "every image shape.",
     },
 }
 STARTING_CREDITS = PLANS["free"]["cap"]
+
+
+def _every(seconds):
+    """3600 -> "every hour", 7200 -> "every 2 hours"."""
+    hours = seconds / 3600.0
+    if abs(hours - 1.0) < 0.01:
+        return "every hour"
+    if hours == int(hours):
+        return "every %d hours" % int(hours)
+    return "every %d minutes" % int(round(seconds / 60.0))
+
+
+def plan_perks():
+    """The bullet lists for the pricing cards, derived, not typed.
+
+    These used to be hand-written HTML sitting next to the values they
+    described, and every number in them had drifted: the free card
+    advertised 4,000 credits on an hourly refill when it is 2,000 every
+    two hours, Pro advertised "10,000 credits every 15 min" when it is
+    25,000 hourly, and both cards sold an "Advanced 7B model" that this
+    server stopped running when it moved to Gemma. A list maintained by
+    hand beside its own source of truth will always end up describing an
+    older build, so it is computed from PLANS and features.FEATURES.
+
+    Anything that needs a backend is listed only when that backend is
+    actually configured. Selling a clip allowance on a server with no
+    video key is how a paid plan becomes a complaint.
+    """
+    free = features.FEATURES[features.FREE]
+    pro = features.FEATURES[features.PRO]
+    video_live = _video_backend()[0] is not None
+
+    def credits(plan):
+        return "{:,} credits, refilling {}".format(
+            PLANS[plan]["cap"], _every(PLANS[plan]["refill_seconds"]))
+
+    free_list = [
+        (credits("free"), True),
+        ("Chat and coding models, both on the fast channel", True),
+        ("Image generation, diagrams, the code runner, web search "
+         "and voice", True),
+        ("Remembers up to %d things" % free["max_memories"], True),
+        ("%dMB uploads" % free["max_upload_mb"], True),
+    ]
+    pro_list = [
+        (credits("pro"), True),
+        ("<strong>Priority on the fast channel</strong> - your replies "
+         "stay quick while free sessions fall back to the local model",
+         True),
+        ("<strong>Image understanding</strong> - it sees what you attach",
+         True),
+        ("<strong>Tools it runs itself</strong> - maths, the code runner "
+         "and web search, without being asked twice", True),
+        ("Unlimited memory - no %d-item cap" % free["max_memories"], True),
+        ("Code replies up to {:,} tokens, against {:,}".format(
+            pro["max_output_tokens_code"],
+            free["max_output_tokens_code"]), True),
+        ("{:,}-token context window, twice the free one".format(
+            pro["max_context_tokens"]), True),
+        ("%dMB uploads and %d image shapes, not %d" % (
+            pro["max_upload_mb"], len(pro["image_sizes"]),
+            len(free["image_sizes"])), True),
+    ]
+
+    # The video bay has no funded backend on this deployment, so neither
+    # card mentions clips until one exists.
+    if video_live:
+        free_list.append(("%d video clips a day" % free["video_clips"], True))
+        pro_list.append(("%d video clips a day, up to %ds at %s" % (
+            pro["video_clips"], pro["video_max_seconds"],
+            pro["video_max_quality"]), True))
+
+    # Shown struck through on the free card: what upgrading buys.
+    free_list += [
+        ("Image understanding", False),
+        ("Priority when the site is busy", False),
+        ("Tools and app connections", False),
+    ]
+    return {"free": free_list, "pro": pro_list}
 
 DATA_LOCK = threading.Lock()
 CREDITS_LOCK = threading.Lock()
@@ -880,6 +969,12 @@ def public_user(user):
         "email": user["email"],
         "plan": user["plan"],
         "created": user["created"],
+        # The settings panel needs both of these to decide what to show:
+        # whether to offer verification, and whether a password form can
+        # work at all. A Google account has no password to change, and
+        # offering the form would only earn a refusal from the route.
+        "email_verified": bool(user.get("email_verified")),
+        "google_id": bool(user.get("google_id")),
     }
 
 
@@ -1356,7 +1451,7 @@ def landing():
 
 @app.route("/app")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", plan_perks=plan_perks())
 
 
 # ----------------------------------------------------------------------
@@ -1527,6 +1622,161 @@ def google_callback():
     _migrate_guest_threads(uid)
     session["user_id"] = uid
     return redirect("/app")
+
+
+# ----------------------------------------------------------------------
+# Account management: verify, change password, delete.
+#
+# mailer.py and the verification_codes table were both written and
+# neither was ever called - the code to send a six-digit code existed,
+# and nothing asked it to. These are the routes that use them.
+# ----------------------------------------------------------------------
+VERIFY_TTL_MINUTES = 15
+
+
+def _issue_code(email):
+    """Mint a code, store it, mail it. -> (sent, detail)."""
+    code = "%06d" % secrets.randbelow(1000000)
+    expires = (datetime.datetime.now(datetime.timezone.utc)
+               + datetime.timedelta(minutes=VERIFY_TTL_MINUTES))
+    db.save_verification_code(email, code, expires.isoformat())
+    return mailer.send_verification_code(email, code, VERIFY_TTL_MINUTES)
+
+
+@app.route("/api/auth/verify/send", methods=["POST"])
+def verify_send():
+    """Send a fresh code to the signed-in account's address."""
+    uid = session.get("user_id")
+    user = USERS.get(uid) if uid else None
+    if not user:
+        return jsonify({"error": "Sign in first."}), 401
+    if user.get("email_verified"):
+        return jsonify({"ok": True, "already": True})
+    email = (user.get("email") or "").strip()
+    if not email:
+        return jsonify({
+            "error": "This account has no email address - it was "
+                     "created through Google sign-in.",
+        }), 400
+
+    sent, detail = _issue_code(email)
+    # sent=False is the console fallback, which is a working state on
+    # a server with no SMTP - not an error to report as one.
+    return jsonify({
+        "ok": True,
+        "delivered": bool(sent),
+        "detail": ("Code sent - check your inbox." if sent else
+                   "No mail server is configured here, so the code was "
+                   "printed to the server log."),
+    })
+
+
+@app.route("/api/auth/verify/confirm", methods=["POST"])
+def verify_confirm():
+    payload = request.get_json(force=True, silent=True) or {}
+    code = (payload.get("code") or "").strip()
+    uid = session.get("user_id")
+    user = USERS.get(uid) if uid else None
+    if not user:
+        return jsonify({"error": "Sign in first."}), 401
+    email = (user.get("email") or "").strip()
+
+    row = db.get_verification_code(email)
+    if not row:
+        return jsonify({
+            "error": "No code outstanding. Send a new one.",
+        }), 400
+    try:
+        expires = datetime.datetime.fromisoformat(row["expires_at"])
+    except (ValueError, KeyError, TypeError):
+        expires = None
+    if expires and datetime.datetime.now(datetime.timezone.utc) > expires:
+        db.delete_verification_code(email)
+        return jsonify({
+            "error": "That code has expired. Send a new one.",
+        }), 400
+
+    # Constant-time compare. A six-digit code is small enough that a
+    # timing signal on the first differing character is worth denying.
+    if not hmac.compare_digest(str(row["code"]), code):
+        return jsonify({"error": "That code is not right."}), 400
+
+    db.delete_verification_code(email)
+    user["email_verified"] = True
+    save_users()
+    return jsonify({"ok": True, "user": public_user(user)})
+
+
+@app.route("/api/account/password", methods=["POST"])
+def change_password():
+    payload = request.get_json(force=True, silent=True) or {}
+    current = payload.get("current") or ""
+    new = payload.get("new") or ""
+    uid = session.get("user_id")
+    user = USERS.get(uid) if uid else None
+    if not user:
+        return jsonify({"error": "Sign in first."}), 401
+
+    if not user.get("password_hash"):
+        return jsonify({
+            "error": "This account signs in with Google, so it has no "
+                     "password to change.",
+        }), 400
+    if not check_password_hash(user["password_hash"], current):
+        return jsonify({"error": "Current password is not right."}), 400
+    if len(new) < 8:
+        return jsonify({
+            "error": "Use at least 8 characters.",
+        }), 400
+    if new == current:
+        return jsonify({
+            "error": "That is the password you already have.",
+        }), 400
+
+    user["password_hash"] = generate_password_hash(new)
+    save_users()
+    # The session deliberately survives: signing someone out of the
+    # tab where they just changed their password is a punishment for
+    # doing the right thing. Other sessions are not tracked here, so
+    # there is nothing else to invalidate.
+    return jsonify({"ok": True})
+
+
+@app.route("/api/account/delete", methods=["POST"])
+def delete_account():
+    """Permanent, and it means it - see db.delete_user()."""
+    payload = request.get_json(force=True, silent=True) or {}
+    uid = session.get("user_id")
+    user = USERS.get(uid) if uid else None
+    if not user:
+        return jsonify({"error": "Sign in first."}), 401
+
+    # Typing the address is the confirmation. A yes/no dialog is too
+    # easy to click through for something with no undo, and this is
+    # the one action in the app that destroys data on purpose.
+    typed = (payload.get("confirm_email") or "").strip().lower()
+    email = (user.get("email") or "").strip().lower()
+    if not email or typed != email:
+        return jsonify({
+            "error": "Type your email address exactly to confirm.",
+        }), 400
+
+    # A live subscription is the caller's to cancel first: deleting the
+    # account here would leave Paddle billing a customer this app can
+    # no longer recognise or refund.
+    if (user.get("subscription_status") or "") in ("active", "trialing"):
+        return jsonify({
+            "error": "Cancel your Pro subscription first, so you are "
+                     "not billed for an account that no longer exists.",
+        }), 400
+
+    removed = db.delete_user(uid, email)
+    USERS.pop(uid, None)
+    for tid in [t for t, v in THREADS.items()
+               if v.get("owner_id") == uid]:
+        THREADS.pop(tid, None)
+    session.clear()
+    return jsonify({"ok": True, "removed": removed})
 
 
 @app.route("/api/auth/logout", methods=["POST"])
@@ -3075,9 +3325,11 @@ def _video_backend():
     was refused. A bay promising two a day on top of that fails on its
     first visitor.
 
-    Tripo hands new accounts 2,000 credits at roughly 20 a generation,
-    so the same free quota buys about a hundred models instead of three
-    clips. A mesh is one asset; a clip is a hundred rendered frames.
+    Tripo is first of the three because a mesh is one asset where a
+    clip is a hundred rendered frames, so the same money goes further.
+    Its free credits were checked rather than assumed, though, and a new
+    account's balance came back 0 - so this returns None here too until
+    someone funds a key, and the bay falls through to diagrams.
     """
     if tripo3d.configured():
         return tripo3d, "tripo"

@@ -40,7 +40,7 @@ def _smtp_config():
     }
 
 
-def send_verification_code(to_email, code):
+def send_verification_code(to_email, code, ttl_minutes=15):
     """Returns (sent, detail). `sent` is False in console-fallback mode -
     that's expected, not an error, so callers shouldn't treat it as one."""
     cfg = _smtp_config()
@@ -61,7 +61,8 @@ def send_verification_code(to_email, code):
     msg["To"] = to_email
     msg.set_content(
         f"Your verification code is: {code}\n\n"
-        f"It expires in 10 minutes. If you didn't request this, ignore it."
+        f"It expires in {ttl_minutes} minutes. If you didn't request "
+        f"this, ignore it."
     )
 
     try:
