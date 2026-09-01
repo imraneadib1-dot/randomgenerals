@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"
+     fill="none" stroke="currentColor" stroke-width="6.5"
+     stroke-linecap="round">
+  <!-- Three internally tangent rings, each touching the one containing
+       it on the opposite side, so the gap between them sweeps around
+       and the mark reads as a spiral rather than as a target.
+
+       Drawn rather than embedded as an image: it takes its colour from
+       currentColor, so it themes with the rest of the app, and one file
+       stays sharp at 16px and at 512px.
+
+       The geometry, so it can be adjusted without re-deriving it:
+       internal tangency means the distance between two centres is the
+       DIFFERENCE of their radii.
+
+         outer   r 88 at (100, 100)
+         middle  r 57, touching the outer at the TOP:
+                 88 - 57 = 31 above  -> (100, 69)
+         inner   r 33, touching the middle at the BOTTOM:
+                 57 - 33 = 24 below  -> (100, 93)
+
+       The alternation is what matters. Tangent on the same side twice
+       stacks the rings into a crescent moon; alternating sides is what
+       puts the small ring back near the centre and gives the coil. -->
+  <circle cx="100" cy="100" r="88"/>
+  <circle cx="100" cy="69" r="57"/>
+  <circle cx="100" cy="93" r="33"/>
+</svg>

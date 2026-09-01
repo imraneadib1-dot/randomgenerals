@@ -1,30 +1,29 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <!-- Tab icon: a sun setting behind two dunes, which is the whole
-       scene reduced to what still reads at 16x16. Anything finer -
-       stars, a third dune, texture - turns to mush at favicon size. -->
-  <defs>
-    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1a1430"/>
-      <stop offset="1" stop-color="#3a2418"/>
-    </linearGradient>
-    <linearGradient id="far" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#8a6242"/>
-      <stop offset="1" stop-color="#6b4a32"/>
-    </linearGradient>
-    <linearGradient id="near" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#5a3c28"/>
-      <stop offset="1" stop-color="#3a2618"/>
-    </linearGradient>
-    <clipPath id="frame">
-      <rect width="64" height="64" rx="14"/>
-    </clipPath>
-  </defs>
-  <g clip-path="url(#frame)">
-    <rect width="64" height="64" fill="url(#sky)"/>
-    <circle cx="40" cy="37" r="9" fill="#f0b45c"/>
-    <path d="M0 40 C 12 32, 22 40, 34 37 C 46 34, 54 40, 64 36 L64 64 L0 64 Z"
-          fill="url(#far)"/>
-    <path d="M0 50 C 14 44, 26 52, 40 48 C 52 45, 58 50, 64 47 L64 64 L0 64 Z"
-          fill="url(#near)"/>
+  <!-- The mark on its own tile. Unlike the rest of the app this cannot
+       use currentColor - a favicon renders outside the page, with no
+       inherited colour and no way to read the browser's theme - so the
+       two colours are fixed: the cream ground and the bronze the logo
+       is drawn in.
+
+       A tile rather than a bare mark, because a thin outline on its own
+       vanishes against dark browser chrome. The rounded square is what
+       guarantees contrast whatever the tab strip is doing.
+
+       Same geometry as static/logo.svg, scaled by 25/88 = 0.284 and
+       inset so the stroke never touches the tile edge. The radii are
+       scaled together and each centre re-derived from the tangency rule
+       (distance between centres = difference of radii) rather than
+       scaled independently - rounding each number on its own is what
+       breaks the touch points and turns the coil into three loose
+       circles:
+
+         outer   r 25.0  cy 33.0
+         middle  r 16.2  cy 33.0 - (25.0 - 16.2) = 24.2
+         inner   r  9.4  cy 24.2 + (16.2 -  9.4) = 31.0 -->
+  <rect width="64" height="64" rx="14" fill="#f2ece4"/>
+  <g fill="none" stroke="#6e6420" stroke-width="3.4" stroke-linecap="round">
+    <circle cx="32" cy="33" r="25"/>
+    <circle cx="32" cy="24.2" r="16.2"/>
+    <circle cx="32" cy="31" r="9.4"/>
   </g>
 </svg>

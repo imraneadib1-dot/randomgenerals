@@ -1884,13 +1884,6 @@ html.time-night .night-moon {
   animation: bootPulse 1.8s ease-in-out infinite;
 }
 
-.moon-face {
-  fill: #ffffff;
-}
-.moon-cutout {
-  fill: var(--bay-code);
-  transition: fill 0.35s ease;
-}
 @keyframes bootPulse {
   0%,
   100% {

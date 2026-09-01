@@ -4,6 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>RandomGenerals AI — your local assistant</title>
+    <link rel="icon" href="{{ asset('favicon.svg') }}"
+          type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link
       href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
@@ -21,16 +23,14 @@
   <body>
     <div class="boot-screen" id="bootScreen" aria-hidden="true">
       <div class="boot-mark">
-        <svg viewBox="0 0 32 32" width="60%" height="60%" aria-hidden="true">
-          <defs>
-            <filter id="moonShadowBoot" x="-50%" y="-50%" width="200%" height="200%">
-              <feDropShadow dx="0" dy="1.4" stdDeviation="1.1" flood-color="#0b1e4a" flood-opacity="0.4" />
-            </filter>
-          </defs>
-          <g filter="url(#moonShadowBoot)">
-            <circle cx="16" cy="16" r="10" class="moon-face" />
-            <circle cx="21.5" cy="12.5" r="8.5" class="moon-cutout" />
-          </g>
+        <!-- Same mark as the header. The boot screen sits on the bay
+             colour, so the stroke is white here rather than bronze. -->
+        <svg viewBox="0 0 200 200" width="66%" height="66%"
+             fill="none" stroke="#ffffff" stroke-width="9"
+             stroke-linecap="round" aria-hidden="true">
+          <circle cx="100" cy="100" r="88" />
+          <circle cx="100" cy="69" r="57" />
+          <circle cx="100" cy="93" r="33" />
         </svg>
       </div>
       <div class="boot-bar"><div class="boot-bar-fill" id="bootBarFill"></div></div>
@@ -57,16 +57,15 @@
     <header class="topbar">
       <div class="topbar-brand">
         <span class="brand-mark">
-          <svg viewBox="0 0 32 32" width="60%" height="60%" aria-hidden="true">
-            <defs>
-              <filter id="moonShadowTop" x="-50%" y="-50%" width="200%" height="200%">
-                <feDropShadow dx="0" dy="1.4" stdDeviation="1.1" flood-color="#0b1e4a" flood-opacity="0.4" />
-              </filter>
-            </defs>
-            <g filter="url(#moonShadowTop)">
-              <circle cx="16" cy="16" r="10" class="moon-face" />
-              <circle cx="21.5" cy="12.5" r="8.5" class="moon-cutout" />
-            </g>
+          <!-- The mark. Inline rather than an <img> so it inherits
+               currentColor and follows the theme; the same three circles
+               live in static/logo.svg for anywhere that needs a file. -->
+          <svg viewBox="0 0 200 200" width="72%" height="72%"
+               fill="none" stroke="currentColor" stroke-width="9"
+               stroke-linecap="round" aria-hidden="true">
+            <circle cx="100" cy="100" r="88" />
+            <circle cx="100" cy="69" r="57" />
+            <circle cx="100" cy="93" r="33" />
           </svg>
         </span>
         <span class="brand-name"
