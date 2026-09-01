@@ -369,9 +369,24 @@ def stream_chat(model, history, options=None, images=None, usage=None):
     # How long the model thinks before it starts answering. Ollama has no
     # equivalent, so this arrives under its own name and is simply absent
     # on that channel rather than being translated into something.
-    effort = opts.get("reasoning_effort", DEFAULT_EFFORT)
-    if effort in VALID_EFFORTS:
-        body["reasoning_effort"] = effort
+    #
+    # ONLY FOR gpt-oss, AND THAT RESTRICTION IS LOAD-BEARING.
+    #
+    # Sending it to qwen3.8-27b returns an EMPTY REPLY. That model spends
+    # the token budget on reasoning first and the answer second, so with
+    # reasoning_effort set and max_tokens at 320 - which is what the
+    # "quick" strength asks for - every token goes to reasoning and the
+    # content field comes back empty. Measured: 0 characters of content
+    # against 704 of reasoning, where the same call without the parameter
+    # returned 792 characters of answer.
+    #
+    # The parameter was added here to save budget on gpt-oss, where it
+    # genuinely halves the spend. Applying it to every Groq model was the
+    # bug, and it shipped as a chat bay that returned nothing at all.
+    if _supports_effort(chosen):
+        effort = opts.get("reasoning_effort", DEFAULT_EFFORT)
+        if effort in VALID_EFFORTS:
+            body["reasoning_effort"] = effort
 
     try:
         with requests.post(API_ROOT + "/chat/completions", json=body,
@@ -424,6 +439,16 @@ def stream_chat(model, history, options=None, images=None, usage=None):
                     usage["eval_count"] = spent.get("completion_tokens")
     except requests.exceptions.RequestException as e:
         yield "[Could not reach Groq: %s]" % e
+
+
+def _supports_effort(model):
+    """Whether reasoning_effort is safe to send to this model.
+
+    An allow-list rather than a deny-list: a new reasoning model appearing
+    in the catalogue should default to NOT receiving the parameter, since
+    the failure mode is an empty reply rather than a slightly worse one.
+    """
+    return "gpt-oss" in (model or "").lower()
 
 
 def effort_for(mode, strength):

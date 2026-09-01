@@ -419,9 +419,24 @@ CODE_MODEL_OPTIONS = {"temperature": 0.2, "top_p": 0.9}
 # always searches first, on top of the longer, more careful generation -
 # see shouldAutoSearch()/currentStrength in script.js for the search half.
 STRENGTH_LEVELS = {
+    # 320 was set when a "quick" answer meant a paragraph. The chat
+    # prompt now asks for worked steps AND a check on anything numeric,
+    # and a rolling-body problem ran out of room mid-derivation - the
+    # reply simply stopped after "Initial energy (at rest) =", which
+    # reads as the app breaking rather than as a length limit.
+    #
+    # 1400, measured rather than guessed. At 900 the more verbose of the
+    # two chat models still ran out mid-derivation on the same problem;
+    # at 1400 both finish and both get it right. The cap does not make
+    # answers long - "what is 17% of 340" comes back in 100-371
+    # characters at this setting - so it is the brevity nudge below that
+    # keeps ordinary replies short, and this only stops a genuinely
+    # long calculation being guillotined.
     "quick": {
-        "options": {"num_predict": 320},
-        "nudge": "Keep the answer brief and to the point.",
+        "options": {"num_predict": 1400},
+        "nudge": "Keep the answer brief and to the point - but never "
+                 "stop mid-working on a calculation. If it needs steps, "
+                 "take them.",
     },
     "deep": {
         "options": {"num_predict": 2048, "temperature": 0.15},
