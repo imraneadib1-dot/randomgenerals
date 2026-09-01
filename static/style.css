@@ -3907,3 +3907,134 @@ html[data-motion="reduced"] *::after {
   .settings-rail .modal-tab { white-space: nowrap; width: auto; }
   .settings-search { display: none; }
 }
+
+
+/* ======================================================================
+   LIGHT MODE
+
+   Not a new palette - the same five colours with their roles inverted,
+   which is why it still looks like this product rather than a generic
+   white app. In dark mode Yankees Blue is the ground and Burlywood is
+   the readable gold; here Yankees Blue becomes the TYPE and the ground
+   is a warm off-white lifted out of Smoke, so the page keeps its warm
+   cast instead of going clinical.
+
+   Assigned by measured contrast against the #F7F5F0 ground, the same
+   way the dark set was:
+
+     Yankees Blue   #182A3A  13.47:1  -> body text
+     Slate          #42566A   6.96:1  -> secondary text
+     Grey           #6B7280   4.44:1  -> labels, large text only
+     Tan-deep       #7A6335   5.26:1  -> the gold you can READ
+     Dark Tan       #A08348   3.30:1  -> the gold you sit ON, not read
+
+   The two golds swap jobs across themes. In the dark, Burlywood is
+   readable and Dark Tan is a fill; in the light, Dark Tan is too pale
+   to read at 3.3:1 so tan-deep takes the type and Dark Tan keeps the
+   fills. Yankees Blue on a Dark Tan button is 4.08:1 - better than
+   white on the same fill, which is 3.60:1, so buttons invert rather
+   than going white.
+   ====================================================================== */
+:root[data-theme="light"] {
+  --sky-top: #ffffff;
+  --sky-mid: #f7f5f0;
+  --sky-bottom: #efece4;
+
+  --surface: rgba(24, 42, 58, 0.04);
+  --surface-raised: rgba(255, 255, 255, 0.86);
+  --panel: rgba(255, 255, 255, 0.82);
+  --border: rgba(24, 42, 58, 0.14);
+  --border-strong: rgba(122, 99, 53, 0.42);
+
+  --ink: #182a3a;
+  --ink-soft: #42566a;
+  --ink-faint: #6b7280;
+  --ink-on-sky: #182a3a;
+  --ink-on-sky-soft: rgba(24, 42, 58, 0.72);
+
+  /* The gold you can read is the deep one here, not the light one. */
+  --deck: #7a6335;
+  --deck-soft: rgba(122, 99, 53, 0.12);
+  --accent: #a08348;
+  --accent-ink: #7a6335;
+  --on-accent: #182a3a;
+
+  --bay-code: #7a6335;
+  --bay-code-soft: rgba(122, 99, 53, 0.14);
+  --bay-chat: #3d6480;
+  --bay-chat-soft: rgba(61, 100, 128, 0.14);
+  --bay-image: #8a6f3c;
+  --bay-image-soft: rgba(138, 111, 60, 0.16);
+  --bay-video: #42566a;
+  --bay-video-soft: rgba(66, 86, 106, 0.16);
+
+  --user-bubble: rgba(122, 99, 53, 0.10);
+  --tint: 24 42 58;
+  --shade: 247 245 240;
+
+  /* Shadows in a light room are cast by objects, not glows behind them:
+     the dark theme's luminous shadows read as smudges on white. */
+  --shadow-card: 0 1px 2px rgba(24, 42, 58, 0.06),
+                 0 8px 24px rgba(24, 42, 58, 0.08);
+  --shadow-soft: 0 1px 2px rgba(24, 42, 58, 0.05);
+}
+
+/* The animated sky is a night sky. Under light it would be a dark band
+   across the top of a white page, so it is simply not drawn. */
+:root[data-theme="light"] .sky,
+:root[data-theme="light"] #skyCanvas {
+  display: none;
+}
+
+/* Code blocks ship a dark syntax theme from highlight.js. Left alone
+   they stay dark - which is actually correct: a code block is a quoted
+   artefact, and every editor people know keeps one dark. Only the frame
+   is adjusted so it does not float. */
+:root[data-theme="light"] pre {
+  border: 1px solid var(--border);
+}
+
+/* ---- contrast ---------------------------------------------------------
+   Not a second palette: the same tokens with the quiet ones pushed until
+   they clear AA on their own ground. Everything that was decoration -
+   hairlines, faint labels - becomes legible rather than felt.
+   ---------------------------------------------------------------------- */
+:root[data-contrast="high"] {
+  --border: rgba(223, 226, 220, 0.34);
+  --border-strong: rgba(214, 187, 128, 0.7);
+  --ink-soft: #cfd3cc;
+  --ink-faint: #a9ada5;
+}
+:root[data-theme="light"][data-contrast="high"] {
+  --border: rgba(24, 42, 58, 0.34);
+  --border-strong: rgba(122, 99, 53, 0.7);
+  --ink-soft: #26364a;
+  --ink-faint: #3f4a57;
+}
+
+/* ---- text size --------------------------------------------------------
+   Scales the reading column, not the chrome. A settings panel that grows
+   with the prose ends up with wrapped labels and a scrollbar; the point
+   is to make the ANSWER easier to read.
+   ---------------------------------------------------------------------- */
+:root[data-textsize="small"] .msg-bubble { font-size: 13.5px; }
+:root[data-textsize="large"] .msg-bubble { font-size: 16px; }
+:root[data-textsize="xlarge"] .msg-bubble { font-size: 17.5px; line-height: 1.7; }
+
+
+/* The topbar is a hardcoded near-black strip - deliberately, so it
+   matches the landing page's sticky nav. Over a warm off-white ground
+   that read as a muddy olive band, because a dark translucent layer
+   takes its colour from whatever is behind it. Under light it becomes
+   an opaque light strip instead, and the brand text flips with it. */
+:root[data-theme="light"] .topbar {
+  background: rgba(255, 255, 255, 0.88);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(24, 42, 58, 0.05),
+              0 6px 20px rgba(24, 42, 58, 0.06);
+}
+:root[data-theme="light"] .topbar,
+:root[data-theme="light"] .brand-name,
+:root[data-theme="light"] .topbar .bay-btn {
+  color: var(--ink);
+}

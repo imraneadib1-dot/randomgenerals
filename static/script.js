@@ -3236,3 +3236,83 @@ applyMotionPref();
 initSettingsControls();
 initSettingsSearch();
 initDataControls();
+
+
+/* ----------------------------------------------------------------
+   Appearance
+
+   The theme is applied inline in <head> before first paint - see the
+   note there. This handles the controls and keeps them in step.
+
+   "System" is a live subscription, not a one-off read: someone whose
+   machine flips to dark at sunset should see this follow, and only the
+   media query knows when that happens.
+   ---------------------------------------------------------------- */
+const PREF_THEME = "theme";
+const PREF_CONTRAST = "contrast";
+const PREF_TEXTSIZE = "textSize";
+
+function resolvedTheme() {
+  const choice = readPref(PREF_THEME) || "system";
+  if (choice !== "system") return choice;
+  return window.matchMedia
+    && window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark" : "light";
+}
+
+function applyAppearance() {
+  const root = document.documentElement;
+  if (resolvedTheme() === "light") root.setAttribute("data-theme", "light");
+  else root.removeAttribute("data-theme");
+
+  const contrast = readPref(PREF_CONTRAST) || "normal";
+  if (contrast === "high") root.setAttribute("data-contrast", "high");
+  else root.removeAttribute("data-contrast");
+
+  const size = readPref(PREF_TEXTSIZE) || "medium";
+  if (size !== "medium") root.setAttribute("data-textsize", size);
+  else root.removeAttribute("data-textsize");
+}
+
+function initAppearanceControls() {
+  const theme = document.getElementById("themeSelect");
+  const contrast = document.getElementById("contrastSelect");
+  const size = document.getElementById("textSizeSelect");
+
+  if (theme) {
+    theme.value = readPref(PREF_THEME) || "system";
+    theme.addEventListener("change", () => {
+      writePref(PREF_THEME, theme.value);
+      applyAppearance();
+    });
+  }
+  if (contrast) {
+    contrast.value = readPref(PREF_CONTRAST) || "normal";
+    contrast.addEventListener("change", () => {
+      writePref(PREF_CONTRAST, contrast.value);
+      applyAppearance();
+    });
+  }
+  if (size) {
+    size.value = readPref(PREF_TEXTSIZE) || "medium";
+    size.addEventListener("change", () => {
+      writePref(PREF_TEXTSIZE, size.value);
+      applyAppearance();
+    });
+  }
+
+  // Follow the system while "System" is selected. Without this, choosing
+  // System means "whatever it was when the tab opened", which is not
+  // what the word promises.
+  if (window.matchMedia) {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => {
+      if ((readPref(PREF_THEME) || "system") === "system") applyAppearance();
+    };
+    if (mq.addEventListener) mq.addEventListener("change", onChange);
+    else if (mq.addListener) mq.addListener(onChange);
+  }
+}
+
+applyAppearance();
+initAppearanceControls();

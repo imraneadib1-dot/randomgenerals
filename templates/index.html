@@ -740,6 +740,53 @@
         <!-- Appearance tab -->
         <div class="modal-panel" id="appearancePanel" hidden>
           <div class="appearance-section">
+            <label class="memory-label" for="themeSelect">Theme</label>
+            <p class="memory-hint">
+              Light mode is the same five colours with their roles
+              swapped &mdash; Yankees Blue becomes the type instead of
+              the background &mdash; so it still looks like this app
+              rather than a generic white one.
+            </p>
+            <select id="themeSelect" class="model-select">
+              <option value="system">Match my system</option>
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+            </select>
+          </div>
+
+          <div class="memory-divider"></div>
+
+          <div class="appearance-section">
+            <label class="memory-label" for="contrastSelect">Contrast</label>
+            <p class="memory-hint">
+              Higher contrast makes hairlines and quiet labels legible
+              rather than merely felt.
+            </p>
+            <select id="contrastSelect" class="model-select">
+              <option value="normal">Normal</option>
+              <option value="high">High</option>
+            </select>
+          </div>
+
+          <div class="memory-divider"></div>
+
+          <div class="appearance-section">
+            <label class="memory-label" for="textSizeSelect">Text size</label>
+            <p class="memory-hint">
+              Scales the reading column only. The rest of the interface
+              stays put, so nothing wraps or clips.
+            </p>
+            <select id="textSizeSelect" class="model-select">
+              <option value="small">Small</option>
+              <option value="medium">Medium</option>
+              <option value="large">Large</option>
+              <option value="xlarge">Extra large</option>
+            </select>
+          </div>
+
+          <div class="memory-divider"></div>
+
+          <div class="appearance-section">
             <label class="memory-label">Accent colour</label>
             <p class="memory-hint">
               Sets the highlight colour used across buttons, the active
@@ -956,6 +1003,34 @@
       defer
       src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.1/mermaid.min.js"
     ></script>
+    <!-- Theme applied BEFORE the stylesheet paints. Read after first
+         paint, someone who chose Light would watch the app load dark and
+         then flip, which reads as a bug rather than a preference being
+         honoured. Inline and synchronous is the only way to beat that.
+
+         try/catch because localStorage throws outright in some privacy
+         modes, and an appearance preference is not worth a blank page. -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("theme") || "system";
+          var dark = window.matchMedia
+            && window.matchMedia("(prefers-color-scheme: dark)").matches;
+          var mode = t === "system" ? (dark ? "dark" : "light") : t;
+          if (mode === "light") {
+            document.documentElement.setAttribute("data-theme", "light");
+          }
+          var c = localStorage.getItem("contrast");
+          if (c === "high") {
+            document.documentElement.setAttribute("data-contrast", "high");
+          }
+          var z = localStorage.getItem("textSize");
+          if (z && z !== "medium") {
+            document.documentElement.setAttribute("data-textsize", z);
+          }
+        } catch (e) {}
+      })();
+    </script>
     <script src="{{ asset('script.js') }}"></script>
   </body>
 </html>
