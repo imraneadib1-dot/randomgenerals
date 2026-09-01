@@ -174,7 +174,15 @@ function autoGrow(el) {
 
 messageInput.addEventListener("input", () => autoGrow(messageInput));
 messageInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
+  if (e.key !== "Enter") return;
+  // Which key sends is a real preference, not decoration: people
+  // pasting multi-line code want Enter to make a newline, and people
+  // holding a conversation want it to send. Settings > General.
+  //
+  // readPref is consulted per keystroke rather than cached, so changing
+  // the switch takes effect in the composer already on screen.
+  const enterSends = readPref("enterToSend") !== "0";
+  if (enterSends ? !e.shiftKey : (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
     chatForm.requestSubmit();
   }
@@ -1713,9 +1721,11 @@ const settingsClose = document.getElementById("settingsClose");
 const modalTabs = [...document.querySelectorAll(".modal-tab")];
 const modalPanels = {
   account: document.getElementById("accountPanel"),
+  general: document.getElementById("generalPanel"),
   plan: document.getElementById("planPanel"),
   memory: document.getElementById("memoryPanel"),
   appearance: document.getElementById("appearancePanel"),
+  data: document.getElementById("dataPanel"),
   about: document.getElementById("aboutPanel"),
 };
 
@@ -3042,3 +3052,187 @@ if (genUpgrade) {
 }
 
 loadVideoLimits();
+
+
+/* ----------------------------------------------------------------
+   Settings that do something
+
+   Every control here changes behaviour on the next action - none is a
+   placeholder for a feature that does not exist, which is the failure
+   mode a settings screen invites. Preferences live in localStorage
+   because they are per-browser choices, not account state: signing in
+   on a different machine should not drag your font size across.
+   ---------------------------------------------------------------- */
+const PREF_STRENGTH = "defaultStrength";
+const PREF_BAY = "defaultBay";
+const PREF_ENTER = "enterToSend";
+const PREF_MOTION = "reduceMotion";
+
+function applyMotionPref() {
+  const off = readPref(PREF_MOTION) === "1";
+  document.documentElement.setAttribute(
+    "data-motion", off ? "reduced" : "full");
+}
+
+function initSettingsControls() {
+  const strength = document.getElementById("defaultStrength");
+  const bay = document.getElementById("defaultBay");
+  const enter = document.getElementById("enterToSend");
+  const motion = document.getElementById("reduceMotion");
+
+  if (strength) {
+    strength.value = readPref(PREF_STRENGTH) || "quick";
+    strength.addEventListener("change", () => {
+      writePref(PREF_STRENGTH, strength.value);
+      // Applies now as well as next time: changing a default in front of
+      // someone and having it not take effect reads as a broken switch.
+      // Apply it now as well as next time: changing a default in front
+      // of someone and having nothing happen reads as a broken switch.
+      currentStrength = strength.value;
+      strengthToggle.setAttribute(
+        "aria-checked", String(currentStrength === "deep"));
+    });
+  }
+  if (bay) {
+    bay.value = readPref(PREF_BAY) || "code";
+    bay.addEventListener("change", () => writePref(PREF_BAY, bay.value));
+  }
+  if (enter) {
+    enter.checked = readPref(PREF_ENTER) !== "0";
+    enter.addEventListener("change", () => {
+      writePref(PREF_ENTER, enter.checked ? "1" : "0");
+    });
+  }
+  if (motion) {
+    motion.checked = readPref(PREF_MOTION) === "1";
+    motion.addEventListener("change", () => {
+      writePref(PREF_MOTION, motion.checked ? "1" : "0");
+      applyMotionPref();
+    });
+  }
+}
+
+/* Filtering the rail, not the whole page. Searching settings is how you
+   find a category you cannot name - so this matches the label AND a few
+   keywords per tab, or "dark" would find nothing. */
+const SETTINGS_KEYWORDS = {
+  account: "sign in out email password google login",
+  general: "default mode quick deep bay enter send motion animation",
+  appearance: "colour color accent theme sky dark light background",
+  memory: "custom instructions remember personalization name",
+  data: "export delete download privacy conversations egress",
+  plan: "billing upgrade pro credits subscription payment",
+  about: "version model provider status licence",
+};
+
+function initSettingsSearch() {
+  const box = document.getElementById("settingsSearch");
+  if (!box) return;
+  box.addEventListener("input", () => {
+    const q = box.value.trim().toLowerCase();
+    modalTabs.forEach((t) => {
+      if (!q) { t.hidden = false; return; }
+      const key = t.dataset.tab;
+      const hay = (t.textContent + " " + (SETTINGS_KEYWORDS[key] || ""))
+        .toLowerCase();
+      t.hidden = !hay.includes(q);
+    });
+    // Jump to the first surviving tab so the pane matches the list.
+    const first = modalTabs.find((t) => !t.hidden);
+    if (q && first && first.getAttribute("aria-selected") !== "true") {
+      first.click();
+    }
+  });
+}
+
+/* Data controls. Export is a real download of what the server holds for
+   you; delete really deletes, one thread at a time through the endpoint
+   that already checks ownership - rather than a bulk route that would
+   need its own authorisation logic. */
+function initDataControls() {
+  const exportBtn = document.getElementById("exportData");
+  const deleteBtn = document.getElementById("deleteAllThreads");
+  const status = document.getElementById("dataStatus");
+  const egress = document.getElementById("dataEgress");
+
+  if (exportBtn) {
+    exportBtn.addEventListener("click", async () => {
+      status.textContent = "Collecting…";
+      try {
+        const list = await (await fetch("/api/threads")).json();
+        const full = [];
+        for (const t of list.threads || []) {
+          const one = await (await fetch("/api/threads/" + t.id)).json();
+          full.push(one);
+        }
+        const blob = new Blob([JSON.stringify(full, null, 2)],
+                              { type: "application/json" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "randomgenerals-conversations.json";
+        a.click();
+        URL.revokeObjectURL(a.href);
+        status.textContent = `Exported ${full.length} conversations.`;
+      } catch (_) {
+        status.textContent = "Could not export just now.";
+      }
+    });
+  }
+
+  if (deleteBtn) {
+    deleteBtn.addEventListener("click", async () => {
+      if (!confirm(
+        "Delete every conversation? This cannot be undone.")) return;
+      status.textContent = "Deleting…";
+      try {
+        const list = await (await fetch("/api/threads")).json();
+        let n = 0;
+        for (const t of list.threads || []) {
+          const r = await fetch("/api/threads/" + t.id, { method: "DELETE" });
+          if (r.ok) n += 1;
+        }
+        status.textContent = `Deleted ${n} conversations.`;
+        if (typeof loadThreadList === "function") loadThreadList();
+        showEmptyState();
+      } catch (_) {
+        status.textContent = "Could not delete just now.";
+      }
+    });
+  }
+
+  if (egress) {
+    // Named from what the server actually reports, not from a fixed
+    // sentence - this app has been wrong about where prompts go before.
+    fetch("/api/health").then((r) => r.json()).then((h) => {
+      const fast = h.fast_channel && h.fast_channel.configured;
+      egress.textContent = fast
+        ? "Chat and code are answered by Groq, so those messages leave "
+          + "this server. Images go to Pollinations. Web search goes to "
+          + "DuckDuckGo. Nothing else is sent anywhere."
+        : "Everything is answered on this server right now. Images go to "
+          + "Pollinations and web search to DuckDuckGo; nothing else "
+          + "leaves.";
+    }).catch(() => {
+      egress.textContent = "Could not check right now.";
+    });
+  }
+}
+
+// Apply the saved defaults before the first render, so the app opens in
+// the state the person chose rather than snapping to it a moment later.
+(function applySavedDefaults() {
+  const st = readPref(PREF_STRENGTH);
+  if (st === "deep" || st === "quick") {
+    currentStrength = st;
+    strengthToggle.setAttribute("aria-checked", String(st === "deep"));
+  }
+  const bay = readPref(PREF_BAY);
+  if (bay && bay !== currentBay && typeof selectBay === "function") {
+    selectBay(bay);
+  }
+})();
+
+applyMotionPref();
+initSettingsControls();
+initSettingsSearch();
+initDataControls();

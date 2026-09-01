@@ -502,48 +502,36 @@
           </button>
         </div>
 
-        <div class="modal-tabs" role="tablist">
-          <button
-            class="modal-tab"
-            data-tab="account"
-            role="tab"
-            aria-selected="true"
-          >
-            Account
-          </button>
-          <button
-            class="modal-tab"
-            data-tab="plan"
-            role="tab"
-            aria-selected="false"
-          >
-            Plan &amp; billing
-          </button>
-          <button
-            class="modal-tab"
-            data-tab="memory"
-            role="tab"
-            aria-selected="false"
-          >
-            Memory
-          </button>
-          <button
-            class="modal-tab"
-            data-tab="appearance"
-            role="tab"
-            aria-selected="false"
-          >
-            Appearance
-          </button>
-          <button
-            class="modal-tab"
-            data-tab="about"
-            role="tab"
-            aria-selected="false"
-          >
-            About
-          </button>
-        </div>
+        <!-- A rail, not a strip. Horizontal tabs cap out at about five
+             before they wrap or scroll, and settings only ever grow -
+             a vertical list takes another row for free and keeps every
+             category readable at a glance. -->
+        <div class="settings-body">
+          <nav class="settings-rail" role="tablist" aria-label="Settings">
+            <div class="settings-search">
+              <input
+                type="search"
+                id="settingsSearch"
+                placeholder="Search settings"
+                aria-label="Search settings"
+              />
+            </div>
+            <button class="modal-tab" data-tab="account" role="tab"
+                    aria-selected="true">Account</button>
+            <button class="modal-tab" data-tab="general" role="tab"
+                    aria-selected="false">General</button>
+            <button class="modal-tab" data-tab="appearance" role="tab"
+                    aria-selected="false">Appearance</button>
+            <button class="modal-tab" data-tab="memory" role="tab"
+                    aria-selected="false">Personalization</button>
+            <button class="modal-tab" data-tab="data" role="tab"
+                    aria-selected="false">Data controls</button>
+            <button class="modal-tab" data-tab="plan" role="tab"
+                    aria-selected="false">Plan &amp; billing</button>
+            <button class="modal-tab" data-tab="about" role="tab"
+                    aria-selected="false">About</button>
+          </nav>
+          <div class="settings-content">
 
         <!-- Account tab -->
         <div class="modal-panel" id="accountPanel">
@@ -795,6 +783,99 @@
           </div>
         </div>
 
+
+        <!-- General tab. Everything here changes behaviour; nothing is
+             a placeholder for a feature that does not exist. -->
+        <div class="modal-panel" id="generalPanel" hidden>
+          <div class="appearance-section">
+            <label class="memory-label" for="defaultStrength">
+              Default response mode
+            </label>
+            <p class="memory-hint">
+              Which mode a new conversation starts in. Deep searches the
+              web first and thinks for longer; Quick answers straight
+              away.
+            </p>
+            <select id="defaultStrength" class="model-select">
+              <option value="quick">Quick</option>
+              <option value="deep">Deep search</option>
+            </select>
+          </div>
+
+          <div class="memory-divider"></div>
+
+          <div class="appearance-section">
+            <label class="memory-label" for="defaultBay">
+              Open on
+            </label>
+            <p class="memory-hint">
+              Which bay the app lands on when you open it.
+            </p>
+            <select id="defaultBay" class="model-select">
+              <option value="code">Code</option>
+              <option value="chat">Chat</option>
+              <option value="image">Image</option>
+              <option value="video">Diagram</option>
+            </select>
+          </div>
+
+          <div class="memory-divider"></div>
+
+          <div class="appearance-section">
+            <label class="memory-label">Sending</label>
+            <label class="setting-row">
+              <input type="checkbox" id="enterToSend" checked />
+              <span>
+                <strong>Enter sends the message</strong>
+                <em>Off: Enter makes a new line and Ctrl+Enter sends.</em>
+              </span>
+            </label>
+          </div>
+
+          <div class="memory-divider"></div>
+
+          <div class="appearance-section">
+            <label class="memory-label">Motion</label>
+            <label class="setting-row">
+              <input type="checkbox" id="reduceMotion" />
+              <span>
+                <strong>Reduce motion</strong>
+                <em>Turns off animations. Your system setting is
+                    honoured regardless.</em>
+              </span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Data controls -->
+        <div class="modal-panel" id="dataPanel" hidden>
+          <div class="appearance-section">
+            <label class="memory-label">Your conversations</label>
+            <p class="memory-hint">
+              Everything is stored on this server, tied to your account
+              or - signed out - to this browser session.
+            </p>
+            <div class="data-actions">
+              <button type="button" class="btn-secondary" id="exportData">
+                Export conversations
+              </button>
+              <button type="button" class="btn-danger" id="deleteAllThreads">
+                Delete all conversations
+              </button>
+            </div>
+            <p class="memory-hint" id="dataStatus"></p>
+          </div>
+
+          <div class="memory-divider"></div>
+
+          <div class="appearance-section">
+            <label class="memory-label">What leaves this server</label>
+            <p class="memory-hint" id="dataEgress">
+              Checking&hellip;
+            </p>
+          </div>
+        </div>
+
         <!-- About tab -->
         <div class="modal-panel" id="aboutPanel" hidden>
           <div class="about-status" id="aboutStatus">
@@ -834,6 +915,8 @@
               hold a conversation), but the code trains and runs on its
               own: <code>python brain/train.py</code>.
             </p>
+          </div>
+        </div>
           </div>
         </div>
       </div>

@@ -3760,3 +3760,150 @@ html.time-night .night-moon {
   color: var(--ink-soft);
   font-size: 13px;
 }
+
+
+/* ---- settings: rail layout --------------------------------------------
+   The modal was 400px wide with a horizontal tab strip. Five tabs fitted;
+   seven would have wrapped onto a second row, and settings only ever
+   grow. A rail down the side takes another category for free and keeps
+   every label readable without scrolling a strip sideways.
+   ---------------------------------------------------------------------- */
+.modal#settingsModal {
+  max-width: 780px;
+  max-height: min(660px, 92vh);
+  overflow: hidden;          /* the content pane scrolls, not the shell */
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-body {
+  display: flex;
+  min-height: 0;             /* lets the child actually scroll in flex */
+  flex: 1;
+}
+
+.settings-rail {
+  width: 190px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  padding: 10px 8px 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-rail .modal-tab {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font: inherit;
+  font-size: 13.5px;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.settings-rail .modal-tab:hover {
+  background: var(--surface);
+  color: var(--ink);
+}
+.settings-rail .modal-tab[aria-selected="true"] {
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-weight: 500;
+}
+/* A row hidden by search must not leave its gap behind. */
+.settings-rail .modal-tab[hidden] { display: none; }
+
+.settings-search { padding: 4px 4px 10px; }
+.settings-search input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+.settings-search input:focus {
+  outline: none;
+  border-color: var(--border-strong);
+}
+
+.settings-content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 18px 22px 22px;
+}
+
+/* A checkbox row where the label explains the consequence rather than
+   restating the switch. */
+.setting-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  cursor: pointer;
+  padding: 4px 0;
+}
+.setting-row input { margin-top: 3px; accent-color: var(--accent); }
+.setting-row strong {
+  display: block;
+  font-weight: 500;
+  font-size: 13.5px;
+  color: var(--ink);
+}
+.setting-row em {
+  display: block;
+  font-style: normal;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+  margin-top: 2px;
+}
+
+.data-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 6px; }
+.btn-secondary,
+.btn-danger {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--ink-soft);
+  border-radius: 999px;
+  padding: 8px 15px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.btn-secondary:hover { color: var(--ink); border-color: var(--border-strong); }
+/* Destructive, so it is coloured only on hover - a permanently red
+   button in a settings list reads as a warning about the whole page. */
+.btn-danger:hover { color: #ff8f8f; border-color: rgba(255, 143, 143, 0.5); }
+
+/* Motion off means off, including the things that animate by default. */
+html[data-motion="reduced"] *,
+html[data-motion="reduced"] *::before,
+html[data-motion="reduced"] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+@media (max-width: 720px) {
+  .settings-body { flex-direction: column; }
+  .settings-rail {
+    width: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 4px;
+  }
+  .settings-rail .modal-tab { white-space: nowrap; width: auto; }
+  .settings-search { display: none; }
+}
