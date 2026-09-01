@@ -376,7 +376,13 @@ strengthToggle.addEventListener("click", () => {
   // prompt/decoding options; the model stays whatever it already was.
 });
 
+// The clock was removed from the sidebar - the operating system already
+// has one, and a second-by-second ticker was the busiest thing on an
+// otherwise idle screen. The guard stays rather than the function being
+// deleted, because the element is optional now: a layout that wants a
+// clock back only has to add the span.
 function tickClock() {
+  if (!clockEl) return;
   clockEl.textContent = new Date().toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
@@ -384,8 +390,10 @@ function tickClock() {
     hour12: false,
   });
 }
-tickClock();
-setInterval(tickClock, 1000);
+if (clockEl) {
+  tickClock();
+  setInterval(tickClock, 1000);
+}
 
 function relativeTime(iso) {
   const then = new Date(iso).getTime();
@@ -405,11 +413,11 @@ function relativeTime(iso) {
    Bay switcher — Code / Chat / Image
    ---------------------------------------------------------------- */
 function updateEmptyState() {
-  const meta = BAY_META[currentBay];
-  emptyEyebrow.textContent = meta.eyebrow;
-  emptyTitle.textContent = meta.title;
-  emptySub.textContent = meta.sub;
-  emptyHints.innerHTML = meta.hints;
+  // The eyebrow/title/sub/hints elements are kept in the DOM and left
+  // empty rather than deleted: BAY_META still carries the copy, the
+  // placeholder text is read from the same table, and a future bay that
+  // genuinely needs an explanation can unhide one of these without the
+  // markup having to be rebuilt.
   if (typeof renderGreeting === "function") renderGreeting();
 }
 
@@ -740,8 +748,13 @@ function selectProvider(id) {
   modelSelect.replaceChildren(
     ...p.models.map((m) => {
       const meta = info.get(m);
-      const opt = new Option(
-        meta && meta.locked ? `${m} — Pro` : m, m);
+      // The friendly name, not the routing string. "Max" says more to
+      // the person choosing than "openai/gpt-oss-120b" does, and the
+      // full id is still on the option's title for anyone who wants it.
+      let label = (meta && meta.name) || m;
+      if (meta && meta.locked) label += " — Pro";
+      const opt = new Option(label, m);
+      opt.title = (meta && meta.blurb) ? `${m} — ${meta.blurb}` : m;
       if (meta && meta.locked) opt.disabled = true;
       return opt;
     }),

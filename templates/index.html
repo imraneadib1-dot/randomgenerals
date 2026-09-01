@@ -176,7 +176,6 @@
             ></select>
             <div class="channel-note" id="channelNote"></div>
 
-            <div class="patch-bay-label">Response mode</div>
             <button
               type="button"
               class="mode-toggle"
@@ -242,18 +241,12 @@
             id="creditMeter"
             title="In-app usage credits"
           >
-            <div class="credit-meter-top">
-              <span class="credit-label">Credits</span>
-            </div>
             <div class="credit-bar-track">
               <div class="credit-bar-fill" id="creditBarFill"></div>
             </div>
             <div class="credit-count" id="creditCount">— / —</div>
           </div>
 
-          <div class="status-rail">
-            <span class="clock" id="clock"></span>
-          </div>
         </div>
       </aside>
 
@@ -363,19 +356,20 @@
 
         <main class="chat-shell">
           <div class="chat-log" id="chatLog">
+            <!-- ONE LINE AND AN INPUT.
+                 This used to stack five things on an empty screen: a
+                 terminal-style eyebrow, a heading, a sentence of
+                 description, and two rows of keyboard hints - above the
+                 greeting, and all of it restating what the placeholder
+                 in the composer already says.
+                 An empty state is not the place to explain the product
+                 to someone who has already opened it. The greeting stays
+                 because it is the only part that is about them. -->
             <div class="empty-state" id="emptyState">
-              <p class="empty-eyebrow" id="emptyEyebrow">randomgenerals --ready</p>
-              <h1 id="emptyTitle">Ask for code</h1>
-              <p class="empty-sub" id="emptySub">
-                Ask for code or debug an error — you get working code back, not a lecture.
-              </p>
-              <div class="empty-hints" id="emptyHints">
-                <div>
-                  <span>Enter</span> to send · <span>Shift+Enter</span> for a
-                  new line
-                </div>
-                <div><span>&lt;/&gt; ◎</span> switch bays above</div>
-              </div>
+              <p class="empty-eyebrow" id="emptyEyebrow" hidden></p>
+              <h1 id="emptyTitle" hidden></h1>
+              <p class="empty-sub" id="emptySub" hidden></p>
+              <div class="empty-hints" id="emptyHints" hidden></div>
             </div>
           </div>
         </main>

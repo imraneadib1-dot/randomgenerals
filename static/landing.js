@@ -440,3 +440,53 @@ setupBackgroundVideo("heroVideo");
   paintButton();
   swapVideo(current());
 })();
+
+
+/* ----------------------------------------------------------------
+   Moon parallax
+
+   The moon drifts against the pointer. Two numbers in the range -1..1
+   are written to CSS variables and the transform is done in CSS - the
+   handler never reads layout, so it cannot force a reflow while the
+   scroll scrubber is also running.
+
+   Coalesced into a single rAF: pointermove fires far more often than
+   the screen refreshes, and writing a variable per event would queue
+   style recalculations that are thrown away unread.
+   ---------------------------------------------------------------- */
+(function () {
+  "use strict";
+
+  var media = document.querySelector(".filmstrip-media");
+  if (!media) return;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+  var px = 0, py = 0, queued = false;
+
+  function apply() {
+    queued = false;
+    media.style.setProperty("--par-x", px.toFixed(3));
+    media.style.setProperty("--par-y", py.toFixed(3));
+  }
+
+  window.addEventListener("pointermove", function (e) {
+    // A coarse pointer is a finger, and a finger is already touching the
+    // thing it would be parallaxing - there is no hover to respond to.
+    if (e.pointerType === "touch") return;
+    // Inverted: the scene moves opposite the cursor, which is what makes
+    // it read as depth rather than as something following the mouse.
+    px = -((e.clientX / window.innerWidth) * 2 - 1);
+    py = -((e.clientY / window.innerHeight) * 2 - 1);
+    if (!queued) {
+      queued = true;
+      requestAnimationFrame(apply);
+    }
+  }, { passive: true });
+
+  // Settle back to centre when the pointer leaves, so a page left alone
+  // does not sit permanently offset.
+  window.addEventListener("pointerleave", function () {
+    px = 0; py = 0;
+    if (!queued) { queued = true; requestAnimationFrame(apply); }
+  }, { passive: true });
+})();

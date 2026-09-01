@@ -2254,3 +2254,95 @@ body::before {
   .theme-toggle-label { display: none; }
   .theme-toggle { padding: 6px 9px; }
 }
+
+
+/* ---- moon: cursor parallax and a star field --------------------------
+   The moon drifts against the pointer. Small on purpose - 14px at the
+   edges of the viewport - because this is a background responding to
+   you, not a thing being dragged. Driven by a CSS variable so the
+   pointer handler only writes two numbers and never touches layout.
+
+   translate3d rather than left/top: it stays on the compositor, so the
+   drift costs nothing while the scroll scrubber is also running. */
+:root[data-theme="moon"] .filmstrip-media {
+  --par-x: 0;
+  --par-y: 0;
+}
+:root[data-theme="moon"] .film-video {
+  transform: translate3d(
+    calc(var(--par-x) * 14px), calc(var(--par-y) * 14px), 0) scale(1.045);
+  transition: transform 260ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  will-change: transform;
+}
+/* The scale above is what stops the drift exposing an edge: moving a
+   cover-fitted video by 14px would otherwise reveal 14px of nothing at
+   the opposite side. */
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="moon"] .film-video {
+    transform: none;
+    transition: none;
+  }
+}
+
+/* Stars replace the drawn dunes under the moon theme. The dune canvas is
+   already hidden here (it is the wrong picture); this puts something in
+   its place so the lower half of the strip is not empty black.
+
+   Three layered radial-gradient fields rather than DOM elements or a
+   canvas: a few hundred stars as elements would be a few hundred nodes
+   to lay out on every scroll, and a canvas would need its own redraw
+   loop next to the one already running. This is one painted layer that
+   the compositor animates on its own. */
+:root[data-theme="moon"] .scene-stars {
+  position: absolute;
+  inset: 0;
+  /* ABOVE the video, not below it. At z-index 0 the stars sat behind an
+     opaque rectangle and were invisible - the clip fills the frame, and
+     its own background is black, so there is no "behind" to be seen in.
+     screen blending is what makes that safe: it can only lighten, so a
+     star lands visibly on the black sky and disappears against the lit
+     face of the moon, which is what would actually happen. */
+  z-index: 2;
+  mix-blend-mode: screen;
+  pointer-events: none;
+  opacity: 0.85;
+  background-image:
+    radial-gradient(1.4px 1.4px at 12% 18%, rgba(245,224,198,0.95), transparent 60%),
+    radial-gradient(1.1px 1.1px at 27% 62%, rgba(245,224,198,0.75), transparent 60%),
+    radial-gradient(1.6px 1.6px at 41% 31%, rgba(255,255,255,0.9), transparent 60%),
+    radial-gradient(1.0px 1.0px at 55% 77%, rgba(245,224,198,0.7), transparent 60%),
+    radial-gradient(1.7px 1.7px at 68% 22%, rgba(255,255,255,0.85), transparent 60%),
+    radial-gradient(1.2px 1.2px at 79% 55%, rgba(245,224,198,0.8), transparent 60%),
+    radial-gradient(1.5px 1.5px at 91% 37%, rgba(255,255,255,0.9), transparent 60%),
+    radial-gradient(1.0px 1.0px at 8% 82%, rgba(245,224,198,0.65), transparent 60%),
+    radial-gradient(1.3px 1.3px at 34% 8%, rgba(255,255,255,0.8), transparent 60%),
+    radial-gradient(1.1px 1.1px at 62% 91%, rgba(245,224,198,0.7), transparent 60%),
+    radial-gradient(1.4px 1.4px at 86% 74%, rgba(255,255,255,0.75), transparent 60%),
+    radial-gradient(1.0px 1.0px at 19% 45%, rgba(245,224,198,0.6), transparent 60%);
+  /* Two sizes tiled at different scales so the field does not read as a
+     repeating grid the moment it tiles. */
+  background-size: 620px 480px, 380px 300px, 900px 700px, 620px 480px,
+    380px 300px, 900px 700px, 620px 480px, 380px 300px, 900px 700px,
+    620px 480px, 380px 300px, 900px 700px;
+  animation: star-drift 120s linear infinite;
+}
+
+/* A slow drift, not a twinkle. Twinkling opacity on a dozen gradients
+   repaints the whole layer every frame; moving the background position
+   is a compositor transform of an already-painted layer. */
+@keyframes star-drift {
+  from { background-position: 0 0, 0 0, 0 0, 0 0, 0 0, 0 0,
+                              0 0, 0 0, 0 0, 0 0, 0 0, 0 0; }
+  to   { background-position: 620px 0, -380px 0, 900px 0, 620px 0,
+                              -380px 0, 900px 0, 620px 0, -380px 0,
+                              900px 0, 620px 0, -380px 0, 900px 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="moon"] .scene-stars { animation: none; }
+}
+
+/* Only under the moon theme - the desert has its own drawn dunes. */
+.scene-stars { display: none; }
+:root[data-theme="moon"] .scene-stars { display: block; }
