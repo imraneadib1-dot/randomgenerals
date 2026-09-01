@@ -2572,8 +2572,11 @@ function applyVideoAccess(d) {
   const q = d.quota || {};
   if (!d.configured) {
     genLocked.hidden = false;
+    // The server says which key is missing; show that rather than a
+    // generic line, since the person reading this is usually the one
+    // who can fix it.
     genLockedText.textContent =
-      "Video generation isn't switched on for this server yet.";
+      d.detail || "Video generation isn't switched on for this server yet.";
     genForm.hidden = true;
     return;
   }

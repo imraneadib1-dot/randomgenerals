@@ -3090,6 +3090,11 @@ def video_status():
     return jsonify({
         "configured": backend is not None,
         "backend": backend_name,
+        # Say WHICH thing is missing. "Not switched on" is true and
+        # useless - it gives whoever runs the server nothing to do, and
+        # this bay has two possible backends, so "no key" is ambiguous
+        # without naming which key.
+        "detail": "" if backend else hfvideo.unavailable_reason(),
         # Named so the bay can say what it is using, and so "free tier,
         # may run out" is something the page can explain rather than a
         # surprise at the moment it happens.
