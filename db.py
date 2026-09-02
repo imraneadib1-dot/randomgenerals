@@ -80,6 +80,33 @@ CREATE TABLE IF NOT EXISTS credits (
     last_refill  TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS usage_log (
+    -- One row per owner per UTC day, so a chart is a single indexed read
+    -- rather than a scan over every message ever sent. Counters only -
+    -- nothing here records WHAT was asked, just how much.
+    owner_id TEXT NOT NULL,
+    day      TEXT NOT NULL,
+    messages INTEGER NOT NULL DEFAULT 0,
+    credits  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (owner_id, day)
+);
+
+CREATE TABLE IF NOT EXISTS notification_prefs (
+    owner_id TEXT NOT NULL,
+    event    TEXT NOT NULL,
+    channel  TEXT NOT NULL,
+    enabled  INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (owner_id, event, channel)
+);
+
+CREATE TABLE IF NOT EXISTS prompt_templates (
+    id         TEXT PRIMARY KEY,
+    owner_id   TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    body       TEXT NOT NULL,
+    created    TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS user_settings (
     -- One row per owner. NOT columns on `users`: save_users() deletes and
     -- reinserts that whole table, so a column added there has to be
@@ -99,6 +126,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
     web_search      INTEGER NOT NULL DEFAULT 1,
     tools_enabled   INTEGER NOT NULL DEFAULT 1,
     retention_days  INTEGER,
+    avatar_url      TEXT    NOT NULL DEFAULT '',
+    bio             TEXT    NOT NULL DEFAULT '',
     updated         TEXT    NOT NULL DEFAULT ''
 );
 
@@ -278,6 +307,19 @@ def _migrate_columns(conn):
     ):
         if col not in user_cols:
             conn.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
+            conn.commit()
+
+    # user_settings grew two columns after it shipped. CREATE TABLE IF
+    # NOT EXISTS does nothing to a table that already exists, so without
+    # this they would be present on a fresh database and absent on the
+    # live one - which is the worst of both.
+    settings_cols = {row["name"] for row in
+                     conn.execute("PRAGMA table_info(user_settings)")}
+    for col, ddl in (("avatar_url", "TEXT NOT NULL DEFAULT ''"),
+                     ("bio", "TEXT NOT NULL DEFAULT ''")):
+        if settings_cols and col not in settings_cols:
+            conn.execute(
+                f"ALTER TABLE user_settings ADD COLUMN {col} {ddl}")
             conn.commit()
 
     thread_cols = {row["name"] for row in conn.execute("PRAGMA table_info(threads)")}
@@ -537,7 +579,9 @@ def delete_user(user_id, email=None):
         for table in ("threads", "credits", "memories",
                       "custom_instructions", "connectors",
                       "user_settings", "sessions", "provider_keys",
-                      "mfa_enrollment", "mfa_backup_codes"):
+                      "mfa_enrollment", "mfa_backup_codes",
+                      "usage_log", "notification_prefs",
+                      "prompt_templates"):
             cur = conn.execute(
                 "DELETE FROM %s WHERE owner_id = ?" % table, (user_id,))
             removed += cur.rowcount or 0
@@ -647,21 +691,153 @@ SETTINGS_DEFAULTS = {
     "web_search": 1,
     "tools_enabled": 1,
     "retention_days": None,
+    "avatar_url": "",
+    "bio": "",
 }
+
+
+def note_usage(owner_id, credits, messages=1):
+    """Add to today's counters. Never raises.
+
+    Wrapped because this runs on the reply path: a usage counter that
+    could not be written must not cost somebody their answer.
+    """
+    import datetime as _dt
+    day = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+    try:
+        conn = _connect()
+        with conn:
+            conn.execute(
+                "INSERT INTO usage_log (owner_id, day, messages, credits) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(owner_id, day) DO UPDATE SET "
+                "  messages = messages + excluded.messages, "
+                "  credits  = credits  + excluded.credits",
+                (owner_id, day, messages, int(credits)))
+    except Exception:                          # noqa: BLE001
+        pass
+
+
+def usage_series(owner_id, days=30):
+    """-> [{day, messages, credits}], oldest first, with empty days
+    filled in. A chart with holes in it reads as missing data rather
+    than as a quiet day."""
+    import datetime as _dt
+    today = _dt.datetime.now(_dt.timezone.utc).date()
+    start = today - _dt.timedelta(days=days - 1)
+    conn = _connect()
+    rows = {r["day"]: r for r in conn.execute(
+        "SELECT day, messages, credits FROM usage_log "
+        "WHERE owner_id = ? AND day >= ? ORDER BY day",
+        (owner_id, start.isoformat())).fetchall()}
+    out = []
+    for offset in range(days):
+        key = (start + _dt.timedelta(days=offset)).isoformat()
+        row = rows.get(key)
+        out.append({
+            "day": key,
+            "messages": row["messages"] if row else 0,
+            "credits": row["credits"] if row else 0,
+        })
+    return out
+
+
+# --------------------------------------------------------- notifications
+NOTIFICATION_EVENTS = ("usage_limit", "product_update", "security_alert")
+NOTIFICATION_CHANNELS = ("email", "in_app")
+
+# Security warnings cannot be switched off. Somebody who has just had
+# their password changed by an intruder is exactly who must be told, and
+# a preference that silences that is a preference against the person's
+# own interest.
+NOTIFICATION_LOCKED = {("security_alert", "email")}
+
+
+def load_notification_prefs(owner_id):
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT event, channel, enabled FROM notification_prefs "
+        "WHERE owner_id = ?", (owner_id,)).fetchall()
+    saved = {(r["event"], r["channel"]): bool(r["enabled"]) for r in rows}
+    out = []
+    for event in NOTIFICATION_EVENTS:
+        for channel in NOTIFICATION_CHANNELS:
+            locked = (event, channel) in NOTIFICATION_LOCKED
+            out.append({
+                "event": event,
+                "channel": channel,
+                "enabled": True if locked else saved.get((event, channel), True),
+                "locked": locked,
+            })
+    return out
+
+
+def save_notification_pref(owner_id, event, channel, enabled):
+    if (event, channel) in NOTIFICATION_LOCKED:
+        return False
+    if event not in NOTIFICATION_EVENTS or channel not in NOTIFICATION_CHANNELS:
+        return False
+    conn = _connect()
+    with conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO notification_prefs "
+            "(owner_id, event, channel, enabled) VALUES (?, ?, ?, ?)",
+            (owner_id, event, channel, 1 if enabled else 0))
+    return True
+
+
+# ------------------------------------------------------ prompt templates
+def list_templates(owner_id):
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT id, name, body, created FROM prompt_templates "
+        "WHERE owner_id = ? ORDER BY created DESC", (owner_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def save_template(owner_id, tid, name, body, created):
+    conn = _connect()
+    with conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO prompt_templates "
+            "(id, owner_id, name, body, created) VALUES (?, ?, ?, ?, ?)",
+            (tid, owner_id, name, body, created))
+
+
+def delete_template(owner_id, tid):
+    conn = _connect()
+    with conn:
+        cur = conn.execute(
+            "DELETE FROM prompt_templates WHERE id = ? AND owner_id = ?",
+            (tid, owner_id))
+    return (cur.rowcount or 0) > 0
 
 
 def load_settings(owner_id):
     """This owner's settings, with defaults filled in for a new account."""
     conn = _connect()
     row = conn.execute(
+        # Every key in SETTINGS_DEFAULTS must appear here. The dict
+        # comprehension below reads the row by those names, so a default
+        # added without a matching column in this SELECT raises
+        # IndexError on the next read - which is exactly what adding
+        # avatar_url and bio did.
         "SELECT theme, language, timezone, default_model, temperature, "
         "       top_p, max_tokens, system_prompt, web_search, "
-        "       tools_enabled, retention_days, updated "
+        "       tools_enabled, retention_days, avatar_url, bio, updated "
         "FROM user_settings WHERE owner_id = ?", (owner_id,)).fetchone()
     if not row:
         out = dict(SETTINGS_DEFAULTS)
         out["updated"] = ""
         return out
+    # .keys() rather than row[k] straight: a missing column is then a
+    # named, findable error instead of a bare IndexError from sqlite3.
+    have = set(row.keys())
+    missing = [k for k in SETTINGS_DEFAULTS if k not in have]
+    if missing:
+        raise RuntimeError(
+            "load_settings: %s in SETTINGS_DEFAULTS but not in the SELECT "
+            "above. Add the column to all three places." % ", ".join(missing))
     out = {k: row[k] for k in SETTINGS_DEFAULTS}
     out["web_search"] = bool(row["web_search"])
     out["tools_enabled"] = bool(row["tools_enabled"])

@@ -1206,6 +1206,9 @@ def spend_credits(amount):
             return False
         credits["balance"] -= amount
     save()
+    # Counters for the usage chart. Written here rather than at the call
+    # sites so no future spender can forget to record itself.
+    db.note_usage(current_owner_id(), amount)
     return True
 
 
@@ -2760,6 +2763,7 @@ SETTING_FIELDS = {
     # offers, and accepting 1 would let somebody delete their history
     # nightly by accident.
     "retention_days": (int, lambda v: v in (0, 7, 30, 90, 365)),
+    "bio": (str, lambda v: len(v) <= 400),
 }
 
 # Fields that may be cleared back to "use the server default". Sending
@@ -2772,6 +2776,174 @@ PROVIDER_KEY_HOSTS = {
     "anthropic": ("https://api.anthropic.com/v1/models", "sk-ant-"),
     "openrouter": ("https://openrouter.ai/api/v1/key", "sk-or-"),
 }
+
+
+AVATAR_DIR = os.path.join("static", "uploads", "avatars")
+AVATAR_MAX_BYTES = 2 * 1024 * 1024
+AVATAR_TYPES = {"image/png": ".png", "image/jpeg": ".jpg",
+                "image/webp": ".webp", "image/gif": ".gif"}
+
+
+@app.route("/api/account/avatar", methods=["POST"])
+def upload_avatar():
+    """A picture for the account.
+
+    The extension comes from the DECLARED content type mapped through a
+    fixed table, never from the uploaded filename - a file called
+    x.png.html saved under its own name would otherwise be served back as
+    HTML from this origin, which is a stored cross-site scripting hole
+    rather than an avatar.
+    """
+    uid = session.get("user_id")
+    if not uid or uid not in USERS:
+        return jsonify({"error": "Sign in first."}), 401
+    upload = request.files.get("file")
+    if not upload:
+        return jsonify({"error": "No file was sent."}), 400
+    ext = AVATAR_TYPES.get((upload.mimetype or "").lower())
+    if not ext:
+        return jsonify({
+            "error": "Use a PNG, JPEG, WebP or GIF image.",
+        }), 400
+
+    os.makedirs(AVATAR_DIR, exist_ok=True)
+    name = "%s%s" % (uuid.uuid4().hex[:16], ext)
+    path = os.path.join(AVATAR_DIR, name)
+    upload.save(path)
+    if os.path.getsize(path) > AVATAR_MAX_BYTES:
+        os.remove(path)
+        return jsonify({"error": "Images must be under 2MB."}), 400
+
+    url = "/static/uploads/avatars/" + name
+    db.save_settings(current_owner_id(), {"avatar_url": url}, now_iso())
+    return jsonify({"ok": True, "avatar_url": url})
+
+
+@app.route("/api/account/avatar", methods=["DELETE"])
+def remove_avatar():
+    uid = session.get("user_id")
+    if not uid or uid not in USERS:
+        return jsonify({"error": "Sign in first."}), 401
+    db.save_settings(current_owner_id(), {"avatar_url": ""}, now_iso())
+    return jsonify({"ok": True})
+
+
+@app.route("/api/usage", methods=["GET"])
+def usage_dashboard():
+    """Daily counters for the chart, plus the totals under it."""
+    try:
+        days = max(7, min(90, int(request.args.get("days", 30))))
+    except (TypeError, ValueError):
+        days = 30
+    series = db.usage_series(current_owner_id(), days)
+    credits, _ = current_account()
+    plan = features.normalize_plan(credits.get("plan"))
+    return jsonify({
+        "days": days,
+        "series": series,
+        "totals": {
+            "messages": sum(d["messages"] for d in series),
+            "credits": sum(d["credits"] for d in series),
+            # None when nothing happened. max() over all-zero days
+            # returns the first one, which would label an idle month's
+            # opening day as its busiest.
+            "busiest": (max(series, key=lambda d: d["messages"])["day"]
+                        if any(d["messages"] for d in series) else None),
+        },
+        "balance": credits.get("balance"),
+        "cap": PLANS[plan]["cap"],
+    })
+
+
+@app.route("/api/billing/invoices", methods=["GET"])
+def billing_invoices():
+    """Past payments, read from Paddle.
+
+    Read-only and passed through rather than mirrored into a table:
+    Paddle is the merchant of record, so their record is the true one and
+    a local copy could only ever disagree with it.
+    """
+    uid = session.get("user_id")
+    user = USERS.get(uid) if uid else None
+    if not user:
+        return jsonify({"error": "Sign in first."}), 401
+    customer = user.get("paddle_customer_id")
+    if not (paddle_billing.configured() and customer):
+        return jsonify({"invoices": [], "portal": None,
+                        "detail": "No payments yet."})
+    try:
+        r = requests.get(
+            paddle_billing.api_base() + "/transactions",
+            params={"customer_id": customer, "per_page": 20},
+            headers={"Authorization": "Bearer " + paddle_billing.api_key()},
+            timeout=15)
+        if r.status_code != 200:
+            return jsonify({"invoices": [],
+                            "detail": "Paddle returned %d." % r.status_code})
+        rows = []
+        for item in (r.json().get("data") or []):
+            totals = ((item.get("details") or {}).get("totals") or {})
+            rows.append({
+                "id": item.get("id"),
+                "status": item.get("status"),
+                "billed_at": item.get("billed_at"),
+                "total": totals.get("total"),
+                "currency": totals.get("currency_code"),
+                "invoice_url": (item.get("invoice_url")
+                                or item.get("receipt_url")),
+            })
+        return jsonify({"invoices": rows})
+    except requests.exceptions.RequestException as e:
+        return jsonify({"invoices": [], "detail": "Could not reach Paddle: %s"
+                        % e})
+
+
+@app.route("/api/notifications/prefs", methods=["GET"])
+def get_notification_prefs():
+    return jsonify({"prefs": db.load_notification_prefs(current_owner_id())})
+
+
+@app.route("/api/notifications/prefs", methods=["PATCH"])
+def patch_notification_prefs():
+    payload = request.get_json(force=True, silent=True) or {}
+    event = (payload.get("event") or "").strip()
+    channel = (payload.get("channel") or "").strip()
+    enabled = bool(payload.get("enabled"))
+    if not db.save_notification_pref(current_owner_id(), event, channel,
+                                     enabled):
+        return jsonify({
+            "error": "Security alerts by email cannot be switched off.",
+        }), 400
+    return jsonify({"ok": True,
+                    "prefs": db.load_notification_prefs(current_owner_id())})
+
+
+@app.route("/api/settings/templates", methods=["GET"])
+def get_templates():
+    return jsonify({"templates": db.list_templates(current_owner_id())})
+
+
+@app.route("/api/settings/templates", methods=["POST"])
+def create_template():
+    payload = request.get_json(force=True, silent=True) or {}
+    name = (payload.get("name") or "").strip()
+    body = (payload.get("body") or "").strip()
+    if not name or not body:
+        return jsonify({"error": "A template needs a name and some text."}), 400
+    if len(name) > 60 or len(body) > 4000:
+        return jsonify({"error": "That is too long."}), 400
+    tid = uuid.uuid4().hex[:16]
+    db.save_template(current_owner_id(), tid, name, body, now_iso())
+    return jsonify({"ok": True,
+                    "templates": db.list_templates(current_owner_id())})
+
+
+@app.route("/api/settings/templates/<tid>", methods=["DELETE"])
+def remove_template(tid):
+    if not db.delete_template(current_owner_id(), tid):
+        return jsonify({"error": "No such template."}), 404
+    return jsonify({"ok": True,
+                    "templates": db.list_templates(current_owner_id())})
 
 
 @app.route("/api/settings", methods=["GET"])

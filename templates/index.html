@@ -544,6 +544,8 @@
                     aria-selected="false">AI configuration</button>
             <button class="modal-tab" data-tab="apps" role="tab"
                     aria-selected="false">Connected apps</button>
+            <button class="modal-tab" data-tab="notify" role="tab"
+                    aria-selected="false">Notifications</button>
             <button class="modal-tab" data-tab="data" role="tab"
                     aria-selected="false">Data controls</button>
             <button class="modal-tab" data-tab="plan" role="tab"
@@ -617,6 +619,25 @@
           <div class="memory-divider"></div>
 
           <div class="appearance-section">
+            <label class="memory-label">Saved prompts</label>
+            <p class="memory-hint">
+              Instructions you reuse. Applying one puts it in the system
+              prompt above, replacing what is there.
+            </p>
+            <div id="templateList"></div>
+            <input type="text" id="templateName" class="tl-input"
+                   maxlength="60" placeholder="Name, e.g. Terse reviewer" />
+            <div class="data-actions">
+              <button type="button" class="btn-secondary" id="templateSave">
+                Save the prompt above as a template
+              </button>
+            </div>
+            <p class="memory-hint" id="templateStatus"></p>
+          </div>
+
+          <div class="memory-divider"></div>
+
+          <div class="appearance-section">
             <label class="memory-label">Tools</label>
             <div class="toggle-row">
               <label class="toggle-label" for="setWebSearch">Web search</label>
@@ -655,6 +676,20 @@
               </button>
             </div>
             <p class="memory-hint" id="setKeyStatus"></p>
+          </div>
+        </div>
+
+        <!-- Notifications tab -->
+        <div class="modal-panel" id="notifyPanel" hidden>
+          <div class="appearance-section">
+            <label class="memory-label">What we contact you about</label>
+            <p class="memory-hint">
+              Security warnings by email cannot be switched off. Someone
+              whose password has just been changed by an intruder is
+              exactly who needs to hear about it.
+            </p>
+            <div id="notifyMatrix"></div>
+            <p class="memory-hint" id="notifyStatus"></p>
           </div>
         </div>
 
@@ -841,6 +876,32 @@
           <!-- Everything below acts on the signed-in account. Each
                control maps to a route that was written and tested; none
                is a placeholder. -->
+          <div class="memory-divider" id="profileDivider" hidden></div>
+
+          <div class="appearance-section" id="profileSection" hidden>
+            <label class="memory-label">Profile</label>
+            <div class="avatar-row">
+              <div class="avatar-preview" id="avatarPreview" aria-hidden="true"></div>
+              <div class="data-actions">
+                <label class="btn-secondary" for="avatarFile">Choose picture</label>
+                <input type="file" id="avatarFile" accept="image/*" hidden />
+                <button type="button" class="btn-secondary" id="avatarRemove">
+                  Remove
+                </button>
+              </div>
+            </div>
+            <p class="memory-hint" id="avatarStatus"></p>
+            <label class="memory-label" for="profileBio">About you</label>
+            <p class="memory-hint">
+              A line the assistant can use for context &mdash; what you work
+              on, how you like answers.
+            </p>
+            <textarea id="profileBio" class="tl-input" rows="3"
+                      maxlength="400"
+                      placeholder="e.g. I build Flask apps and prefer short, direct answers."></textarea>
+            <p class="memory-hint"><span id="bioCount">0</span>/400</p>
+          </div>
+
           <p class="memory-hint" id="profileLinkRow" hidden>
             <a href="/profile">Open your account page</a> &mdash; your name,
             age, email and password, on a page you can bookmark.
@@ -1084,6 +1145,39 @@
             Demo checkout only — no real payment is processed. Wire this up to
             Stripe or another billing provider before taking real money.
           </p>
+                  <div class="memory-divider"></div>
+
+          <div class="appearance-section">
+            <label class="memory-label">Usage</label>
+            <p class="memory-hint">
+              Messages sent and credits spent, by day. Counters only
+              &mdash; nothing here records what you asked.
+            </p>
+            <div class="usage-summary">
+              <div class="usage-figure">
+                <span class="usage-number" id="usageMessages">0</span>
+                <span class="usage-label">messages</span>
+              </div>
+              <div class="usage-figure">
+                <span class="usage-number" id="usageCredits">0</span>
+                <span class="usage-label">credits spent</span>
+              </div>
+              <div class="usage-figure">
+                <span class="usage-number" id="usageBalance">0</span>
+                <span class="usage-label">left now</span>
+              </div>
+            </div>
+            <div class="usage-chart" id="usageChart"></div>
+            <p class="memory-hint" id="usageRange"></p>
+          </div>
+
+          <div class="memory-divider"></div>
+
+          <div class="appearance-section">
+            <label class="memory-label">Payments</label>
+            <p class="memory-hint" id="invoiceNote">Loading&hellip;</p>
+            <div id="invoiceList"></div>
+          </div>
         </div>
 
         <!-- Memory tab -->
