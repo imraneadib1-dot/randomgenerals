@@ -1349,6 +1349,11 @@ async function ensureThread() {
    ---------------------------------------------------------------- */
 let activeStreamController = null;
 
+// Guards the one-shot retry in the send path: a message that loses
+// its thread twice is not a dropped cookie, and retrying forever
+// would hide whatever the real fault is.
+let retriedAfterLostThread = false;
+
 // Human-readable labels for the tools the model can call. Anything not
 // listed still shows, just under its raw name.
 const TOOL_LABELS = {
@@ -1539,6 +1544,55 @@ async function sendChatMessage(text) {
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
+
+      // "Unknown thread" means the server no longer recognises this
+      // conversation as ours - almost always a dropped session cookie
+      // rather than a real fault. In-app browsers (the one Instagram
+      // opens for a link in a bio) tear their storage down between
+      // navigations, so the thread was created as one guest and the
+      // message arrived as another.
+      //
+      // The cookie is persistent now, which should stop this at source.
+      // This is the second line of defence: rather than show a stranger
+      // an error they can do nothing about on their first ever message,
+      // start a fresh thread and send it again. Once only - a second
+      // failure is something else, and hiding it would be worse.
+      if (
+        res.status === 400 &&
+        /unknown thread/i.test(data.error || "") &&
+        !retriedAfterLostThread
+      ) {
+        retriedAfterLostThread = true;
+        currentThreadId = null;
+        await ensureThread();
+        const retry = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            thread_id: currentThreadId,
+            provider: activeProvider,
+            model,
+            message: text,
+            web_results: webResults,
+            attachments: files,
+            strength: currentStrength,
+          }),
+          signal: controller.signal,
+        });
+        if (retry.ok) {
+          const retried = await consumeStream(retry, bubble);
+          if (!retried) {
+            renderContent(
+              bubble,
+              "[No response received. Check the channel setup.]",
+            );
+          } else {
+            addMessageActions(msgEl, bubble, { allowRegenerate: true });
+          }
+          return;
+        }
+      }
+
       renderContent(bubble, data.error || "Something went wrong.");
       if (data.credits) renderCredits(data.credits);
       return;

@@ -11,19 +11,28 @@ RAM and no GPU.
 
 OpenRouter serves it, and that is the whole reason for a third provider.
 
-THIS ONE COSTS MONEY, WHICH THE OTHER TWO DO NOT
+KIMI COSTS MONEY. THE DEFAULT HERE DOES NOT.
 
-Groq and Ollama are free at the point of use. OpenRouter is not: Kimi
-runs about $0.66 per million tokens in and $3.40 out, so a typical
-coding turn is roughly half a cent and a dollar buys a couple of hundred
-of them. That is cheap, but it is not nothing, and it is the first thing
-in this app that spends real money on an ordinary chat message.
+Kimi was asked for by name, and there is no free Kimi anywhere: Groq
+serves no Moonshot model, all nine on OpenRouter are paid, Moonshot's own
+platform is pay-as-you-go, and K2 cannot run on this VM. So Kimi needs a
+funded key, and this deployment does not have a budget.
 
-So it is off unless OPENROUTER_API_KEY is set. With no key this module
-reports itself unconfigured, app.py skips straight past it in the
-routing table, and the app behaves exactly as it did before - gpt-oss on
-Groq. Nothing here degrades the free path; it only adds a better one
-when someone has paid for it.
+What OpenRouter also has is genuinely free models - no card, just an
+account, rate-limited to about 50 requests a day (1,000 if the account
+ever holds $10 in credit). Several are large and current. So PREFERRED
+below is FREE FIRST: a free key gets a strong coding model at no cost,
+and Kimi sits at the bottom of the list, reached only by an account that
+has actually funded one.
+
+That ordering is a judgement, not a measurement. Ranking these against
+each other needs a key to test with, and none of them has been run on
+this deployment yet - so the order below is by what each model is FOR,
+which is the honest basis available. Re-order it after measuring.
+
+With no key at all this module reports itself unconfigured, app.py skips
+past it in the routing table, and the code bay runs on gpt-oss-120b via
+Groq exactly as it does today. Nothing here degrades the free path.
 
 Exposes configured(), models(), chat_once() and stream_chat(), the same
 interface app.py registers every provider through.
@@ -42,18 +51,30 @@ API_ROOT = "https://openrouter.ai/api/v1"
 
 MODELS_TTL = 3600
 
-# Coding first, because that is the bay this provider was added for.
+# FREE FIRST. Everything with a :free suffix costs nothing beyond an
+# account, and the first four are ordered by what they are built for:
 #
-# k2.7-code is Moonshot's coding-tuned build and the one the code bay
-# asks for by name. k2.5 is the cheaper general model and stands in when
-# the catalogue no longer lists the coding one - model ids here get
-# retired as new versions land, and a bay that 404s because an id moved
-# is worse than one answering on last month's model.
+#   laguna-s-2.1   poolside builds coding models and nothing else
+#   north-mini-code  code is in the name
+#   glm-5.2        strong generalist, 256k context
+#   nemotron ultra 550B parameters and a million tokens of context - the
+#                  largest thing on the free list by a wide margin
+#
+# Then Kimi, which is paid and therefore last: an account with no credit
+# never reaches these lines, and one that has funded a key can select
+# them from the picker.
+#
+# Ids on this list get retired as new versions land, and models() keeps
+# only the ones the live catalogue still has - so a retired id is
+# skipped rather than 404ing the bay.
 PREFERRED = [
+    "poolside/laguna-s-2.1:free",
+    "cohere/north-mini-code:free",
+    "z-ai/glm-5.2:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    # paid, from here down
     "moonshotai/kimi-k2.7-code",
     "moonshotai/kimi-k2.5",
-    "moonshotai/kimi-k2-0905",
-    "moonshotai/kimi-k2",
 ]
 
 # What the picker offers. OpenRouter lists several hundred models from
@@ -131,11 +152,25 @@ def spend_today():
         return float("inf")
 
 
-def budget_ok():
-    """Whether another paid request is allowed today."""
+def is_free(model):
+    """OpenRouter marks zero-cost models with a :free suffix."""
+    return str(model or "").endswith(":free")
+
+
+def budget_ok(model=None):
+    """Whether another request is allowed today.
+
+    A :free model is always allowed - it cannot add to the total, so
+    stopping it would be a limit on nothing. The ceiling exists for the
+    paid ids at the bottom of PREFERRED.
+    """
+    if model is not None and is_free(model):
+        return True
     limit = daily_limit()
     if limit <= 0:
-        return False
+        # Zero means "no paid spending", not "no Kimi provider at all":
+        # the free models stay available.
+        return any(is_free(m) for m in models())
     return spend_today() < limit
 
 
@@ -273,7 +308,7 @@ def stream_chat(model, history, options=None, images=None, usage=None):
     if not configured():
         yield "[OpenRouter is not configured - set OPENROUTER_API_KEY.]"
         return
-    if not budget_ok():
+    if not budget_ok(_pick(model)):
         spent, limit = budget_state()
         yield ("[Kimi has reached its spending limit for today "
                "($%.2f of $%.2f). Switch to the chat model, or raise "

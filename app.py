@@ -274,7 +274,35 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.environ.get("FORCE_HTTPS_COOKIES") == "1",
+    # THE COOKIE HAS TO OUTLIVE THE TAB.
+    #
+    # Without a lifetime Flask issues a session cookie with no Expires,
+    # which a browser is free to drop the moment its window goes away.
+    # In-app browsers - the one Instagram opens for a link in a bio -
+    # tear down and recreate that context between navigations, so the
+    # cookie vanished mid-visit and the guest id was re-minted.
+    #
+    # The visible symptom was "Unknown thread": the page created a thread
+    # owned by guest A, the cookie was lost, the send arrived as guest B,
+    # and the ownership check refused it. Every visitor arriving from
+    # that link hit it on their first message.
+    PERMANENT_SESSION_LIFETIME=datetime.timedelta(days=30),
+    # Re-sends the cookie on every response rather than only when the
+    # session changes, which gives a flaky in-app browser repeated
+    # chances to persist it.
+    SESSION_REFRESH_EACH_REQUEST=True,
 )
+
+
+@app.before_request
+def _persist_session():
+    """Opt every request into the lifetime above.
+
+    Flask only writes an Expires date for sessions marked permanent, and
+    the flag lives on the session rather than the config - so setting
+    PERMANENT_SESSION_LIFETIME alone changes nothing without this.
+    """
+    session.permanent = True
 
 # Behind a reverse proxy - the Cloudflare tunnel, PythonAnywhere's nginx,
 # Render's router - Flask only sees the connection from the proxy, so it
@@ -2586,7 +2614,7 @@ BAY_ROUTES = {
         # gpt-oss below carries the bay exactly as before until one is
         # set. That is deliberate: this is the one model in the table
         # that costs money per message.
-        ("openrouter", "kimi-k2.7-code"),
+        ("openrouter", "laguna-s-2.1:free"),
         ("groq", "gpt-oss-120b"),
         ("ollama", "gemma3:1b"),
         ("ollama", "gemma3"),
@@ -2731,18 +2759,19 @@ def list_providers():
             "note": note,
         })
 
-    if openrouter_api.configured() and openrouter_api.budget_ok():
+    if openrouter_api.configured() and openrouter_api.budget_ok(
+            (openrouter_api.models() or [None])[0]):
         or_models = openrouter_api.models()
         providers.append({
             "id": "openrouter",
-            "label": "Kimi",
+            "label": "OpenRouter",
             "available": bool(or_models),
             "models": or_models,
             "model_info": [describe_model(m, plan) for m in or_models],
-            "note": ("Moonshot's Kimi, which is coding-tuned and strong at "
-                     "maths. Runs off-device, and unlike the other "
-                     "channels it is billed per message to this server's "
-                     "OpenRouter key."),
+            "note": ("Large coding models over OpenRouter. The :free "
+                     "ones cost nothing beyond an account and are capped "
+                     "at about 50 requests a day; Kimi is the paid option "
+                     "and is billed per message to this server's key."),
         })
 
     live = [p for p in providers if p["available"]]
@@ -2784,9 +2813,15 @@ MODEL_DISPLAY_NAMES = {
     # cloud
     "openai/gpt-oss-120b": ("Max", "Strongest for code, and 6/6 on maths and physics"),
     "openai/gpt-oss-20b": ("Swift Cloud", "Fast cloud replies"),
+    "poolside/laguna-s-2.1:free": (
+        "Laguna", "Free coding model - no cost beyond an account"),
+    "cohere/north-mini-code:free": ("North", "Free, code-specialised"),
+    "z-ai/glm-5.2:free": ("GLM", "Free generalist, 256k context"),
+    "nvidia/nemotron-3-ultra-550b-a55b:free": (
+        "Nemotron", "Free, 550B parameters, 1M context"),
     "moonshotai/kimi-k2.7-code": (
-        "Kimi", "Coding model - strong at maths and long files"),
-    "moonshotai/kimi-k2.5": ("Kimi", "Moonshot's general model"),
+        "Kimi", "Coding model - PAID, billed per message"),
+    "moonshotai/kimi-k2.5": ("Kimi", "Moonshot's general model - PAID"),
     "qwen/qwen3.8-27b": ("Reason", "Answers in plain prose"),
     "qwen/qwen3.6-27b": ("Core Cloud", "Balanced cloud model"),
     "allam-2-7b": ("Arabic", "Tuned for Arabic language"),
@@ -4072,7 +4107,7 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # a stale tab, a saved preference, an older client - must not become
     # a dead reply. It degrades to the free fast channel, and to the
     # local model after that, the same way every other channel does.
-    if provider == "openrouter" and not openrouter_api.budget_ok():
+    if provider == "openrouter" and not openrouter_api.budget_ok(model):
         # Out of money for today rather than out of key. Same failover.
         local = None
         if groq_api.configured() and groq_api.models():
