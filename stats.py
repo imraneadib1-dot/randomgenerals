@@ -108,9 +108,29 @@ def collect():
                  "from credits")
     granted = _one("select coalesce(sum(starting), 0) from credits")
 
+    # What the one paid model has cost today, and the last week of it.
+    # This is the only figure on the page denominated in money leaving an
+    # account rather than in rows, so it is worth being able to see
+    # without opening OpenRouter.
+    try:
+        import openrouter_api          # noqa: PLC0415 - avoids a cycle
+        spent, limit = openrouter_api.budget_state()
+        recent = _rows("select day, usd from openrouter_spend "
+                       "order by day desc limit 7")
+        kimi = {
+            "configured": openrouter_api.configured(),
+            "today": round(spent, 4) if spent != float("inf") else None,
+            "daily_limit": round(limit, 2),
+            "recent": [{"day": d, "usd": round(u, 4)} for d, u in recent],
+            "week": round(sum(u for _, u in recent), 4),
+        }
+    except Exception:                  # noqa: BLE001 - a stats page must
+        kimi = {"configured": False}   # not fail over an optional figure
+
     return {
         "generated": datetime.datetime.now(
             datetime.timezone.utc).replace(microsecond=0).isoformat(),
+        "kimi": kimi,
         "accounts": {
             "users": users_total,
             "free": by_plan.get("free", 0),

@@ -104,6 +104,14 @@ CREATE TABLE IF NOT EXISTS video_quota (
     PRIMARY KEY (owner_id, month)
 );
 
+CREATE TABLE IF NOT EXISTS openrouter_spend (
+    -- One row per UTC day, site-wide. Not per user: the ceiling exists
+    -- to protect one bank account, and a per-user cap would still let a
+    -- hundred signups spend a hundred times the limit.
+    day TEXT PRIMARY KEY,
+    usd REAL NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS connectors (
     id       TEXT PRIMARY KEY,
     owner_id TEXT NOT NULL,
@@ -429,6 +437,31 @@ def delete_user(user_id, email=None):
         cur = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         removed += cur.rowcount or 0
     return removed
+
+
+def openrouter_spend_today(day):
+    """Dollars spent on OpenRouter today. 0.0 if nothing yet."""
+    conn = _connect()
+    row = conn.execute(
+        "SELECT usd FROM openrouter_spend WHERE day = ?", (day,)).fetchone()
+    return float(row["usd"]) if row else 0.0
+
+
+def openrouter_add_spend(day, usd):
+    """Add to today's total and return the new one.
+
+    UPSERT rather than read-modify-write: two requests finishing at once
+    would otherwise both read the old total and the cheaper one would be
+    lost, which on a spend counter means undercounting exactly when
+    traffic is highest.
+    """
+    conn = _connect()
+    with conn:
+        conn.execute(
+            "INSERT INTO openrouter_spend (day, usd) VALUES (?, ?) "
+            "ON CONFLICT(day) DO UPDATE SET usd = usd + excluded.usd",
+            (day, float(usd)))
+    return openrouter_spend_today(day)
 
 
 def load_connectors(owner_id, with_tokens=False):

@@ -2731,7 +2731,7 @@ def list_providers():
             "note": note,
         })
 
-    if openrouter_api.configured():
+    if openrouter_api.configured() and openrouter_api.budget_ok():
         or_models = openrouter_api.models()
         providers.append({
             "id": "openrouter",
@@ -4072,6 +4072,16 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # a stale tab, a saved preference, an older client - must not become
     # a dead reply. It degrades to the free fast channel, and to the
     # local model after that, the same way every other channel does.
+    if provider == "openrouter" and not openrouter_api.budget_ok():
+        # Out of money for today rather than out of key. Same failover.
+        local = None
+        if groq_api.configured() and groq_api.models():
+            provider, model = "groq", groq_api.PREFERRED[0]
+        else:
+            local = _local_alternative(mode)
+            if local:
+                provider, model = "ollama", local
+
     if provider == "openrouter" and not openrouter_api.configured():
         if groq_api.configured() and groq_api.models():
             provider = "groq"

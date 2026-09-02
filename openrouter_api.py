@@ -28,12 +28,14 @@ when someone has paid for it.
 Exposes configured(), models(), chat_once() and stream_chat(), the same
 interface app.py registers every provider through.
 """
+import datetime
 import json
 import os
 import time
 
 import requests
 
+import db
 import groq_api
 
 API_ROOT = "https://openrouter.ai/api/v1"
@@ -62,6 +64,84 @@ EXPOSED_MODELS = tuple(PREFERRED)
 FALLBACK_MODELS = list(PREFERRED[:2])
 
 _models_cache = {"at": 0.0, "models": None, "error": ""}
+
+
+# ----------------------------------------------------------------------
+# THE SPEND CEILING
+#
+# This is the only thing in the app that costs money per message, and it
+# sits behind a public website. Without a ceiling, one stranger looping
+# the code bay spends the owner's balance and the first anyone knows is
+# an empty account.
+#
+# So every response's real cost - OpenRouter returns it in usage.cost,
+# including on the last chunk of a stream - is added to a site-wide daily
+# total, and the router stops choosing Kimi once the day's limit is
+# reached. The bay then falls to gpt-oss, which is free. The site gets
+# slightly less good; it does not get an unexpected bill.
+#
+# Site-wide rather than per-user on purpose: the limit protects one bank
+# account, and a per-user cap still lets a hundred signups spend a
+# hundred times it.
+# ----------------------------------------------------------------------
+DEFAULT_DAILY_USD = 1.00
+
+
+def daily_limit():
+    """Dollars a day, from OPENROUTER_DAILY_USD. 0 disables Kimi
+    entirely, which is a legitimate way to turn it off without removing
+    the key."""
+    raw = os.environ.get("OPENROUTER_DAILY_USD", "").strip()
+    if not raw:
+        return DEFAULT_DAILY_USD
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return DEFAULT_DAILY_USD
+
+
+def _today():
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+
+
+def note_cost(usage):
+    """Record what a response actually cost. Never raises.
+
+    A failure to write the spend counter must not fail the reply the user
+    is already reading - but it does mean the ceiling is now blind, so it
+    is logged rather than swallowed silently.
+    """
+    if not isinstance(usage, dict):
+        return
+    cost = usage.get("cost")
+    if cost in (None, 0):
+        return
+    try:
+        db.openrouter_add_spend(_today(), float(cost))
+    except Exception as e:                       # noqa: BLE001
+        print("[openrouter] could not record spend (%s): %s" % (cost, e))
+
+
+def spend_today():
+    try:
+        return db.openrouter_spend_today(_today())
+    except Exception:                            # noqa: BLE001
+        # Failing CLOSED: if the counter cannot be read, the safe
+        # assumption is that the budget is gone, not that it is intact.
+        return float("inf")
+
+
+def budget_ok():
+    """Whether another paid request is allowed today."""
+    limit = daily_limit()
+    if limit <= 0:
+        return False
+    return spend_today() < limit
+
+
+def budget_state():
+    """-> (spent, limit), for the owner's stats page."""
+    return spend_today(), daily_limit()
 
 
 def api_key():
@@ -173,8 +253,13 @@ def chat_once(model, history, tools=None, options=None, timeout=120):
     if r.status_code != 200:
         return None, "OpenRouter error %d" % r.status_code
     try:
-        return r.json()["choices"][0]["message"], None
-    except (ValueError, KeyError, IndexError):
+        payload = r.json()
+    except ValueError:
+        return None, "OpenRouter returned an unreadable response."
+    note_cost(payload.get("usage"))
+    try:
+        return payload["choices"][0]["message"], None
+    except (KeyError, IndexError):
         return None, "OpenRouter returned an unreadable response."
 
 
@@ -187,6 +272,12 @@ def stream_chat(model, history, options=None, images=None, usage=None):
     """
     if not configured():
         yield "[OpenRouter is not configured - set OPENROUTER_API_KEY.]"
+        return
+    if not budget_ok():
+        spent, limit = budget_state()
+        yield ("[Kimi has reached its spending limit for today "
+               "($%.2f of $%.2f). Switch to the chat model, or raise "
+               "OPENROUTER_DAILY_USD on the server.]" % (spent, limit))
         return
 
     opts = options or {}
@@ -246,5 +337,7 @@ def stream_chat(model, history, options=None, images=None, usage=None):
         piece = delta.get("content")
         if piece:
             yield piece
-        if usage is not None and data.get("usage"):
-            usage.update(data["usage"])
+        if data.get("usage"):
+            note_cost(data["usage"])
+            if usage is not None:
+                usage.update(data["usage"])
