@@ -79,13 +79,19 @@ _NON_CHAT = ("whisper", "guard", "embed", "tts", "playai",
 # maths. Offering them is not choice, it is a menu of ways to get a
 # worse answer.
 #
-# So the picker shows the two that were actually measured best - one for
-# code, one for chat - and nothing else. An empty allow-list means "show
-# everything", which is what a fresh deployment against a different key
-# should do rather than showing nothing at all.
+# So the picker shows one model: gpt-oss-120b, which serves the chat bay
+# and stands in for the code bay whenever Kimi has no key. qwen was here
+# too, on the chat bay, chosen for writing in prose rather than LaTeX -
+# but the bays are split by role now (Kimi codes, gpt-oss chats) and a
+# third model that differs only in formatting is a choice nobody asked
+# for. It stays in PREFERRED below, so a key whose catalogue lacks the
+# 120B still has somewhere to fall.
+#
+# An empty allow-list means "show everything", which is what a fresh
+# deployment against a different key should do rather than showing
+# nothing at all.
 EXPOSED_MODELS = (
-    "openai/gpt-oss-120b",     # code
-    "qwen/qwen3.8-27b",        # chat, and best measured at maths/physics
+    "openai/gpt-oss-120b",     # chat, and the free channel's whole offer
 )
 
 # THE LIMIT THAT ACTUALLY BINDS

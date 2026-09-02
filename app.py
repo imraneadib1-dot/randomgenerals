@@ -2562,10 +2562,16 @@ def get_credits():
 # so accuracy did not separate them and the split is made on how they
 # WRITE rather than what they know:
 #
-#   gpt-oss-120b answers in LaTeX and \boxed{}. Excellent in a code bay,
-#     where output is read as source and formatting is expected.
-#   qwen3.8-27b states results in plain prose. Better in a chat bay,
-#     where an answer should read as a sentence.
+#   gpt-oss-120b answers in LaTeX and \boxed{}.
+#   qwen3.8-27b states results in plain prose.
+#
+# That measurement is why qwen was on the chat bay. The split is now made
+# on ROLE instead, which is a product decision rather than a measured
+# one: Kimi is the coding model and gpt-oss-120b is the chat model. Two
+# models, one job each, which is easier to reason about than a third
+# model that differs only in how it formats an answer - and gpt-oss is
+# the one that stays free, so the free chat bay is not the paid one
+# degraded.
 #
 # (A warning for whoever tunes this next: the first two versions of that
 # benchmark scored gpt-oss-120b 3/6 twice, and both times the model was
@@ -2588,7 +2594,9 @@ BAY_ROUTES = {
         ("ollama", "gpt-oss"),          # Ollama Cloud
     ],
     "chat": [
-        ("groq", "qwen3.8-27b"),
+        # gpt-oss-120b is the chat model. It is free on Groq, so the bay
+        # most people land in costs nothing to serve and does not depend
+        # on a paid key being present.
         ("groq", "gpt-oss-120b"),
         ("ollama", "gemma3:1b"),
         ("ollama", "gemma3"),
@@ -2776,7 +2784,10 @@ MODEL_DISPLAY_NAMES = {
     # cloud
     "openai/gpt-oss-120b": ("Max", "Strongest for code, and 6/6 on maths and physics"),
     "openai/gpt-oss-20b": ("Swift Cloud", "Fast cloud replies"),
-    "qwen/qwen3.8-27b": ("Reason", "Best at maths and physics - answers in plain prose"),
+    "moonshotai/kimi-k2.7-code": (
+        "Kimi", "Coding model - strong at maths and long files"),
+    "moonshotai/kimi-k2.5": ("Kimi", "Moonshot's general model"),
+    "qwen/qwen3.8-27b": ("Reason", "Answers in plain prose"),
     "qwen/qwen3.6-27b": ("Core Cloud", "Balanced cloud model"),
     "allam-2-7b": ("Arabic", "Tuned for Arabic language"),
 }
