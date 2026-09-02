@@ -815,7 +815,15 @@ def plan_perks():
 
     free_list = [
         (credits("free"), True),
-        ("Chat and coding models, both on the fast channel", True),
+        # Name the model. "Chat and coding models" told nobody what they
+        # were actually getting, and the honest headline here is that the
+        # free tier runs a 120-billion-parameter model on dedicated
+        # accelerators - which is the single most impressive true thing
+        # about this plan.
+        ("<strong>gpt-oss-120b</strong> - a 120-billion-parameter model, "
+         "on dedicated accelerators rather than a CPU", True),
+        ("An 8,192-token context window, and replies up to %s tokens"
+         % "{:,}".format(free["max_output_tokens_code"]), True),
         ("Image generation, diagrams, the code runner, web search "
          "and voice", True),
         ("Runs Python and searches the web on its own, so arithmetic "
@@ -836,8 +844,15 @@ def plan_perks():
         ("Code replies up to {:,} tokens, against {:,}".format(
             pro["max_output_tokens_code"],
             free["max_output_tokens_code"]), True),
-        ("{:,}-token context window, twice the free one".format(
-            pro["max_context_tokens"]), True),
+        ("{:,}-token context window, twice the free one - a long file "
+         "plus its error output stops being truncated".format(
+             pro["max_context_tokens"]), True),
+        # Said plainly, because the alternative is implying a smarter
+        # model that does not exist. Chat runs on the same gpt-oss-120b
+        # either way; what Pro buys is room, sight, priority and tools.
+        ("<em>The chat model is the same gpt-oss-120b on both plans - "
+         "Pro buys room, sight, priority and tools, not a smarter "
+         "model.</em>", True),
         ("%dMB uploads and %d image shapes, not %d" % (
             pro["max_upload_mb"], len(pro["image_sizes"]),
             len(free["image_sizes"])), True),
@@ -2886,11 +2901,45 @@ BAY_ROUTES = {
     # ~3.7 - so the smaller model is both faster AND the one that lets
     # this box hold only Gemma.
     "vision": [
+        # Hosted first here, unlike the other bays. A local vision model
+        # needs a GPU to be bearable and this deployment has none, so on
+        # the server these are the only entries that can ever match -
+        # while a laptop running Ollama still falls through to gemma3:4b
+        # below and keeps working offline.
+        ("openrouter", "gemma-4-31b-it:free"),
+        ("openrouter", "minimax-m3:free"),
         ("ollama", "gemma3:4b"),
         ("ollama", "gemma3"),
         ("ollama", "llava"),
     ],
 }
+
+
+def _vision_route():
+    """A provider/model pair that can read an image. -> (provider, model).
+
+    (None, None) when nothing available can see one, which is the honest
+    answer on a server with no GPU and no OpenRouter key - and the
+    caller then leaves the model as it was, so the reply explains itself
+    rather than pretending the attachment was never there.
+    """
+    for provider_id, pattern in BAY_ROUTES["vision"]:
+        if provider_id == "openrouter":
+            if not (openrouter_api.configured()
+                    and openrouter_api.budget_ok()):
+                continue
+            match = next((m for m in openrouter_api.models()
+                          if pattern in m.lower()), None)
+            if match:
+                return "openrouter", match
+        elif provider_id == "ollama":
+            if not ollama_reachable():
+                continue
+            names = ollama_provider().get("models") or []
+            match = next((n for n in names if pattern in n.lower()), None)
+            if match:
+                return "ollama", match
+    return None, None
 
 
 def _local_alternative(mode):
@@ -3293,7 +3342,19 @@ _VISION_MODEL_HINTS = ("vision", "llava", "moondream", "minicpm-v", "bakllava")
 # it returns True, and so the picture was dropped on the floor before
 # the request was ever made - no error anywhere, just a model answering
 # as though nothing had been attached.
-_VISION_MODEL_EXACT = ("gemma3:4b", "gemma3:12b", "gemma3:27b")
+_VISION_MODEL_EXACT = (
+    "gemma3:4b", "gemma3:12b", "gemma3:27b",
+    # Free, and reachable from a server with no GPU - which is the only
+    # way this deployment can see an image at all. Groq serves no
+    # multimodal model: its whole catalogue here is 14 text models plus
+    # speech, so on Groq alone an attached picture can never be looked
+    # at by anything. Checked against OpenRouter's own
+    # architecture.input_modalities rather than assumed.
+    "google/gemma-4-31b-it:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "minimax/minimax-m3:free",
+    "dots-studio/dots-3-note-preview:free",
+)
 
 
 def is_vision_model(model):
@@ -4302,6 +4363,25 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     /regenerate (replays on the existing history minus the old reply) so
     the two can't quietly drift apart."""
     mode = thread.get("mode", DEFAULT_MODE)
+
+    # AN ATTACHED IMAGE SHOULD PICK ITS OWN MODEL.
+    #
+    # Before this, the picture was simply dropped whenever the chosen
+    # model could not see - silently, on the server - and the reply came
+    # back as though nothing had been attached. Nobody was told why.
+    # Since the chat bay routes to gpt-oss-120b, which is text-only, that
+    # was every image on this deployment.
+    #
+    # So: if there are images and this model is blind, look for one that
+    # is not, among providers that are actually up, and use it for this
+    # message only. The thread's own model is unchanged.
+    if any(f["kind"] == "image" for f in files) and not is_vision_model(model):
+        seer_provider, seer_model = _vision_route()
+        # Both, so the pair is either fully replaced or left alone - a
+        # provider without a model is not a route.
+        if seer_provider and seer_model:
+            provider, model = seer_provider, seer_model
+
     vision_available = is_vision_model(model)
     images_b64 = [
         b64 for f in files if f["kind"] == "image" and vision_available
