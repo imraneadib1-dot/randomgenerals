@@ -1290,9 +1290,22 @@ def privacy_page():
             "conversations to train models.",
         ]},
         {"heading": "What we hold", "body": [
-            ["<strong>Account</strong> - email address and a hashed "
-             "password, or a Google account identifier if you sign in "
-             "that way. Passwords are never stored in a readable form.",
+            ["<strong>Account</strong> - your name, your age, your "
+             "email address and a hashed password, or a Google account "
+             "identifier if you sign in that way. Passwords are never "
+             "stored in a readable form. Your age is kept as a year of "
+             "birth rather than a number that would silently go stale, "
+             "and it is held for one reason: to enforce the age limit "
+             "below.",
+             "<strong>Email verification and password resets</strong> - "
+             "a six-digit code and its expiry, deleted as soon as it is "
+             "used or runs out.",
+             "<strong>Connected apps</strong> - if you connect one, its "
+             "address and what it can do. If you give it an access "
+             "token, that token is stored on our server so the "
+             "assistant can use it, is sent only to the service it "
+             "belongs to, and is never shown back to you or to anyone "
+             "else. Removing the connection deletes it.",
              "<strong>Your work</strong> - conversation threads, saved "
              "memories, custom instructions, uploaded files and generated "
              "images, stored so they are there when you come back.",
@@ -1315,6 +1328,16 @@ def privacy_page():
              "model. Your description is also rewritten by the same "
              "chat model first, to get a better picture.",
              "Web search sends your query to <strong>DuckDuckGo</strong>.",
+             "Some coding replies are produced by models reached through "
+             "<strong>OpenRouter</strong>, which passes the request to "
+             "the lab that runs the model. As above, which channel "
+             "answered is shown on each reply.",
+             "Verification and password-reset emails are sent through "
+             "our mail provider, which sees your address and the code.",
+             "If you connect an app, the assistant sends requests to it "
+             "on your behalf while answering you - that is the point of "
+             "connecting it - and what it sends is whatever the task "
+             "needs.",
              "Uploaded files and videos are processed on our own server "
              "and are not sent to a third party."],
             "The self-hosted version of this software can run models "
@@ -1342,9 +1365,11 @@ def privacy_page():
             "data protection authority." % (SUPPORT_EMAIL, SUPPORT_EMAIL),
         ]},
         {"heading": "Children", "body": [
-            "The service is not for under-16s and we do not knowingly "
-            "collect their data. Tell us if you believe a child has an "
-            "account and we will remove it.",
+            "The service is not for under-16s. Signing up asks for "
+            "your age and refuses anyone below that, which is why we ask "
+            "for it at all. We do not knowingly collect data from "
+            "children - tell us if you believe a child has an account "
+            "and we will remove it.",
         ]},
     ])
 
@@ -2397,12 +2422,17 @@ def get_plans():
 # ----------------------------------------------------------------------
 # Who the account belongs to
 # ----------------------------------------------------------------------
-# The age floor. Under-13s cannot hold an account here, which is not a
-# preference: COPPA makes collecting personal information from them
-# without verifiable parental consent unlawful in the US, and this app
-# collects an email address and stores conversations. Refusing the signup
-# is far cheaper than building consent machinery.
-MIN_AGE = 13
+# The age floor, and it is 16 because the privacy policy already says so
+# - "the service is not for under-16s" has been published on /privacy for
+# longer than this check has existed, and code that quietly admitted
+# 13-year-olds would have made that a false statement rather than a
+# strict one.
+#
+# 16 is also the GDPR default for digital consent without a parent. Some
+# member states lower it to 13, as does COPPA in the US, so this can be
+# dropped to 13 - but only by changing /privacy in the same commit. The
+# two must not disagree.
+MIN_AGE = 16
 MAX_AGE = 120
 
 # Codes are short-lived and rate-limited. A six-digit code is a million
