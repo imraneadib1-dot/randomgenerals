@@ -1779,6 +1779,7 @@ const modalPanels = {
   plan: document.getElementById("planPanel"),
   memory: document.getElementById("memoryPanel"),
   appearance: document.getElementById("appearancePanel"),
+  ai: document.getElementById("aiPanel"),
   apps: document.getElementById("appsPanel"),
   data: document.getElementById("dataPanel"),
   about: document.getElementById("aboutPanel"),
@@ -3872,3 +3873,428 @@ if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js").catch(() => {});
   });
 }
+
+
+/* ================================================================
+   Settings
+
+   One document, fetched once, PATCHed in pieces. Optimistic for
+   preferences - a theme that waits on a round trip feels broken - and
+   never optimistic for security, where showing "two-factor on" before
+   the server agrees would be a lie about safety.
+   ================================================================ */
+const S = (id) => document.getElementById(id);
+
+let settingsDoc = null;
+let settingsSaveTimer = null;
+
+async function loadSettingsDoc() {
+  try {
+    const res = await fetch("/api/settings");
+    if (!res.ok) return;
+    settingsDoc = await res.json();
+    renderSettingsDoc();
+  } catch (_) {
+    /* leave the panels as they are */
+  }
+}
+
+async function patchSettings(patch) {
+  try {
+    const res = await fetch("/api/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    const data = await res.json();
+    if (!res.ok) return { ok: false, error: data.error || "Could not save." };
+    if (settingsDoc) settingsDoc.settings = data.settings;
+    return { ok: true };
+  } catch (_) {
+    return { ok: false, error: "Could not reach the server." };
+  }
+}
+
+/* Text fields are debounced; a switch commits at once, because a switch
+   has a visible state that has to match the server. */
+function patchSettingsDebounced(patch, ms = 500) {
+  clearTimeout(settingsSaveTimer);
+  settingsSaveTimer = setTimeout(() => patchSettings(patch), ms);
+}
+
+function fillTimezones(select, current) {
+  if (!select || select.options.length) return;
+  let zones = [];
+  try {
+    zones = Intl.supportedValuesOf("timeZone");
+  } catch (_) {
+    // Older browsers have no supportedValuesOf. A short list beats an
+    // empty dropdown, and the detect button covers the rest.
+    zones = ["UTC", "Europe/London", "Europe/Paris", "Europe/Berlin",
+             "Africa/Casablanca", "America/New_York", "America/Chicago",
+             "America/Los_Angeles", "Asia/Dubai", "Asia/Kolkata",
+             "Asia/Tokyo", "Australia/Sydney"];
+  }
+  if (!zones.includes(current)) zones = [current, ...zones];
+  select.innerHTML = "";
+  for (const zone of zones) {
+    const option = document.createElement("option");
+    option.value = zone;
+    option.textContent = zone.replace(/_/g, " ");
+    select.appendChild(option);
+  }
+}
+
+function showSlider(input, output, value, suffix = "") {
+  if (!input || !output) return;
+  if (value === null || value === undefined) {
+    // A slider cannot show "unset", so the number beside it does. The
+    // thumb sits at the server's own default meanwhile.
+    output.textContent = "default";
+    input.value = input.dataset.fallback || input.min;
+    return;
+  }
+  input.value = value;
+  output.textContent = value + suffix;
+}
+
+function renderSettingsDoc() {
+  if (!settingsDoc) return;
+  const s = settingsDoc.settings;
+  const account = settingsDoc.account;
+
+  if (S("setLanguage")) S("setLanguage").value = s.language || "en";
+  fillTimezones(S("setTimezone"), s.timezone || "UTC");
+  if (S("setTimezone")) S("setTimezone").value = s.timezone || "UTC";
+  if (S("setRetention")) {
+    S("setRetention").value = s.retention_days ? String(s.retention_days) : "";
+  }
+
+  showSlider(S("setTemperature"), S("setTemperatureOut"), s.temperature);
+  showSlider(S("setTopP"), S("setTopPOut"), s.top_p);
+  showSlider(S("setMaxTokens"), S("setMaxTokensOut"), s.max_tokens);
+
+  if (S("setSystemPrompt")) {
+    S("setSystemPrompt").value = s.system_prompt || "";
+    S("setPromptCount").textContent = (s.system_prompt || "").length;
+  }
+  if (S("setWebSearch")) S("setWebSearch").checked = !!s.web_search;
+  if (S("setTools")) S("setTools").checked = !!s.tools_enabled;
+
+  // Security is only meaningful on a real account.
+  const signedIn = !!account.signed_in;
+  for (const id of ["mfaSection", "mfaDivider",
+                    "sessionsSection", "sessionsDivider"]) {
+    if (S(id)) S(id).hidden = !signedIn;
+  }
+  if (signedIn) {
+    renderMfaState(settingsDoc.mfa.enabled);
+    loadSessions();
+    loadProviderKeys();
+  }
+
+  const problem = S("setKeysProblem");
+  if (problem) {
+    problem.hidden = !settingsDoc.secrets_problem;
+    problem.textContent = settingsDoc.secrets_problem || "";
+  }
+}
+
+function initSettingsPanels() {
+  const lang = S("setLanguage");
+  if (lang) {
+    lang.addEventListener("change", () =>
+      patchSettings({ language: lang.value }));
+  }
+  const tz = S("setTimezone");
+  if (tz) {
+    tz.addEventListener("change", () => patchSettings({ timezone: tz.value }));
+  }
+  const detect = S("setTzDetect");
+  if (detect) {
+    detect.addEventListener("click", async () => {
+      const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      fillTimezones(tz, zone);
+      if (tz) tz.value = zone;
+      await patchSettings({ timezone: zone });
+    });
+  }
+
+  const sliders = [
+    ["setTemperature", "setTemperatureOut", "temperature", parseFloat],
+    ["setTopP", "setTopPOut", "top_p", parseFloat],
+    ["setMaxTokens", "setMaxTokensOut", "max_tokens", parseInt],
+  ];
+  for (const [inputId, outId, field, parse] of sliders) {
+    const input = S(inputId);
+    if (!input) continue;
+    input.addEventListener("input", () => {
+      S(outId).textContent = input.value;
+    });
+    input.addEventListener("change", () =>
+      patchSettings({ [field]: parse(input.value, 10) }));
+  }
+
+  const reset = S("setResetSampling");
+  if (reset) {
+    reset.addEventListener("click", async () => {
+      // null means "use the server's default", which is not the same as
+      // any particular number.
+      await patchSettings({ temperature: null, top_p: null,
+                            max_tokens: null });
+      await loadSettingsDoc();
+    });
+  }
+
+  const prompt = S("setSystemPrompt");
+  if (prompt) {
+    prompt.addEventListener("input", () => {
+      S("setPromptCount").textContent = prompt.value.length;
+      patchSettingsDebounced({ system_prompt: prompt.value });
+    });
+  }
+  for (const [id, field] of [["setWebSearch", "web_search"],
+                             ["setTools", "tools_enabled"]]) {
+    const box = S(id);
+    if (!box) continue;
+    box.addEventListener("change", async () => {
+      const result = await patchSettings({ [field]: box.checked });
+      if (!result.ok) box.checked = !box.checked;   // visible rollback
+    });
+  }
+
+  const retention = S("setRetention");
+  if (retention) {
+    retention.addEventListener("change", async () => {
+      const value = retention.value ? parseInt(retention.value, 10) : null;
+      const result = await patchSettings({ retention_days: value });
+      S("setRetentionStatus").textContent = result.ok
+        ? (value ? "Older conversations will be removed." : "Nothing is deleted automatically.")
+        : result.error;
+      if (result.ok && value) {
+        const res = await fetch("/api/settings/apply-retention",
+                                { method: "POST" });
+        const data = await res.json().catch(() => ({}));
+        if (data.deleted) {
+          S("setRetentionStatus").textContent =
+            `Removed ${data.deleted} old conversation(s).`;
+          loadThreadList();
+        }
+      }
+    });
+  }
+
+  initProviderKeys();
+  initMfa();
+  initSessions();
+}
+
+/* ---------------------------------------------------------- keys --- */
+async function loadProviderKeys() {
+  const list = S("setKeyList");
+  if (!list) return;
+  try {
+    const res = await fetch("/api/account/provider-keys");
+    if (!res.ok) return;
+    const data = await res.json();
+    list.innerHTML = "";
+    if (!data.keys.length) {
+      const empty = document.createElement("p");
+      empty.className = "memory-hint";
+      empty.textContent = "No keys saved. Requests use this server's own.";
+      list.appendChild(empty);
+      return;
+    }
+    for (const key of data.keys) {
+      const row = document.createElement("div");
+      row.className = "memory-item";
+      const text = document.createElement("div");
+      text.innerHTML =
+        `<strong>${key.provider}</strong>` +
+        `<div class="memory-hint">ends ${key.last_four} · ` +
+        `${key.last_used ? "last used " + new Date(key.last_used).toLocaleDateString() : "not used yet"}</div>`;
+      row.appendChild(text);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "btn-danger";
+      remove.textContent = "Remove";
+      remove.addEventListener("click", async () => {
+        remove.disabled = true;
+        const r = await fetch("/api/account/provider-keys/" + key.provider,
+                              { method: "DELETE" });
+        if (r.ok) loadProviderKeys();
+        else remove.disabled = false;
+      });
+      row.appendChild(remove);
+      list.appendChild(row);
+    }
+  } catch (_) { /* leave it */ }
+}
+
+function initProviderKeys() {
+  const save = S("setKeySave");
+  if (!save) return;
+  save.addEventListener("click", async () => {
+    const provider = S("setKeyProvider").value;
+    const value = S("setKeyValue").value.trim();
+    const status = S("setKeyStatus");
+    if (!value) { status.textContent = "Paste a key first."; return; }
+    save.disabled = true;
+    status.textContent = "Checking it with " + provider + "…";
+    try {
+      const res = await fetch("/api/account/provider-keys/" + provider, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: value }),
+      });
+      const data = await res.json();
+      if (!res.ok) { status.textContent = data.error || "Could not save."; return; }
+      status.textContent = "Saved. Only the last four digits are kept visible.";
+      S("setKeyValue").value = "";
+      loadProviderKeys();
+    } catch (_) {
+      status.textContent = "Could not reach the server.";
+    } finally {
+      save.disabled = false;
+    }
+  });
+}
+
+/* ----------------------------------------------------------- MFA --- */
+function renderMfaState(enabled) {
+  if (!S("mfaBadge")) return;
+  S("mfaBadge").textContent = enabled ? "on" : "off";
+  S("mfaStart").hidden = enabled;
+  S("mfaOn").hidden = !enabled;
+  S("mfaSetup").hidden = true;
+}
+
+function initMfa() {
+  const enroll = S("mfaEnroll");
+  if (!enroll) return;
+
+  enroll.addEventListener("click", async () => {
+    S("mfaStatus").textContent = "";
+    const res = await fetch("/api/account/mfa/enroll", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) { S("mfaStatus").textContent = data.error; return; }
+    S("mfaSecret").textContent = data.secret;
+    S("mfaStart").hidden = true;
+    S("mfaSetup").hidden = false;
+    S("mfaCode").focus();
+  });
+
+  S("mfaCancel").addEventListener("click", () => {
+    S("mfaSetup").hidden = true;
+    S("mfaStart").hidden = false;
+  });
+
+  S("mfaConfirm").addEventListener("click", async () => {
+    S("mfaStatus").textContent = "Checking…";
+    const res = await fetch("/api/account/mfa/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: S("mfaCode").value.trim() }),
+    });
+    const data = await res.json();
+    if (!res.ok) { S("mfaStatus").textContent = data.error; return; }
+    S("mfaStatus").textContent = "Two-factor is on.";
+    S("mfaCodeList").textContent = (data.backup_codes || []).join("\n");
+    S("mfaCodes").hidden = false;
+    renderMfaState(true);
+  });
+
+  S("mfaNewCodes").addEventListener("click", async () => {
+    const res = await fetch("/api/account/mfa/backup-codes",
+                            { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) { S("mfaStatus").textContent = data.error; return; }
+    S("mfaCodeList").textContent = (data.backup_codes || []).join("\n");
+    S("mfaCodes").hidden = false;
+    S("mfaStatus").textContent = "New codes. The old ones no longer work.";
+  });
+
+  S("mfaOff").addEventListener("click", async () => {
+    const field = S("mfaPassword");
+    if (field.hidden) {
+      // Ask for the password in place rather than in a dialog, and only
+      // once the intent is clear.
+      field.hidden = false;
+      field.focus();
+      S("mfaStatus").textContent = "Enter your password, then press again.";
+      return;
+    }
+    const res = await fetch("/api/account/mfa/disable", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: field.value }),
+    });
+    const data = await res.json();
+    if (!res.ok) { S("mfaStatus").textContent = data.error; return; }
+    field.value = "";
+    field.hidden = true;
+    S("mfaCodes").hidden = true;
+    S("mfaStatus").textContent = "Two-factor is off.";
+    renderMfaState(false);
+  });
+}
+
+/* ------------------------------------------------------ sessions --- */
+async function loadSessions() {
+  const list = S("sessionList");
+  if (!list) return;
+  try {
+    const res = await fetch("/api/account/sessions");
+    if (!res.ok) return;
+    const data = await res.json();
+    list.innerHTML = "";
+    for (const item of data.sessions) {
+      const row = document.createElement("div");
+      row.className = "memory-item";
+      const text = document.createElement("div");
+      const when = new Date(item.last_seen).toLocaleString();
+      text.innerHTML =
+        `<strong>${item.device}</strong>` +
+        (item.current ? ' <span class="badge-inline">this device</span>' : "") +
+        `<div class="memory-hint">${item.ip || "unknown address"} · last active ${when}</div>`;
+      row.appendChild(text);
+      if (!item.current) {
+        const out = document.createElement("button");
+        out.type = "button";
+        out.className = "btn-danger";
+        out.textContent = "Sign out";
+        out.addEventListener("click", async () => {
+          out.disabled = true;
+          const r = await fetch("/api/account/sessions/" + item.id,
+                                { method: "DELETE" });
+          if (r.ok) loadSessions();
+          else out.disabled = false;
+        });
+        row.appendChild(out);
+      }
+      list.appendChild(row);
+    }
+  } catch (_) { /* leave it */ }
+}
+
+function initSessions() {
+  const refresh = S("sessionRefresh");
+  if (refresh) refresh.addEventListener("click", loadSessions);
+  const all = S("sessionRevokeAll");
+  if (all) {
+    all.addEventListener("click", async () => {
+      if (!window.confirm(
+        "Sign out every other device? You will stay signed in here.")) return;
+      const res = await fetch("/api/account/sessions/revoke-others",
+                              { method: "POST" });
+      const data = await res.json();
+      S("sessionStatus").textContent = res.ok
+        ? `Signed out ${data.revoked} other device(s).`
+        : data.error || "Could not do that.";
+      loadSessions();
+    });
+  }
+}
+
+initSettingsPanels();
+loadSettingsDoc();

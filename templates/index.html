@@ -540,6 +540,8 @@
                     aria-selected="false">Appearance</button>
             <button class="modal-tab" data-tab="memory" role="tab"
                     aria-selected="false">Personalization</button>
+            <button class="modal-tab" data-tab="ai" role="tab"
+                    aria-selected="false">AI configuration</button>
             <button class="modal-tab" data-tab="apps" role="tab"
                     aria-selected="false">Connected apps</button>
             <button class="modal-tab" data-tab="data" role="tab"
@@ -550,6 +552,111 @@
                     aria-selected="false">About</button>
           </nav>
           <div class="settings-content">
+
+        <!-- AI configuration tab -->
+        <div class="modal-panel" id="aiPanel" hidden>
+          <div class="appearance-section">
+            <label class="memory-label" for="setDefaultModel">Default model</label>
+            <p class="memory-hint">
+              Which model new conversations start on. Leave it on Automatic
+              and the best available channel is chosen for each bay.
+            </p>
+            <select id="setDefaultModel" class="tl-input">
+              <option value="">Automatic (recommended)</option>
+            </select>
+          </div>
+
+          <div class="memory-divider"></div>
+
+          <div class="appearance-section">
+            <label class="memory-label">Response style</label>
+            <p class="memory-hint">
+              Temperature is how much the model varies its wording. Low is
+              steadier and better for facts and code; high is more
+              inventive and worse at arithmetic.
+            </p>
+            <div class="slider-row">
+              <label for="setTemperature">Temperature</label>
+              <input type="range" id="setTemperature" min="0" max="2"
+                     step="0.05" />
+              <output id="setTemperatureOut" class="slider-value">default</output>
+            </div>
+            <div class="slider-row">
+              <label for="setTopP">Top-P</label>
+              <input type="range" id="setTopP" min="0" max="1" step="0.05" />
+              <output id="setTopPOut" class="slider-value">default</output>
+            </div>
+            <div class="slider-row">
+              <label for="setMaxTokens">Max reply length</label>
+              <input type="range" id="setMaxTokens" min="256" max="8000"
+                     step="256" />
+              <output id="setMaxTokensOut" class="slider-value">default</output>
+            </div>
+            <div class="data-actions">
+              <button type="button" class="btn-secondary" id="setResetSampling">
+                Back to defaults
+              </button>
+            </div>
+          </div>
+
+          <div class="memory-divider"></div>
+
+          <div class="appearance-section">
+            <label class="memory-label" for="setSystemPrompt">System prompt</label>
+            <p class="memory-hint">
+              Added to the start of every conversation. Good for a tone or a
+              format you always want; it costs a little of the context
+              window on every message.
+            </p>
+            <textarea id="setSystemPrompt" class="tl-input" rows="4"
+                      maxlength="4000"
+                      placeholder="e.g. Answer in British English. Prefer short paragraphs."></textarea>
+            <p class="memory-hint"><span id="setPromptCount">0</span>/4000</p>
+          </div>
+
+          <div class="memory-divider"></div>
+
+          <div class="appearance-section">
+            <label class="memory-label">Tools</label>
+            <div class="toggle-row">
+              <label class="toggle-label" for="setWebSearch">Web search</label>
+              <input type="checkbox" id="setWebSearch" class="tl-toggle" />
+            </div>
+            <div class="toggle-row">
+              <label class="toggle-label" for="setTools">
+                Let the assistant run Python and use tools
+              </label>
+              <input type="checkbox" id="setTools" class="tl-toggle" />
+            </div>
+          </div>
+
+          <div class="memory-divider"></div>
+
+          <div class="appearance-section">
+            <label class="memory-label">Your own API keys</label>
+            <p class="memory-hint">
+              Optional. Add a key and your requests to that provider are
+              billed to you instead of running on this server's allowance.
+              Keys are encrypted before they are stored and are never shown
+              again &mdash; only the last four digits.
+            </p>
+            <p class="memory-hint" id="setKeysProblem" hidden></p>
+            <div id="setKeyList"></div>
+            <select id="setKeyProvider" class="tl-input">
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+              <option value="openrouter">OpenRouter</option>
+            </select>
+            <input type="password" id="setKeyValue" class="tl-input"
+                   placeholder="Paste the key" autocomplete="off" />
+            <div class="data-actions">
+              <button type="button" class="btn-secondary" id="setKeySave">
+                Check and save
+              </button>
+            </div>
+            <p class="memory-hint" id="setKeyStatus"></p>
+          </div>
+        </div>
 
         <!-- Connected apps tab -->
         <div class="modal-panel" id="appsPanel" hidden>
@@ -772,6 +879,87 @@
               </button>
             </div>
             <p class="memory-hint" id="pwStatus"></p>
+          </div>
+
+          <div class="memory-divider" id="mfaDivider" hidden></div>
+
+          <div class="appearance-section" id="mfaSection" hidden>
+            <label class="memory-label">
+              Two-factor authentication
+              <span class="badge-inline" id="mfaBadge">off</span>
+            </label>
+            <p class="memory-hint">
+              An app on your phone generates a six-digit code that changes
+              every thirty seconds. Someone who learns your password still
+              cannot sign in without it.
+            </p>
+            <div id="mfaStart">
+              <div class="data-actions">
+                <button type="button" class="btn-secondary" id="mfaEnroll">
+                  Set up two-factor
+                </button>
+              </div>
+            </div>
+            <div id="mfaSetup" hidden>
+              <p class="memory-hint">
+                Add this key to your authenticator app (Google
+                Authenticator, 1Password, Authy), then type the code it
+                shows.
+              </p>
+              <code class="mfa-secret" id="mfaSecret"></code>
+              <input type="text" id="mfaCode" class="tl-input" maxlength="6"
+                     inputmode="numeric" placeholder="6-digit code" />
+              <div class="data-actions">
+                <button type="button" class="btn-secondary" id="mfaConfirm">
+                  Turn it on
+                </button>
+                <button type="button" class="btn-secondary" id="mfaCancel">
+                  Cancel
+                </button>
+              </div>
+            </div>
+            <div id="mfaCodes" hidden>
+              <p class="memory-hint">
+                <strong>Save these somewhere safe.</strong> Each one signs
+                you in once if you lose your phone. They are not shown
+                again.
+              </p>
+              <pre class="backup-codes" id="mfaCodeList"></pre>
+            </div>
+            <div id="mfaOn" hidden>
+              <div class="data-actions">
+                <button type="button" class="btn-secondary" id="mfaNewCodes">
+                  New backup codes
+                </button>
+                <button type="button" class="btn-danger" id="mfaOff">
+                  Turn off
+                </button>
+              </div>
+              <input type="password" id="mfaPassword" class="tl-input"
+                     placeholder="Your password, to turn it off"
+                     autocomplete="current-password" hidden />
+            </div>
+            <p class="memory-hint" id="mfaStatus"></p>
+          </div>
+
+          <div class="memory-divider" id="sessionsDivider" hidden></div>
+
+          <div class="appearance-section" id="sessionsSection" hidden>
+            <label class="memory-label">Where you are signed in</label>
+            <p class="memory-hint">
+              Every device with an active session. Signing one out takes
+              effect immediately on that device.
+            </p>
+            <div id="sessionList"></div>
+            <div class="data-actions">
+              <button type="button" class="btn-secondary" id="sessionRefresh">
+                Refresh
+              </button>
+              <button type="button" class="btn-danger" id="sessionRevokeAll">
+                Sign out every other device
+              </button>
+            </div>
+            <p class="memory-hint" id="sessionStatus"></p>
           </div>
 
           <div class="memory-divider" id="dangerDivider" hidden></div>
@@ -1094,6 +1282,43 @@
               </span>
             </label>
           </div>
+                  <div class="memory-divider"></div>
+
+          <div class="appearance-section">
+            <label class="memory-label" for="setLanguage">Language</label>
+            <p class="memory-hint">
+              The language the assistant replies in. The interface itself
+              is English for now.
+            </p>
+            <select id="setLanguage" class="tl-input">
+              <option value="en">English</option>
+              <option value="fr">Fran&ccedil;ais</option>
+              <option value="es">Espa&ntilde;ol</option>
+              <option value="de">Deutsch</option>
+              <option value="ar">&#1575;&#1604;&#1593;&#1585;&#1576;&#1610;&#1577;</option>
+              <option value="pt">Portugu&ecirc;s</option>
+              <option value="it">Italiano</option>
+              <option value="nl">Nederlands</option>
+              <option value="tr">T&uuml;rk&ccedil;e</option>
+              <option value="hi">&#2361;&#2367;&#2344;&#2381;&#2342;&#2368;</option>
+              <option value="zh">&#20013;&#25991;</option>
+              <option value="ja">&#26085;&#26412;&#35486;</option>
+            </select>
+          </div>
+
+          <div class="appearance-section">
+            <label class="memory-label" for="setTimezone">Time zone</label>
+            <p class="memory-hint">
+              Used for dates the assistant mentions and for when your
+              credits refill.
+            </p>
+            <select id="setTimezone" class="tl-input"></select>
+            <div class="data-actions">
+              <button type="button" class="btn-secondary" id="setTzDetect">
+                Use this device's zone
+              </button>
+            </div>
+          </div>
         </div>
 
         <!-- Data controls -->
@@ -1122,6 +1347,41 @@
             <p class="memory-hint" id="dataEgress">
               Checking&hellip;
             </p>
+          </div>
+                  <div class="memory-divider"></div>
+
+          <div class="appearance-section">
+            <label class="memory-label">Export your conversations</label>
+            <p class="memory-hint">
+              Everything you have ever sent and received here, as one file.
+              JSON keeps the structure; Markdown is for reading.
+            </p>
+            <div class="data-actions">
+              <a class="btn-secondary" id="exportJson"
+                 href="/api/account/export?format=json">Download JSON</a>
+              <a class="btn-secondary" id="exportMarkdown"
+                 href="/api/account/export?format=markdown">Download Markdown</a>
+            </div>
+          </div>
+
+          <div class="memory-divider"></div>
+
+          <div class="appearance-section">
+            <label class="memory-label" for="setRetention">
+              Delete old conversations automatically
+            </label>
+            <p class="memory-hint">
+              Threads older than this are removed the next time you open the
+              app. This cannot be undone, so export first if you want a copy.
+            </p>
+            <select id="setRetention" class="tl-input">
+              <option value="">Keep everything</option>
+              <option value="7">After 7 days</option>
+              <option value="30">After 30 days</option>
+              <option value="90">After 90 days</option>
+              <option value="365">After a year</option>
+            </select>
+            <p class="memory-hint" id="setRetentionStatus"></p>
           </div>
         </div>
 

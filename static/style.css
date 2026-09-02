@@ -4042,3 +4042,168 @@ html[data-motion="reduced"] *::after {
 :root[data-theme="light"] .topbar .bay-btn {
   color: var(--ink);
 }
+
+
+/* ---- settings controls added with the Settings feature ----
+
+   .tl-input was used by the account markup before it existed as a rule,
+   so every field written with it - the verification code box, the
+   password fields, the delete confirmation - was rendering as a raw
+   browser control: white ground, black text, invisible on this palette.
+   A class that is referenced but never defined fails silently, which is
+   why it survived until a screenshot showed it. */
+.tl-input,
+select.tl-input,
+textarea.tl-input {
+  width: 100%;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 12px;
+  margin-bottom: 10px;
+  /* Native selects paint their own chrome on some platforms and ignore
+     the colours above; this hands rendering back to the stylesheet. */
+  -webkit-appearance: none;
+  appearance: none;
+}
+textarea.tl-input { resize: vertical; min-height: 68px; line-height: 1.5; }
+select.tl-input {
+  /* The arrow has to be redrawn once appearance is off. */
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-soft) 50%),
+                    linear-gradient(135deg, var(--ink-soft) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 52%, calc(100% - 13px) 52%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 34px;
+}
+.tl-input::placeholder { color: var(--ink-faint); }
+.tl-input:focus-visible {
+  outline: none;
+  border-color: var(--border-strong);
+}
+/* The dropdown list itself is drawn by the OS, which does not inherit
+   the page's colours - so its options are set explicitly or they come
+   out white-on-white in dark mode. */
+select.tl-input option {
+  background: var(--panel, #1a1d22);
+  color: var(--ink);
+}
+
+/* ---- sliders and toggles ---- */
+.slider-row {
+  display: grid;
+  grid-template-columns: 1fr minmax(90px, 2fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 13.5px;
+}
+.slider-row input[type="range"] { width: 100%; accent-color: var(--deck); }
+.slider-value {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  min-width: 54px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 7px 0;
+}
+.toggle-label { font-size: 13.5px; }
+.badge-inline {
+  display: inline-block;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--ink-soft);
+  vertical-align: 1px;
+}
+.mfa-secret {
+  display: block;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 15px;
+  letter-spacing: 0.12em;
+  word-break: break-all;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 0 0 10px;
+}
+.backup-codes {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 13.5px;
+  line-height: 1.8;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 0 0 8px;
+  overflow-x: auto;
+}
+a.btn-secondary { text-decoration: none; display: inline-block; }
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border);
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--deck);
+  cursor: pointer;
+  border: none;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  border: none;
+  border-radius: 50%;
+  background: var(--deck);
+  cursor: pointer;
+}
+input[type="range"]:focus-visible { outline: 2px solid var(--deck); outline-offset: 3px; }
+
+.tl-toggle {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 40px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--border);
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.18s ease;
+}
+.tl-toggle::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--ink);
+  transition: transform 0.18s ease;
+}
+.tl-toggle:checked { background: var(--deck); }
+.tl-toggle:checked::after { transform: translateX(18px); }
+.tl-toggle:focus-visible { outline: 2px solid var(--deck); outline-offset: 2px; }

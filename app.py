@@ -39,6 +39,7 @@ import stats  # noqa: E402  owner-only usage figures - see stats.py
 import groq_api  # noqa: E402  fast open-weight models - see groq_api.py
 import openai_api  # noqa: E402  OpenAI-compatible API - see openai_api.py
 import connectors  # noqa: E402  pasted links, turned into tools
+import keystore  # noqa: E402  provider-key encryption + TOTP
 import openrouter_api  # noqa: E402  the only channel serving Kimi
 import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
 import pixverse  # noqa: E402  paid text-to-video - see pixverse.py
@@ -297,13 +298,36 @@ app.config.update(
 
 @app.before_request
 def _persist_session():
-    """Opt every request into the lifetime above.
+    """Opt every request into the lifetime above, and check the session.
 
     Flask only writes an Expires date for sessions marked permanent, and
     the flag lives on the session rather than the config - so setting
     PERMANENT_SESSION_LIFETIME alone changes nothing without this.
     """
     session.permanent = True
+
+    uid = session.get("user_id")
+    if not uid:
+        return
+    sid = session.get("sid")
+    if not sid:
+        # A cookie from before sessions were recorded. Adopt it rather
+        # than reject it: this change should not log anybody out.
+        try:
+            _start_session(uid)
+        except Exception:                    # noqa: BLE001
+            pass
+        return
+    try:
+        if not db.session_is_live(sid, uid):
+            # Revoked from another device, so this cookie stops working
+            # here - which is the entire point of the feature.
+            session.clear()
+            return
+        db.touch_session(sid, now_iso())
+    except Exception:                        # noqa: BLE001
+        # A database hiccup must not sign everybody out.
+        pass
 
 # Behind a reverse proxy - the Cloudflare tunnel, PythonAnywhere's nginx,
 # Render's router - Flask only sees the connection from the proxy, so it
@@ -1050,6 +1074,54 @@ def public_user(user):
     }
 
 
+# ----------------------------------------------------------------------
+# Sessions with a server-side record
+#
+# A signed cookie carrying only a user id cannot be revoked: the server
+# never learns that it exists, so there is nothing to list and nothing to
+# switch off. Every login now also writes a row, and the cookie carries
+# that row's id.
+#
+# Existing cookies keep working. One is adopted on its next request
+# rather than rejected - nobody is logged out by this change, and their
+# session simply appears in the list from then on.
+# ----------------------------------------------------------------------
+_DEVICE_HINTS = (
+    ("Edg/", "Edge"), ("OPR/", "Opera"), ("Firefox/", "Firefox"),
+    ("Chrome/", "Chrome"), ("Safari/", "Safari"),
+)
+_PLATFORM_HINTS = (
+    ("iPhone", "iPhone"), ("iPad", "iPad"), ("Android", "Android"),
+    ("Windows", "Windows"), ("Mac OS X", "Mac"), ("Linux", "Linux"),
+)
+
+
+def _describe_agent(user_agent):
+    """"Chrome on Windows" from a user-agent string.
+
+    Deliberately coarse. The point is for somebody to recognise their own
+    devices in a list, and a full UA string is both unreadable and more
+    fingerprint than the feature needs.
+    """
+    ua = user_agent or ""
+    browser = next((name for token, name in _DEVICE_HINTS if token in ua), "")
+    platform = next((name for token, name in _PLATFORM_HINTS
+                     if token in ua), "")
+    if browser and platform:
+        return "%s on %s" % (browser, platform)
+    return browser or platform or "Unknown device"
+
+
+def _start_session(uid):
+    """Mint a session row and put its id in the cookie."""
+    sid = uuid.uuid4().hex
+    db.create_session(sid, uid, now_iso(),
+                      ip=request.remote_addr or "",
+                      user_agent=request.headers.get("User-Agent", ""))
+    session["sid"] = sid
+    return sid
+
+
 def current_owner_id():
     """Whoever is making this request, for scoping both threads and
     credits: a signed-in user's id, or a per-browser-session guest id
@@ -1634,6 +1706,7 @@ def auth_signup():
     USERS[uid]["name"] = name
     USERS[uid]["birth_year"] = birth_year
     save_users()
+    _start_session(uid)
     _migrate_guest_threads(uid)
     session["user_id"] = uid
     return jsonify({"user": public_user(USERS[uid])})
@@ -1656,6 +1729,7 @@ def auth_login():
 
     _migrate_guest_threads(user["id"])
     session["user_id"] = user["id"]
+    _start_session(user["id"])
     return jsonify({"user": public_user(user)})
 
 
@@ -1886,7 +1960,18 @@ def delete_account():
 
 @app.route("/api/auth/logout", methods=["POST"])
 def auth_logout():
+    # Revoke the row as well as dropping the cookie. Without this the
+    # session would keep showing in the device list of every other
+    # signed-in device, as one that never ends.
+    sid = session.get("sid")
+    uid = session.get("user_id")
+    if sid and uid:
+        try:
+            db.revoke_session(uid, sid, now_iso())
+        except Exception:                    # noqa: BLE001
+            pass
     session.pop("user_id", None)
+    session.pop("sid", None)
     return jsonify({"ok": True})
 
 
@@ -2648,6 +2733,400 @@ def profile_page():
     if not uid or uid not in USERS:
         return redirect("/app")
     return render_template("profile.html")
+
+
+# ----------------------------------------------------------------------
+# Settings
+#
+# One document per owner, read on load and PATCHed in pieces. PATCH not
+# PUT: two open tabs sending a whole document would race, and the one
+# that saved last would silently revert the other.
+# ----------------------------------------------------------------------
+# name -> (coercer, validator). A settings endpoint that writes whatever
+# it is handed is a way to set a temperature to a string or a retention
+# to -1, so nothing is written that is not on this list.
+SETTING_FIELDS = {
+    "theme":          (str, lambda v: v in ("system", "light", "dark")),
+    "language":       (str, lambda v: 0 < len(v) <= 8),
+    "timezone":       (str, lambda v: 0 < len(v) <= 64),
+    "default_model":  (str, lambda v: len(v) <= 120),
+    "system_prompt":  (str, lambda v: len(v) <= 4000),
+    "temperature":    (float, lambda v: 0.0 <= v <= 2.0),
+    "top_p":          (float, lambda v: 0.0 <= v <= 1.0),
+    "max_tokens":     (int, lambda v: 1 <= v <= 32000),
+    "web_search":     (bool, lambda v: True),
+    "tools_enabled":  (bool, lambda v: True),
+    # A fixed set, not any integer: these are the only options the UI
+    # offers, and accepting 1 would let somebody delete their history
+    # nightly by accident.
+    "retention_days": (int, lambda v: v in (0, 7, 30, 90, 365)),
+}
+
+# Fields that may be cleared back to "use the server default". Sending
+# null for these is meaningful and different from sending 0.
+NULLABLE_SETTINGS = ("default_model", "temperature", "top_p", "max_tokens",
+                     "retention_days")
+
+PROVIDER_KEY_HOSTS = {
+    "openai": ("https://api.openai.com/v1/models", "sk-"),
+    "anthropic": ("https://api.anthropic.com/v1/models", "sk-ant-"),
+    "openrouter": ("https://openrouter.ai/api/v1/key", "sk-or-"),
+}
+
+
+@app.route("/api/settings", methods=["GET"])
+def get_settings():
+    settings = db.load_settings(current_owner_id())
+    plan = features.normalize_plan(current_account()[0].get("plan"))
+    uid = session.get("user_id")
+    user = USERS.get(uid) if uid else None
+    return jsonify({
+        "settings": settings,
+        # What the UI needs to render the panels without a second call.
+        "account": {
+            "signed_in": bool(user),
+            "email": (user or {}).get("email", ""),
+            "name": (user or {}).get("name", ""),
+            "email_verified": bool((user or {}).get("email_verified")),
+            "has_password": bool((user or {}).get("password_hash")),
+            "plan": plan,
+        },
+        "limits": {
+            "max_context": features.get(plan, "max_context_tokens"),
+            "max_output": features.get(plan, "max_output_tokens_code"),
+        },
+        "mfa": {"enabled": _mfa_enabled(uid) if uid else False},
+        "secrets_ready": keystore.available(),
+        "secrets_problem": keystore.unavailable_reason(),
+    })
+
+
+@app.route("/api/settings", methods=["PATCH"])
+def patch_settings():
+    payload = request.get_json(force=True, silent=True) or {}
+    clean, errors = {}, {}
+    for field, (cast, ok) in SETTING_FIELDS.items():
+        if field not in payload:
+            continue
+        value = payload[field]
+        if value is None:
+            if field in NULLABLE_SETTINGS:
+                clean[field] = None
+                continue
+            errors[field] = "cannot be empty"
+            continue
+        try:
+            value = cast(value)
+        except (TypeError, ValueError):
+            errors[field] = "expected %s" % cast.__name__
+            continue
+        if not ok(value):
+            errors[field] = "out of range"
+            continue
+        clean[field] = int(value) if cast is bool else value
+
+    if errors:
+        return jsonify({"error": "Some settings could not be saved.",
+                        "fields": errors}), 400
+    if not clean:
+        return jsonify({"error": "Nothing to update."}), 400
+
+    saved = db.save_settings(current_owner_id(), clean, now_iso())
+    return jsonify({"ok": True, "settings": saved})
+
+
+# ----------------------------------------------------------- sessions
+@app.route("/api/account/sessions", methods=["GET"])
+def list_account_sessions():
+    uid = session.get("user_id")
+    if not uid or uid not in USERS:
+        return jsonify({"error": "Sign in first."}), 401
+    here = session.get("sid")
+    rows = []
+    for row in db.list_sessions(uid):
+        rows.append({
+            "id": row["id"],
+            "created": row["created"],
+            "last_seen": row["last_seen"],
+            "ip": row["ip"],
+            "device": _describe_agent(row["user_agent"]),
+            # Marked so the UI can label it and refuse to revoke it -
+            # "log out this device" is what the logout button is for.
+            "current": row["id"] == here,
+        })
+    return jsonify({"sessions": rows})
+
+
+@app.route("/api/account/sessions/<sid>", methods=["DELETE"])
+def revoke_account_session(sid):
+    uid = session.get("user_id")
+    if not uid or uid not in USERS:
+        return jsonify({"error": "Sign in first."}), 401
+    if sid == session.get("sid"):
+        return jsonify({
+            "error": "That is this device. Use Log out instead.",
+        }), 400
+    if not db.revoke_session(uid, sid, now_iso()):
+        return jsonify({"error": "No such session."}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/api/account/sessions/revoke-others", methods=["POST"])
+def revoke_other_account_sessions():
+    uid = session.get("user_id")
+    if not uid or uid not in USERS:
+        return jsonify({"error": "Sign in first."}), 401
+    count = db.revoke_other_sessions(uid, session.get("sid") or "", now_iso())
+    return jsonify({"ok": True, "revoked": count})
+
+
+# ----------------------------------------------------- provider keys
+@app.route("/api/account/provider-keys", methods=["GET"])
+def list_account_provider_keys():
+    """Metadata only. The secret is never returned, by anyone, ever.
+
+    NOT to be confused with /api/account/api-key, which issues a key for
+    calling THIS server and keeps only a hash. These are keys belonging
+    to someone else's account that this server spends on their behalf,
+    so they have to be recoverable - a different problem entirely.
+    """
+    uid = session.get("user_id")
+    if not uid or uid not in USERS:
+        return jsonify({"error": "Sign in first."}), 401
+    return jsonify({
+        "keys": db.list_provider_keys(uid),
+        "providers": sorted(PROVIDER_KEY_HOSTS),
+        "ready": keystore.available(),
+        "problem": keystore.unavailable_reason(),
+    })
+
+
+@app.route("/api/account/provider-keys/<provider>", methods=["PUT"])
+def put_account_provider_key(provider):
+    uid = session.get("user_id")
+    if not uid or uid not in USERS:
+        return jsonify({"error": "Sign in first."}), 401
+    provider = (provider or "").strip().lower()
+    if provider not in PROVIDER_KEY_HOSTS:
+        return jsonify({"error": "Unknown provider."}), 400
+
+    problem = keystore.unavailable_reason()
+    if problem:
+        # Refuse rather than store it in the clear. A key saved
+        # unencrypted because the library was missing is worse than one
+        # that was never saved.
+        return jsonify({"error": problem}), 503
+
+    key = ((request.get_json(force=True, silent=True) or {})
+           .get("key") or "").strip()
+    if len(key) < 20:
+        return jsonify({"error": "That does not look like an API key."}), 400
+    url, prefix = PROVIDER_KEY_HOSTS[provider]
+    if not key.startswith(prefix):
+        return jsonify({
+            "error": "An %s key normally starts with %s." % (provider, prefix),
+        }), 400
+
+    # Checked against the provider before it is stored. A key that is
+    # wrong on the day it is pasted otherwise becomes a mysterious
+    # failure weeks later, with nothing pointing back to here.
+    headers = {"Authorization": "Bearer " + key}
+    if provider == "anthropic":
+        headers = {"x-api-key": key, "anthropic-version": "2023-06-01"}
+    try:
+        probe = requests.get(url, headers=headers, timeout=12)
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": "Could not reach %s: %s" % (provider, e)}), 502
+    if probe.status_code in (401, 403):
+        return jsonify({"error": "%s rejected that key." % provider}), 400
+
+    ct, nonce = keystore.encrypt(key, uid, "provider:" + provider)
+    db.save_provider_key(uid, provider, ct, nonce, key[-4:], now_iso())
+    return jsonify({"ok": True, "provider": provider, "last_four": key[-4:]})
+
+
+@app.route("/api/account/provider-keys/<provider>", methods=["DELETE"])
+def delete_account_provider_key(provider):
+    uid = session.get("user_id")
+    if not uid or uid not in USERS:
+        return jsonify({"error": "Sign in first."}), 401
+    if not db.delete_provider_key(uid, (provider or "").strip().lower()):
+        return jsonify({"error": "No key stored for that provider."}), 404
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------- MFA
+def _mfa_enabled(owner_id):
+    row = db.get_mfa_enrollment(owner_id)
+    return bool(row and row["confirmed"])
+
+
+@app.route("/api/account/mfa/enroll", methods=["POST"])
+def mfa_enroll():
+    """Begin enrolment. Nothing is enforced until a code is confirmed.
+
+    Two steps on purpose: marking this confirmed here would lock out
+    anyone whose authenticator failed to take the secret, and locking
+    someone out of their own account while adding security is the worst
+    outcome available.
+    """
+    uid = session.get("user_id")
+    user = USERS.get(uid) if uid else None
+    if not user:
+        return jsonify({"error": "Sign in first."}), 401
+    problem = keystore.unavailable_reason()
+    if problem:
+        return jsonify({"error": problem}), 503
+    if _mfa_enabled(uid):
+        return jsonify({"error": "Two-factor is already on."}), 400
+
+    secret = keystore.new_totp_secret()
+    ct, nonce = keystore.encrypt(secret, uid, "mfa")
+    db.save_mfa_enrollment(uid, ct, nonce, now_iso())
+    return jsonify({
+        "ok": True,
+        "secret": secret,
+        "otpauth_uri": keystore.provisioning_uri(secret,
+                                                 user.get("email") or ""),
+    })
+
+
+@app.route("/api/account/mfa/confirm", methods=["POST"])
+def mfa_confirm():
+    uid = session.get("user_id")
+    if not uid or uid not in USERS:
+        return jsonify({"error": "Sign in first."}), 401
+    row = db.get_mfa_enrollment(uid)
+    if not row:
+        return jsonify({"error": "Start setup again."}), 400
+    code = ((request.get_json(force=True, silent=True) or {})
+            .get("code") or "")
+    secret = keystore.decrypt(row["secret_ct"], row["secret_nonce"],
+                              uid, "mfa")
+    if not keystore.verify_totp(secret, code):
+        return jsonify({"error": "That code is not right. Check your "
+                                 "phone's clock if it keeps failing."}), 400
+
+    db.confirm_mfa(uid)
+    # Shown once, stored only as hashes - the same contract as a
+    # password, because that is exactly what they are.
+    codes = ["%s-%s" % (secrets.token_hex(2), secrets.token_hex(2))
+             for _ in range(10)]
+    db.save_backup_codes(uid, [generate_password_hash(c) for c in codes])
+    return jsonify({"ok": True, "backup_codes": codes})
+
+
+@app.route("/api/account/mfa/disable", methods=["POST"])
+def mfa_disable():
+    uid = session.get("user_id")
+    user = USERS.get(uid) if uid else None
+    if not user:
+        return jsonify({"error": "Sign in first."}), 401
+    password = ((request.get_json(force=True, silent=True) or {})
+                .get("password") or "")
+    # Turning off a second factor is exactly when a stolen session would
+    # be used, so it costs the password even though you are signed in.
+    if user.get("password_hash") and not check_password_hash(
+            user["password_hash"], password):
+        return jsonify({"error": "That password is not right."}), 400
+    db.disable_mfa(uid)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/account/mfa/backup-codes", methods=["POST"])
+def mfa_regenerate_backup_codes():
+    uid = session.get("user_id")
+    if not uid or uid not in USERS:
+        return jsonify({"error": "Sign in first."}), 401
+    if not _mfa_enabled(uid):
+        return jsonify({"error": "Two-factor is not on."}), 400
+    codes = ["%s-%s" % (secrets.token_hex(2), secrets.token_hex(2))
+             for _ in range(10)]
+    db.save_backup_codes(uid, [generate_password_hash(c) for c in codes])
+    return jsonify({"ok": True, "backup_codes": codes})
+
+
+# ------------------------------------------------------ data controls
+@app.route("/api/account/export", methods=["GET"])
+def export_history():
+    """Every thread this owner has, as JSON or Markdown.
+
+    Served as a download rather than a job: the whole history is a few
+    hundred kilobytes of text at the sizes this app deals in, and a job
+    queue for that would be machinery with nothing to carry.
+    """
+    owner_id = current_owner_id()
+    fmt = (request.args.get("format") or "json").lower()
+    mine = [t for t in THREADS.values() if t.get("owner_id") == owner_id]
+    mine.sort(key=lambda t: t.get("updated") or "")
+
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    if fmt == "markdown":
+        parts = ["# Chat history", "", "Exported %s" % stamp, ""]
+        for thread in mine:
+            parts.append("## %s" % (thread.get("title") or "Untitled"))
+            parts.append("")
+            for message in thread.get("messages") or []:
+                who = "You" if message.get("role") == "user" else "Assistant"
+                parts.append("**%s:** %s" % (who, message.get("content") or ""))
+                parts.append("")
+            parts.append("---")
+            parts.append("")
+        body = "\n".join(parts)
+        mimetype = "text/markdown; charset=utf-8"
+        filename = "randomgenerals-history-%s.md" % stamp
+    else:
+        body = json.dumps({
+            "exported": now_iso(),
+            "thread_count": len(mine),
+            "threads": mine,
+        }, indent=2, ensure_ascii=False)
+        mimetype = "application/json; charset=utf-8"
+        filename = "randomgenerals-history-%s.json" % stamp
+
+    return Response(body, mimetype=mimetype, headers={
+        "Content-Disposition": 'attachment; filename="%s"' % filename,
+    })
+
+
+@app.route("/api/account/history", methods=["DELETE"])
+def clear_history():
+    """Delete every thread for this owner, now."""
+    owner_id = current_owner_id()
+    doomed = [tid for tid, t in THREADS.items()
+              if t.get("owner_id") == owner_id]
+    for tid in doomed:
+        THREADS.pop(tid, None)
+    save_threads()
+    return jsonify({"ok": True, "deleted": len(doomed)})
+
+
+def apply_retention(owner_id):
+    """Drop threads older than this owner's retention window.
+
+    Called on load rather than by a scheduler: this app has no cron, and
+    a retention policy that only runs when a machine happens to be up is
+    worse than one that runs whenever its owner appears.
+    """
+    days = db.load_settings(owner_id).get("retention_days")
+    if not days:
+        return 0
+    cutoff = (datetime.datetime.now(datetime.timezone.utc)
+              - datetime.timedelta(days=int(days))).isoformat()
+    doomed = [tid for tid, t in THREADS.items()
+              if t.get("owner_id") == owner_id
+              and (t.get("updated") or "") < cutoff]
+    for tid in doomed:
+        THREADS.pop(tid, None)
+    if doomed:
+        save_threads()
+        db.delete_threads_older_than(owner_id, cutoff)
+    return len(doomed)
+
+
+@app.route("/api/settings/apply-retention", methods=["POST"])
+def run_retention():
+    return jsonify({"ok": True, "deleted": apply_retention(current_owner_id())})
 
 
 @app.route("/api/connectors", methods=["GET"])

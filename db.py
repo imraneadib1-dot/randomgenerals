@@ -80,6 +80,74 @@ CREATE TABLE IF NOT EXISTS credits (
     last_refill  TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS user_settings (
+    -- One row per owner. NOT columns on `users`: save_users() deletes and
+    -- reinserts that whole table, so a column added there has to be
+    -- threaded through the schema, the INSERT and the SELECT or it
+    -- silently does nothing. That has already cost one bug.
+    owner_id        TEXT PRIMARY KEY,
+    theme           TEXT    NOT NULL DEFAULT 'system',
+    language        TEXT    NOT NULL DEFAULT 'en',
+    timezone        TEXT    NOT NULL DEFAULT 'UTC',
+    -- NULL means "use the server default", which is different from a
+    -- value that happens to equal it: clearing a field must not pin it.
+    default_model   TEXT,
+    temperature     REAL,
+    top_p           REAL,
+    max_tokens      INTEGER,
+    system_prompt   TEXT    NOT NULL DEFAULT '',
+    web_search      INTEGER NOT NULL DEFAULT 1,
+    tools_enabled   INTEGER NOT NULL DEFAULT 1,
+    retention_days  INTEGER,
+    updated         TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    -- The id in the cookie. Server-side rows are what make "log out that
+    -- other device" mean anything: a bare signed cookie carrying a user
+    -- id cannot be revoked, because the server never learns it exists.
+    id         TEXT PRIMARY KEY,
+    owner_id   TEXT NOT NULL,
+    created    TEXT NOT NULL,
+    last_seen  TEXT NOT NULL,
+    ip         TEXT NOT NULL DEFAULT '',
+    user_agent TEXT NOT NULL DEFAULT '',
+    revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_owner ON sessions(owner_id);
+
+CREATE TABLE IF NOT EXISTS provider_keys (
+    -- RECOVERABLE, unlike users.api_key_hash. That one is hashed because
+    -- it is only ever compared; this one has to be replayed upstream, so
+    -- it is encrypted and the nonce is stored beside it.
+    owner_id    TEXT NOT NULL,
+    provider    TEXT NOT NULL,
+    ciphertext  BLOB NOT NULL,
+    nonce       BLOB NOT NULL,
+    last_four   TEXT NOT NULL DEFAULT '',
+    created     TEXT NOT NULL,
+    last_used   TEXT,
+    PRIMARY KEY (owner_id, provider)
+);
+
+CREATE TABLE IF NOT EXISTS mfa_enrollment (
+    owner_id     TEXT PRIMARY KEY,
+    secret_ct    BLOB NOT NULL,
+    secret_nonce BLOB NOT NULL,
+    -- Enrolment is two-step on purpose. Marking it confirmed before a
+    -- code has been verified locks out anyone whose authenticator failed
+    -- to take the secret.
+    confirmed    INTEGER NOT NULL DEFAULT 0,
+    created      TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS mfa_backup_codes (
+    owner_id  TEXT NOT NULL,
+    code_hash TEXT NOT NULL,
+    used_at   TEXT,
+    PRIMARY KEY (owner_id, code_hash)
+);
+
 CREATE TABLE IF NOT EXISTS password_resets (
     -- SEPARATE FROM verification_codes, DELIBERATELY.
     --
@@ -467,7 +535,9 @@ def delete_user(user_id, email=None):
     removed = 0
     with conn:
         for table in ("threads", "credits", "memories",
-                      "custom_instructions", "connectors"):
+                      "custom_instructions", "connectors",
+                      "user_settings", "sessions", "provider_keys",
+                      "mfa_enrollment", "mfa_backup_codes"):
             cur = conn.execute(
                 "DELETE FROM %s WHERE owner_id = ?" % table, (user_id,))
             removed += cur.rowcount or 0
@@ -563,6 +633,241 @@ def delete_connector(owner_id, connector_id):
             "DELETE FROM connectors WHERE id = ? AND owner_id = ?",
             (connector_id, owner_id))
     return (cur.rowcount or 0) > 0
+
+
+SETTINGS_DEFAULTS = {
+    "theme": "system",
+    "language": "en",
+    "timezone": "UTC",
+    "default_model": None,
+    "temperature": None,
+    "top_p": None,
+    "max_tokens": None,
+    "system_prompt": "",
+    "web_search": 1,
+    "tools_enabled": 1,
+    "retention_days": None,
+}
+
+
+def load_settings(owner_id):
+    """This owner's settings, with defaults filled in for a new account."""
+    conn = _connect()
+    row = conn.execute(
+        "SELECT theme, language, timezone, default_model, temperature, "
+        "       top_p, max_tokens, system_prompt, web_search, "
+        "       tools_enabled, retention_days, updated "
+        "FROM user_settings WHERE owner_id = ?", (owner_id,)).fetchone()
+    if not row:
+        out = dict(SETTINGS_DEFAULTS)
+        out["updated"] = ""
+        return out
+    out = {k: row[k] for k in SETTINGS_DEFAULTS}
+    out["web_search"] = bool(row["web_search"])
+    out["tools_enabled"] = bool(row["tools_enabled"])
+    out["updated"] = row["updated"]
+    return out
+
+
+def save_settings(owner_id, changes, updated):
+    """Sparse update: only the given keys are written.
+
+    UPSERT rather than read-modify-write, so two tabs saving different
+    fields at the same moment cannot have one silently overwrite the
+    other with the values it loaded minutes ago.
+    """
+    fields = [k for k in changes if k in SETTINGS_DEFAULTS]
+    if not fields:
+        return load_settings(owner_id)
+    conn = _connect()
+    with conn:
+        conn.execute(
+            "INSERT INTO user_settings (owner_id) VALUES (?) "
+            "ON CONFLICT(owner_id) DO NOTHING", (owner_id,))
+        assignments = ", ".join("%s = ?" % f for f in fields)
+        conn.execute(
+            "UPDATE user_settings SET %s, updated = ? WHERE owner_id = ?"
+            % assignments,
+            [changes[f] for f in fields] + [updated, owner_id])
+    return load_settings(owner_id)
+
+
+# ------------------------------------------------------------ sessions
+def create_session(sid, owner_id, now, ip="", user_agent=""):
+    conn = _connect()
+    with conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO sessions "
+            "(id, owner_id, created, last_seen, ip, user_agent, revoked_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, NULL)",
+            (sid, owner_id, now, now, ip[:64], (user_agent or "")[:300]))
+    return sid
+
+
+def session_is_live(sid, owner_id):
+    """False for a revoked, missing, or reassigned session.
+
+    owner_id is checked too: a session id that survived into another
+    account's cookie must not authenticate anybody.
+    """
+    conn = _connect()
+    row = conn.execute(
+        "SELECT revoked_at FROM sessions WHERE id = ? AND owner_id = ?",
+        (sid, owner_id)).fetchone()
+    return bool(row) and not row["revoked_at"]
+
+
+def touch_session(sid, now):
+    conn = _connect()
+    with conn:
+        conn.execute("UPDATE sessions SET last_seen = ? WHERE id = ?",
+                     (now, sid))
+
+
+def list_sessions(owner_id):
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT id, created, last_seen, ip, user_agent FROM sessions "
+        "WHERE owner_id = ? AND revoked_at IS NULL "
+        "ORDER BY last_seen DESC", (owner_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def revoke_session(owner_id, sid, now):
+    conn = _connect()
+    with conn:
+        cur = conn.execute(
+            "UPDATE sessions SET revoked_at = ? "
+            "WHERE id = ? AND owner_id = ? AND revoked_at IS NULL",
+            (now, sid, owner_id))
+    return (cur.rowcount or 0) > 0
+
+
+def revoke_other_sessions(owner_id, keep_sid, now):
+    conn = _connect()
+    with conn:
+        cur = conn.execute(
+            "UPDATE sessions SET revoked_at = ? "
+            "WHERE owner_id = ? AND id != ? AND revoked_at IS NULL",
+            (now, owner_id, keep_sid))
+    return cur.rowcount or 0
+
+
+# ------------------------------------------------------ provider keys
+def save_provider_key(owner_id, provider, ciphertext, nonce, last_four, now):
+    conn = _connect()
+    with conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO provider_keys "
+            "(owner_id, provider, ciphertext, nonce, last_four, created, "
+            " last_used) VALUES (?, ?, ?, ?, ?, ?, NULL)",
+            (owner_id, provider, ciphertext, nonce, last_four, now))
+
+
+def list_provider_keys(owner_id):
+    """Metadata only. The ciphertext never leaves this module by accident
+    - a caller that needs the secret asks for it by name."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT provider, last_four, created, last_used FROM provider_keys "
+        "WHERE owner_id = ? ORDER BY provider", (owner_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_provider_key_row(owner_id, provider):
+    conn = _connect()
+    return conn.execute(
+        "SELECT ciphertext, nonce FROM provider_keys "
+        "WHERE owner_id = ? AND provider = ?", (owner_id, provider)).fetchone()
+
+
+def touch_provider_key(owner_id, provider, now):
+    conn = _connect()
+    with conn:
+        conn.execute(
+            "UPDATE provider_keys SET last_used = ? "
+            "WHERE owner_id = ? AND provider = ?", (now, owner_id, provider))
+
+
+def delete_provider_key(owner_id, provider):
+    conn = _connect()
+    with conn:
+        cur = conn.execute(
+            "DELETE FROM provider_keys WHERE owner_id = ? AND provider = ?",
+            (owner_id, provider))
+    return (cur.rowcount or 0) > 0
+
+
+# ---------------------------------------------------------------- MFA
+def save_mfa_enrollment(owner_id, ct, nonce, now):
+    conn = _connect()
+    with conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO mfa_enrollment "
+            "(owner_id, secret_ct, secret_nonce, confirmed, created) "
+            "VALUES (?, ?, ?, 0, ?)", (owner_id, ct, nonce, now))
+
+
+def get_mfa_enrollment(owner_id):
+    conn = _connect()
+    return conn.execute(
+        "SELECT secret_ct, secret_nonce, confirmed, created "
+        "FROM mfa_enrollment WHERE owner_id = ?", (owner_id,)).fetchone()
+
+
+def confirm_mfa(owner_id):
+    conn = _connect()
+    with conn:
+        conn.execute("UPDATE mfa_enrollment SET confirmed = 1 "
+                     "WHERE owner_id = ?", (owner_id,))
+
+
+def disable_mfa(owner_id):
+    conn = _connect()
+    with conn:
+        conn.execute("DELETE FROM mfa_enrollment WHERE owner_id = ?",
+                     (owner_id,))
+        conn.execute("DELETE FROM mfa_backup_codes WHERE owner_id = ?",
+                     (owner_id,))
+
+
+def save_backup_codes(owner_id, hashes):
+    conn = _connect()
+    with conn:
+        conn.execute("DELETE FROM mfa_backup_codes WHERE owner_id = ?",
+                     (owner_id,))
+        conn.executemany(
+            "INSERT INTO mfa_backup_codes (owner_id, code_hash, used_at) "
+            "VALUES (?, ?, NULL)", [(owner_id, h) for h in hashes])
+
+
+def unused_backup_codes(owner_id):
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT code_hash FROM mfa_backup_codes "
+        "WHERE owner_id = ? AND used_at IS NULL", (owner_id,)).fetchall()
+    return [r["code_hash"] for r in rows]
+
+
+def spend_backup_code(owner_id, code_hash, now):
+    conn = _connect()
+    with conn:
+        cur = conn.execute(
+            "UPDATE mfa_backup_codes SET used_at = ? "
+            "WHERE owner_id = ? AND code_hash = ? AND used_at IS NULL",
+            (now, owner_id, code_hash))
+    return (cur.rowcount or 0) > 0
+
+
+# ------------------------------------------------------------ history
+def delete_threads_older_than(owner_id, cutoff_iso):
+    """Retention policy. Returns how many threads went."""
+    conn = _connect()
+    with conn:
+        cur = conn.execute(
+            "DELETE FROM threads WHERE owner_id = ? AND updated < ?",
+            (owner_id, cutoff_iso))
+    return cur.rowcount or 0
 
 
 def save_password_reset(email, code, expires_at, sent_at):
