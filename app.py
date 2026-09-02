@@ -468,7 +468,20 @@ STRENGTH_LEVELS = {
     # keeps ordinary replies short, and this only stops a genuinely
     # long calculation being guillotined.
     "quick": {
-        "options": {"num_predict": 1400},
+        # TEMPERATURE WAS MISSING HERE, AND THIS IS THE DEFAULT MODE.
+        #
+        # Deep sets 0.15 and the code options set 0.2, but quick set
+        # none - so the OpenAI-compatible default applied, which is 1.0.
+        # Every ordinary chat message, which is most messages, was
+        # generated at maximum sampling randomness.
+        #
+        # For "write me a poem" that is fine and arguably right. For
+        # "what is 17% of 4,250" it is a way to get a different answer
+        # each time and occasionally a wrong one, on questions that have
+        # exactly one right answer. 0.2 matches what the code bay
+        # already uses.
+        "options": {"num_predict": 1400, "temperature": 0.2,
+                    "top_p": 0.9},
         "nudge": "Keep the answer brief and to the point - but never "
                  "stop mid-working on a calculation. If it needs steps, "
                  "take them.",
