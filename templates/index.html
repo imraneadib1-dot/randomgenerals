@@ -605,6 +605,25 @@
             <div class="auth-divider"><span>or</span></div>
 
             <form id="localAuthForm" class="auth-form">
+              <!-- Signup only. Hidden in login mode, where they would be
+                   two boxes nobody needs to fill in again. -->
+              <input
+                type="text"
+                id="localAuthName"
+                class="auth-input"
+                placeholder="Your name"
+                autocomplete="name"
+                maxlength="60"
+              />
+              <input
+                type="number"
+                id="localAuthAge"
+                class="auth-input"
+                placeholder="Your age"
+                inputmode="numeric"
+                min="13"
+                max="120"
+              />
               <input
                 type="email"
                 id="localAuthEmail"
@@ -628,11 +647,56 @@
               <button type="button" class="auth-switch" id="localAuthSwitch">
                 Already have an account? Log in
               </button>
+              <button type="button" class="auth-switch" id="forgotSwitch">
+                Forgotten your password?
+              </button>
+            </form>
+
+            <!-- Reset by email. Its own little form rather than more
+                 modes on the one above, which already has two. -->
+            <form id="resetForm" class="auth-form" hidden>
+              <p class="auth-note" id="resetIntro">
+                Enter your email and we will send you a code.
+              </p>
+              <input
+                type="email"
+                id="resetEmail"
+                class="auth-input"
+                placeholder="Email"
+                autocomplete="email"
+              />
+              <button type="button" class="auth-submit" id="resetSend">
+                Send me a code
+              </button>
+              <div id="resetStep2" hidden>
+                <input
+                  type="text"
+                  id="resetCode"
+                  class="auth-input"
+                  placeholder="6-digit code"
+                  maxlength="6"
+                  inputmode="numeric"
+                />
+                <input
+                  type="password"
+                  id="resetNew"
+                  class="auth-input"
+                  placeholder="New password (8+ characters)"
+                  autocomplete="new-password"
+                />
+                <button type="button" class="auth-submit" id="resetConfirm">
+                  Set new password
+                </button>
+              </div>
+              <p class="auth-error" id="resetError" hidden></p>
+              <button type="button" class="auth-switch" id="resetBack">
+                Back to sign in
+              </button>
             </form>
 
             <p class="auth-note">
-              Free accounts start with 4,000 credits, refilling to full every
-              hour automatically.
+              Free accounts start with 2,000 credits, refilling every two
+              hours. You need to be 13 or over.
             </p>
           </div>
 
@@ -653,6 +717,11 @@
           <!-- Everything below acts on the signed-in account. Each
                control maps to a route that was written and tested; none
                is a placeholder. -->
+          <p class="memory-hint" id="profileLinkRow" hidden>
+            <a href="/profile">Open your account page</a> &mdash; your name,
+            age, email and password, on a page you can bookmark.
+          </p>
+
           <div class="appearance-section" id="accountManage" hidden>
             <label class="memory-label">Email verification</label>
             <p class="memory-hint" id="verifyState">Checking&hellip;</p>

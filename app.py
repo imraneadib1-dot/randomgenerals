@@ -1571,7 +1571,15 @@ def auth_signup():
     if any(u["email"] == email for u in USERS.values()):
         return jsonify({"error": "An account with that email already exists."}), 409
 
+    name, birth_year, err = _validate_profile(payload.get("name"),
+                                              payload.get("age"))
+    if err:
+        return jsonify({"error": err}), 400
+
     uid = _create_user(email, password_hash=generate_password_hash(password))
+    USERS[uid]["name"] = name
+    USERS[uid]["birth_year"] = birth_year
+    save_users()
     _migrate_guest_threads(uid)
     session["user_id"] = uid
     return jsonify({"user": public_user(USERS[uid])})
@@ -2384,6 +2392,203 @@ def get_plans():
         "paddle_client_token": paddle_billing.client_token(),
         "paddle_environment": paddle_billing.environment(),
     })
+
+
+# ----------------------------------------------------------------------
+# Who the account belongs to
+# ----------------------------------------------------------------------
+# The age floor. Under-13s cannot hold an account here, which is not a
+# preference: COPPA makes collecting personal information from them
+# without verifiable parental consent unlawful in the US, and this app
+# collects an email address and stores conversations. Refusing the signup
+# is far cheaper than building consent machinery.
+MIN_AGE = 13
+MAX_AGE = 120
+
+# Codes are short-lived and rate-limited. A six-digit code is a million
+# combinations, which is a lot for a person typing and nothing for a
+# script, so it also dies after a few wrong guesses.
+RESET_TTL_MINUTES = 15
+RESET_MAX_ATTEMPTS = 5
+RESET_COOLDOWN_SECONDS = 60
+
+
+def _age_from_birth_year(birth_year):
+    if not birth_year:
+        return None
+    return datetime.datetime.now(datetime.timezone.utc).year - int(birth_year)
+
+
+def _validate_profile(name, age):
+    """-> (name, birth_year, error). Shared by signup and the profile
+    page, so the rules cannot drift between where they are set and where
+    they are changed."""
+    name = (name or "").strip()
+    if len(name) < 2:
+        return None, None, "Enter your name."
+    if len(name) > 60:
+        return None, None, "That name is too long."
+    try:
+        age = int(str(age).strip())
+    except (TypeError, ValueError):
+        return None, None, "Enter your age as a number."
+    if age < MIN_AGE:
+        return None, None, ("You need to be at least %d to have an account "
+                            "here." % MIN_AGE)
+    if age > MAX_AGE:
+        return None, None, "Enter a real age."
+    # Stored as a birth year: an age written to a database is wrong
+    # within twelve months and nothing ever comes back to update it.
+    year = datetime.datetime.now(datetime.timezone.utc).year - age
+    return name, year, None
+
+
+@app.route("/api/account/profile", methods=["GET", "POST"])
+def account_profile():
+    """Read or change the name and age on this account."""
+    uid = session.get("user_id")
+    user = USERS.get(uid) if uid else None
+    if not user:
+        return jsonify({"error": "Sign in first."}), 401
+
+    if request.method == "GET":
+        return jsonify({
+            "name": user.get("name") or "",
+            "age": _age_from_birth_year(user.get("birth_year")),
+            "email": user.get("email") or "",
+            "email_verified": bool(user.get("email_verified")),
+            "created": user.get("created") or "",
+            "plan": user.get("plan"),
+            "has_password": bool(user.get("password_hash")),
+        })
+
+    payload = request.get_json(force=True, silent=True) or {}
+    name, year, err = _validate_profile(payload.get("name"),
+                                        payload.get("age"))
+    if err:
+        return jsonify({"error": err}), 400
+    user["name"] = name
+    user["birth_year"] = year
+    save_users()
+    return jsonify({"ok": True, "name": name,
+                    "age": _age_from_birth_year(year)})
+
+
+# ----------------------------------------------------------------------
+# Forgotten password
+#
+# Distinct from /api/account/password, which changes a password you can
+# already prove you know. This one is for someone locked out, so the
+# proof is a code sent to the address on the account and nothing else -
+# which is exactly why it gets its own table, its own attempt budget and
+# its own cooldown.
+# ----------------------------------------------------------------------
+@app.route("/api/auth/reset/request", methods=["POST"])
+def reset_request():
+    """Mail a reset code. Always answers the same way.
+
+    Answering "no such account" would turn this endpoint into a way to
+    ask whether an address has one here, so the response does not depend
+    on whether it does.
+    """
+    payload = request.get_json(force=True, silent=True) or {}
+    email = (payload.get("email") or "").strip().lower()
+    same = jsonify({
+        "ok": True,
+        "detail": ("If there is an account for that address, a code is on "
+                   "its way. It expires in %d minutes."
+                   % RESET_TTL_MINUTES),
+    })
+
+    if not EMAIL_RE.match(email):
+        return jsonify({"error": "Enter a valid email address."}), 400
+
+    user = next((u for u in USERS.values()
+                 if (u.get("email") or "").lower() == email), None)
+    if not user or not user.get("password_hash"):
+        # No account, or a Google account with no password to reset.
+        # Neither is said out loud.
+        return same
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    existing = db.get_password_reset(email)
+    if existing and existing["sent_at"]:
+        try:
+            last = datetime.datetime.fromisoformat(existing["sent_at"])
+            if (now - last).total_seconds() < RESET_COOLDOWN_SECONDS:
+                # Silently the same answer: a cooldown that announces
+                # itself is another way to probe for an account.
+                return same
+        except (ValueError, TypeError):
+            pass
+
+    code = "%06d" % secrets.randbelow(1000000)
+    expires = now + datetime.timedelta(minutes=RESET_TTL_MINUTES)
+    db.save_password_reset(email, code, expires.isoformat(), now.isoformat())
+    mailer.send_reset_code(email, code, RESET_TTL_MINUTES)
+    return same
+
+
+@app.route("/api/auth/reset/confirm", methods=["POST"])
+def reset_confirm():
+    """Trade a valid code for a new password."""
+    payload = request.get_json(force=True, silent=True) or {}
+    email = (payload.get("email") or "").strip().lower()
+    code = (payload.get("code") or "").strip()
+    new = payload.get("new") or ""
+
+    row = db.get_password_reset(email)
+    if not row:
+        return jsonify({"error": "That code is not valid. Ask for a new "
+                                 "one."}), 400
+
+    try:
+        expires = datetime.datetime.fromisoformat(row["expires_at"])
+    except (ValueError, TypeError):
+        expires = None
+    if expires and datetime.datetime.now(datetime.timezone.utc) > expires:
+        db.delete_password_reset(email)
+        return jsonify({"error": "That code has expired. Ask for a new "
+                                 "one."}), 400
+
+    if len(new) < 8:
+        return jsonify({"error": "Use at least 8 characters."}), 400
+
+    if not hmac.compare_digest(str(row["code"]), code):
+        used = db.bump_password_reset_attempts(email)
+        if used >= RESET_MAX_ATTEMPTS:
+            db.delete_password_reset(email)
+            return jsonify({
+                "error": "Too many wrong tries. Ask for a new code.",
+            }), 400
+        return jsonify({"error": "That code is not right."}), 400
+
+    user = next((u for u in USERS.values()
+                 if (u.get("email") or "").lower() == email), None)
+    if not user:
+        db.delete_password_reset(email)
+        return jsonify({"error": "That code is not valid."}), 400
+
+    user["password_hash"] = generate_password_hash(new)
+    # Reaching a code at that address proves the address works, which is
+    # the same thing email verification asks for.
+    user["email_verified"] = True
+    save_users()
+    db.delete_password_reset(email)
+    # Deliberately NOT signing them in. A reset proves control of the
+    # inbox; letting it also open a session means an intercepted email is
+    # a session rather than a password they still have to type.
+    return jsonify({"ok": True})
+
+
+@app.route("/profile")
+def profile_page():
+    """A page for the account details, separate from the settings modal
+    so it can be linked to and bookmarked."""
+    uid = session.get("user_id")
+    if not uid or uid not in USERS:
+        return redirect("/app")
+    return render_template("profile.html")
 
 
 @app.route("/api/connectors", methods=["GET"])

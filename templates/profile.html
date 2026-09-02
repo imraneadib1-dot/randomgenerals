@@ -1,0 +1,233 @@
+<!doctype html>
+{# The account page. Separate from the settings modal so it has an
+   address someone can be sent to - "go to randomgenerals.com/profile" is
+   a thing you can say, "open settings then click Account" is not. Same
+   shell and palette as the legal pages. #}
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Your account — RandomGenerals AI</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" href="{{ asset('favicon.svg') }}" type="image/svg+xml" />
+    <link rel="stylesheet" href="{{ asset('landing.css') }}" />
+    <style>
+      /* Scoped to this page. The landing stylesheet gives the shell and
+         the palette; these are the form rows it has no equivalent for. */
+      .acct { max-width: 620px; margin: 0 auto; padding: 40px 22px 90px; }
+      .acct h1 { margin: 0 0 6px; font-size: 27px; }
+      .acct .sub { color: var(--ink-soft, #6b7280); margin: 0 0 30px; }
+      .card {
+        border: 1px solid var(--border, rgba(24, 42, 58, 0.14));
+        border-radius: 14px;
+        padding: 20px 20px 22px;
+        margin-bottom: 18px;
+      }
+      .card h2 { margin: 0 0 4px; font-size: 16px; }
+      .card p.hint {
+        margin: 0 0 14px;
+        font-size: 13px;
+        color: var(--ink-soft, #6b7280);
+      }
+      .row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+      .row label { font-size: 13px; font-weight: 600; }
+      .row input {
+        font: inherit;
+        padding: 9px 12px;
+        border-radius: 9px;
+        border: 1px solid var(--border, rgba(24, 42, 58, 0.2));
+        background: transparent;
+        color: inherit;
+      }
+      .btn {
+        font: inherit;
+        padding: 9px 16px;
+        border-radius: 999px;
+        border: 1px solid var(--border, rgba(24, 42, 58, 0.2));
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+      }
+      .btn:hover { border-color: currentColor; }
+      .btn-danger:hover { color: #b42318; border-color: #b42318; }
+      .status { font-size: 13px; margin: 10px 0 0; min-height: 1.2em; }
+      .badge {
+        display: inline-block;
+        font-size: 12px;
+        padding: 2px 9px;
+        border-radius: 999px;
+        border: 1px solid currentColor;
+      }
+      .danger { border-color: rgba(180, 35, 24, 0.4); }
+    </style>
+  </head>
+  <body>
+    <main class="acct">
+      <p><a href="/app">&larr; back to the app</a></p>
+      <h1>Your account</h1>
+      <p class="sub" id="whoami">Loading&hellip;</p>
+
+      <section class="card">
+        <h2>Your details</h2>
+        <p class="hint">
+          Your name is how the assistant addresses you. Your age is kept
+          because accounts here are for people aged 13 and over.
+        </p>
+        <div class="row">
+          <label for="pName">Name</label>
+          <input type="text" id="pName" autocomplete="name" maxlength="60" />
+        </div>
+        <div class="row">
+          <label for="pAge">Age</label>
+          <input type="number" id="pAge" min="13" max="120" inputmode="numeric" />
+        </div>
+        <button type="button" class="btn" id="pSave">Save details</button>
+        <p class="status" id="pStatus"></p>
+      </section>
+
+      <section class="card">
+        <h2>Email <span class="badge" id="vBadge">checking</span></h2>
+        <p class="hint">
+          Verifying proves the address is yours, and it is what lets you
+          reset your password if you are ever locked out.
+        </p>
+        <div id="vControls">
+          <button type="button" class="btn" id="vSend">Send me a code</button>
+          <span id="vAfter" hidden>
+            <input type="text" id="vCode" maxlength="6" inputmode="numeric"
+                   placeholder="6-digit code" style="max-width: 140px" />
+            <button type="button" class="btn" id="vConfirm">Confirm</button>
+          </span>
+        </div>
+        <p class="status" id="vStatus"></p>
+      </section>
+
+      <section class="card" id="pwCard">
+        <h2>Change password</h2>
+        <p class="hint">
+          At least 8 characters. You stay signed in here. If you have
+          forgotten your current one, sign out and use
+          <a href="/app?reset=1">reset it by email</a> instead.
+        </p>
+        <div class="row">
+          <label for="cpCurrent">Current password</label>
+          <input type="password" id="cpCurrent" autocomplete="current-password" />
+        </div>
+        <div class="row">
+          <label for="cpNew">New password</label>
+          <input type="password" id="cpNew" autocomplete="new-password" />
+        </div>
+        <button type="button" class="btn" id="cpSave">Update password</button>
+        <p class="status" id="cpStatus"></p>
+      </section>
+
+      <section class="card danger">
+        <h2>Delete account</h2>
+        <p class="hint">
+          Removes your account and every conversation, memory, custom
+          instruction and connected app attached to it. This cannot be
+          undone. Type your email address to confirm.
+        </p>
+        <div class="row">
+          <label for="dEmail">Your email address</label>
+          <input type="email" id="dEmail" autocomplete="off" />
+        </div>
+        <button type="button" class="btn btn-danger" id="dGo">
+          Delete my account
+        </button>
+        <p class="status" id="dStatus"></p>
+      </section>
+    </main>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+
+      async function load() {
+        const r = await fetch("/api/account/profile");
+        if (!r.ok) { window.location = "/app"; return; }
+        const d = await r.json();
+        $("whoami").textContent =
+          d.email + " · " + (d.plan === "pro" ? "Pro" : "Free") + " plan";
+        $("pName").value = d.name || "";
+        $("pAge").value = d.age == null ? "" : d.age;
+        $("dEmail").placeholder = d.email;
+
+        $("vBadge").textContent = d.email_verified ? "verified" : "not verified";
+        $("vControls").hidden = !!d.email_verified;
+
+        // A Google account has no password, so the form would only ever
+        // be refused by the route behind it.
+        $("pwCard").hidden = !d.has_password;
+      }
+
+      $("pSave").addEventListener("click", async () => {
+        $("pStatus").textContent = "Saving…";
+        const r = await fetch("/api/account/profile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: $("pName").value, age: $("pAge").value }),
+        });
+        const d = await r.json();
+        $("pStatus").textContent = r.ok ? "Saved." : d.error || "Could not save.";
+      });
+
+      $("vSend").addEventListener("click", async () => {
+        $("vStatus").textContent = "Sending…";
+        const r = await fetch("/api/auth/verify/send", { method: "POST" });
+        const d = await r.json();
+        $("vStatus").textContent = r.ok
+          ? d.detail || "Code sent."
+          : d.error || "Could not send.";
+        if (r.ok) { $("vAfter").hidden = false; $("vCode").focus(); }
+      });
+
+      $("vConfirm").addEventListener("click", async () => {
+        $("vStatus").textContent = "Checking…";
+        const r = await fetch("/api/auth/verify/confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: $("vCode").value.trim() }),
+        });
+        const d = await r.json();
+        if (!r.ok) { $("vStatus").textContent = d.error || "Not right."; return; }
+        $("vStatus").textContent = "Verified.";
+        $("vBadge").textContent = "verified";
+        $("vControls").hidden = true;
+      });
+
+      $("cpSave").addEventListener("click", async () => {
+        $("cpStatus").textContent = "Saving…";
+        const r = await fetch("/api/account/password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            current: $("cpCurrent").value,
+            new: $("cpNew").value,
+          }),
+        });
+        const d = await r.json();
+        $("cpStatus").textContent = r.ok
+          ? "Password updated."
+          : d.error || "Could not update.";
+        if (r.ok) { $("cpCurrent").value = ""; $("cpNew").value = ""; }
+      });
+
+      $("dGo").addEventListener("click", async () => {
+        if (!window.confirm(
+          "Delete your account and everything in it? This cannot be undone."
+        )) return;
+        $("dStatus").textContent = "Deleting…";
+        const r = await fetch("/api/account/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirm_email: $("dEmail").value.trim() }),
+        });
+        const d = await r.json();
+        if (!r.ok) { $("dStatus").textContent = d.error || "Could not delete."; return; }
+        window.location = "/app";
+      });
+
+      load();
+    </script>
+  </body>
+</html>

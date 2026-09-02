@@ -75,3 +75,48 @@ def send_verification_code(to_email, code, ttl_minutes=15):
         print(f"[mailer] SMTP send failed, falling back to console: {e}")
         print(f"[DEV] verification code for {to_email}: {code}")
         return False, f"SMTP send failed ({e}); printed to server console instead"
+
+
+def send_reset_code(to_email, code, ttl_minutes=15):
+    """The password-reset code. Same delivery, different words.
+
+    Kept separate from send_verification_code because the two mails mean
+    different things: one confirms an address, the other hands over
+    control of an account. A reset mail that arrives unrequested is the
+    one somebody needs to recognise and act on, so it says so plainly.
+    """
+    cfg = _smtp_config()
+
+    if not cfg:
+        print(
+            "\n" + "==================================================" + "\n"
+            "  [DEV] No SMTP configured - PASSWORD RESET code for\n"
+            "  %s:\n\n"
+            "      %s\n\n"
+            "  Set SMTP_HOST/SMTP_USER/SMTP_PASS in .env to send this\n"
+            "  for real instead. See mailer.py.\n"
+            "==================================================\n" % (to_email, code))
+        return False, "printed to server console (no SMTP configured)"
+
+    msg = EmailMessage()
+    msg["Subject"] = "Reset your RandomGenerals AI password"
+    msg["From"] = cfg["from_addr"]
+    msg["To"] = to_email
+    msg.set_content(
+        "Someone asked to reset the password for this account.\n\n"
+        "Your reset code is: %s\n\n"
+        "It expires in %d minutes and can only be used once.\n\n"
+        "If this was not you, you can ignore this email. Your password "
+        "has not changed, and nobody can change it without this code."
+        % (code, ttl_minutes))
+
+    try:
+        with smtplib.SMTP(cfg["host"], cfg["port"], timeout=10) as server:
+            server.starttls()
+            server.login(cfg["user"], cfg["password"])
+            server.send_message(msg)
+        return True, "sent to %s" % to_email
+    except (smtplib.SMTPException, OSError) as e:
+        print("[mailer] reset send failed, falling back to console: %s" % e)
+        print("[DEV] reset code for %s: %s" % (to_email, code))
+        return False, "SMTP send failed (%s); printed to the console" % e

@@ -1947,8 +1947,24 @@ const localAuthPassword = document.getElementById("localAuthPassword");
 const localAuthSubmit = document.getElementById("localAuthSubmit");
 const localAuthError = document.getElementById("localAuthError");
 const localAuthSwitch = document.getElementById("localAuthSwitch");
+const localAuthName = document.getElementById("localAuthName");
+const localAuthAge = document.getElementById("localAuthAge");
+const forgotSwitch = document.getElementById("forgotSwitch");
+const resetForm = document.getElementById("resetForm");
 
 let localAuthMode = "signup";
+
+/* Name and age are asked for once, at signup. In login mode they are
+   hidden rather than disabled, because a login form that asks your age
+   looks like it is about to create a second account. */
+function syncAuthFields() {
+  const signingUp = localAuthMode === "signup";
+  localAuthName.hidden = !signingUp;
+  localAuthAge.hidden = !signingUp;
+  localAuthName.required = signingUp;
+  localAuthAge.required = signingUp;
+}
+syncAuthFields();
 
 localAuthSwitch.addEventListener("click", () => {
   localAuthMode = localAuthMode === "signup" ? "login" : "signup";
@@ -1963,7 +1979,98 @@ localAuthSwitch.addEventListener("click", () => {
   localAuthPassword.autocomplete = signingUp
     ? "new-password"
     : "current-password";
+  syncAuthFields();
   setError(localAuthError, "");
+});
+
+/* ----------------------------------------------------------------
+   Forgotten password
+
+   A separate little form. The one above already carries two modes and a
+   third would make every label conditional on something.
+   ---------------------------------------------------------------- */
+function showReset(on) {
+  resetForm.hidden = !on;
+  localAuthForm.hidden = on;
+  setError(document.getElementById("resetError"), "");
+}
+
+forgotSwitch.addEventListener("click", () => {
+  document.getElementById("resetEmail").value = localAuthEmail.value.trim();
+  showReset(true);
+});
+document.getElementById("resetBack").addEventListener("click", () =>
+  showReset(false),
+);
+
+document.getElementById("resetSend").addEventListener("click", async () => {
+  const err = document.getElementById("resetError");
+  setError(err, "");
+  const btn = document.getElementById("resetSend");
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/auth/reset/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: document.getElementById("resetEmail").value.trim(),
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(err, data.error || "Could not send a code.");
+      return;
+    }
+    // The server answers the same way whether or not an account exists,
+    // so this message must not imply one does.
+    document.getElementById("resetIntro").textContent =
+      data.detail || "If there is an account for that address, a code is on its way.";
+    document.getElementById("resetStep2").hidden = false;
+    document.getElementById("resetCode").focus();
+  } catch (e) {
+    setError(err, "Could not reach the server.");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("resetConfirm").addEventListener("click", async () => {
+  const err = document.getElementById("resetError");
+  setError(err, "");
+  const btn = document.getElementById("resetConfirm");
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/auth/reset/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: document.getElementById("resetEmail").value.trim(),
+        code: document.getElementById("resetCode").value.trim(),
+        new: document.getElementById("resetNew").value,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(err, data.error || "That did not work.");
+      return;
+    }
+    // Deliberately not signed in - the server does not open a session on
+    // a reset, so send them to the login form to use the new password.
+    showReset(false);
+    localAuthMode = "login";
+    localAuthSubmit.textContent = "Log in";
+    syncAuthFields();
+    localAuthPassword.value = "";
+    setError(localAuthError, "");
+    document.getElementById("resetIntro").textContent =
+      "Enter your email and we will send you a code.";
+    document.getElementById("resetStep2").hidden = true;
+    alert("Password changed. Log in with your new password.");
+  } catch (e) {
+    setError(err, "Could not reach the server.");
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 localAuthForm.addEventListener("submit", async (e) => {
@@ -1977,6 +2084,9 @@ localAuthForm.addEventListener("submit", async (e) => {
       body: JSON.stringify({
         email: localAuthEmail.value.trim(),
         password: localAuthPassword.value,
+        // Ignored by /api/auth/login; required by /api/auth/signup.
+        name: localAuthName.value.trim(),
+        age: localAuthAge.value.trim(),
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -3439,6 +3549,8 @@ function renderAccountControls(user) {
 
   const signedIn = !!(user && user.email);
   manage.hidden = !signedIn;
+  const link = document.getElementById("profileLinkRow");
+  if (link) link.hidden = !signedIn;
   if (danger) danger.hidden = !signedIn;
   if (dangerDivider) dangerDivider.hidden = !signedIn;
 

@@ -62,7 +62,14 @@ CREATE TABLE IF NOT EXISTS users (
     stripe_subscription_id TEXT,
     subscription_status    TEXT,
     current_period_end     TEXT,
-    cancel_at_period_end   INTEGER NOT NULL DEFAULT 0
+    cancel_at_period_end   INTEGER NOT NULL DEFAULT 0,
+    -- Who the account belongs to. Collected at signup and editable on
+    -- the profile page.
+    name TEXT NOT NULL DEFAULT '',
+    -- Stored as the birth year rather than an age, because an age is
+    -- wrong within twelve months of being written and nothing ever
+    -- updates it. The current age is derived when needed.
+    birth_year INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS credits (
@@ -71,6 +78,26 @@ CREATE TABLE IF NOT EXISTS credits (
     starting     INTEGER NOT NULL,
     plan         TEXT NOT NULL DEFAULT 'free',
     last_refill  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS password_resets (
+    -- SEPARATE FROM verification_codes, DELIBERATELY.
+    --
+    -- That table is keyed by email alone, so sharing it would mean a
+    -- code mailed to prove "this address is mine" could be replayed to
+    -- set a new password - two very different levels of authority behind
+    -- one six-digit number. It would also mean requesting one silently
+    -- cancelled a pending other.
+    email      TEXT PRIMARY KEY,
+    code       TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    -- Guessing budget. Six digits is a million combinations, which is a
+    -- lot for a person and nothing for a script, so the code dies after
+    -- a handful of wrong tries rather than waiting out its clock.
+    attempts   INTEGER NOT NULL DEFAULT 0,
+    -- When the last code was sent, so a request cannot be repeated
+    -- endlessly to flood somebody's inbox.
+    sent_at    TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS verification_codes (
@@ -177,6 +204,9 @@ def _migrate_columns(conn):
         ("subscription_status", "TEXT"),
         ("current_period_end", "TEXT"),
         ("cancel_at_period_end", "INTEGER NOT NULL DEFAULT 0"),
+        ("name", "TEXT NOT NULL DEFAULT ''"),
+        ("birth_year", "INTEGER"),
+        ("email_verified", "INTEGER NOT NULL DEFAULT 0"),
     ):
         if col not in user_cols:
             conn.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
@@ -345,7 +375,8 @@ def load_users():
         "SELECT u.id, u.email, u.password_hash, u.google_id, u.plan, "
         "       u.created, u.stripe_customer_id, u.stripe_subscription_id, "
         "       u.subscription_status, u.current_period_end, "
-        "       u.cancel_at_period_end, "
+        "       u.cancel_at_period_end, u.name, u.birth_year, "
+        "       u.email_verified, "
         "       c.balance, c.starting, c.plan AS credit_plan, c.last_refill "
         "FROM users u LEFT JOIN credits c ON c.owner_id = u.id"
     ).fetchall()
@@ -362,6 +393,9 @@ def load_users():
             "subscription_status": r["subscription_status"],
             "current_period_end": r["current_period_end"],
             "cancel_at_period_end": bool(r["cancel_at_period_end"]),
+            "name": r["name"] or "",
+            "birth_year": r["birth_year"],
+            "email_verified": bool(r["email_verified"]),
             "credits": {
                 "balance": r["balance"],
                 "starting": r["starting"],
@@ -384,17 +418,26 @@ def save_users(users):
         conn.execute("DELETE FROM credits WHERE owner_id NOT LIKE 'guest:%' "
                      "AND owner_id != ?", (_GUEST_OWNER,))
         for uid, u in users.items():
+            # email_verified WAS MISSING HERE, and this function
+            # deletes every row before reinserting it - so verifying an
+            # address set the flag in memory and the next save threw it
+            # away. Anything added to the users table has to be listed
+            # in three places: the schema, this INSERT, and the SELECT in
+            # load_users(). Miss one and the column silently does
+            # nothing.
             conn.execute(
                 "INSERT INTO users (id, email, password_hash, google_id, "
                 "plan, created, stripe_customer_id, stripe_subscription_id, "
                 "subscription_status, current_period_end, "
-                "cancel_at_period_end) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "cancel_at_period_end, name, birth_year, email_verified) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (uid, u["email"], u.get("password_hash", ""),
                  u.get("google_id"), u["plan"], u["created"],
                  u.get("stripe_customer_id"), u.get("stripe_subscription_id"),
                  u.get("subscription_status"), u.get("current_period_end"),
-                 1 if u.get("cancel_at_period_end") else 0),
+                 1 if u.get("cancel_at_period_end") else 0,
+                 u.get("name") or "", u.get("birth_year"),
+                 1 if u.get("email_verified") else 0),
             )
             c = u["credits"]
             conn.execute(
@@ -520,6 +563,40 @@ def delete_connector(owner_id, connector_id):
             "DELETE FROM connectors WHERE id = ? AND owner_id = ?",
             (connector_id, owner_id))
     return (cur.rowcount or 0) > 0
+
+
+def save_password_reset(email, code, expires_at, sent_at):
+    conn = _connect()
+    with conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO password_resets "
+            "(email, code, expires_at, attempts, sent_at) "
+            "VALUES (?, ?, ?, 0, ?)",
+            (email, code, expires_at, sent_at))
+
+
+def get_password_reset(email):
+    conn = _connect()
+    return conn.execute(
+        "SELECT email, code, expires_at, attempts, sent_at "
+        "FROM password_resets WHERE email = ?", (email,)).fetchone()
+
+
+def bump_password_reset_attempts(email):
+    """-> the new attempt count, after this one."""
+    conn = _connect()
+    with conn:
+        conn.execute(
+            "UPDATE password_resets SET attempts = attempts + 1 "
+            "WHERE email = ?", (email,))
+    row = get_password_reset(email)
+    return int(row["attempts"]) if row else 0
+
+
+def delete_password_reset(email):
+    conn = _connect()
+    with conn:
+        conn.execute("DELETE FROM password_resets WHERE email = ?", (email,))
 
 
 def save_verification_code(email, code, expires_at):
