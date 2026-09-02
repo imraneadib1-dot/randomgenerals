@@ -1,5 +1,6 @@
 from flask import (Flask, render_template, request, Response, jsonify,
-                   session, stream_with_context, redirect, url_for, abort)
+                   session, stream_with_context, redirect, url_for, abort,
+                   send_from_directory)
 from dotenv import load_dotenv
 import hmac
 import secrets
@@ -2714,6 +2715,38 @@ def remove_connector(connector_id):
     if not removed:
         return jsonify({"error": "No such connection."}), 404
     return jsonify({"ok": True})
+
+
+@app.route("/sw.js")
+def service_worker():
+    """Served from the ROOT, not from /static, and that is not cosmetic.
+
+    A service worker may only control URLs at or below its own path. At
+    /static/sw.js it would control /static/* and nothing else - so the app
+    at /app would never be intercepted, the install prompt would never
+    appear, and nothing would work offline. The file lives in static/ for
+    tidiness and is published here for scope.
+
+    Cache-Control is no-cache so a browser revalidates the worker itself on
+    every load. A stale worker is the one bug in this area nobody can
+    clear from their end.
+    """
+    # app.static_folder is Optional; root_path is not, and this is the
+    # same directory by construction.
+    static_dir = os.path.join(app.root_path, "static")
+    response = send_from_directory(static_dir, "sw.js")
+    response.headers["Content-Type"] = "application/javascript"
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Service-Worker-Allowed"] = "/"
+    return response
+
+
+@app.route("/manifest.webmanifest")
+def web_manifest():
+    static_dir = os.path.join(app.root_path, "static")
+    response = send_from_directory(static_dir, "manifest.webmanifest")
+    response.headers["Content-Type"] = "application/manifest+json"
+    return response
 
 
 @app.route("/api/features", methods=["GET"])

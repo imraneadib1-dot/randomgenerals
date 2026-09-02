@@ -6,6 +6,19 @@
     <title>RandomGenerals AI — your local assistant</title>
     <link rel="icon" href="{{ asset('favicon.svg') }}"
           type="image/svg+xml" />
+
+    <!-- Installable app. The manifest and the worker are both served from
+         the root: a worker under /static could only ever control /static,
+         so the app itself would never be covered by it. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#141a22" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <!-- iOS ignores the manifest's icons and reads this instead. Without
+         it an installed icon is a screenshot of the page. -->
+    <link rel="apple-touch-icon" href="/static/icons/icon-180.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="RandomGenerals" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link
       href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
@@ -124,6 +137,10 @@
           <span class="status-dot" id="statusDot"></span>
           <span id="statusText">connecting…</span>
         </span>
+        <button class="account-btn" id="installBtn" type="button" hidden>
+          <span class="account-btn-icon">&#8595;</span>
+          <span>Install app</span>
+        </button>
         <button class="account-btn" id="settingsBtn" type="button">
           <span class="account-btn-icon">⚙</span>
           <span id="settingsBtnLabel">Sign up / Settings</span>
