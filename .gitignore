@@ -67,3 +67,10 @@ static/video/renders/
 # 8MB of it in git history for something the site never requests is
 # permanent weight for no benefit.
 *.source.mp4
+
+# Capacitor: dependencies and the generated native projects.
+# ios/ and android/ are produced by `npx cap add` and are large;
+# they are regenerated from capacitor.config.json rather than kept.
+mobile/node_modules/
+mobile/ios/
+mobile/android/

@@ -19,6 +19,7 @@ off. A single icon used for both either floats too small on iOS or loses
 its outer ring on Android.
 """
 import os
+import sys
 
 from PIL import Image, ImageDraw
 
@@ -68,7 +69,46 @@ def draw_icon(size, inset_fraction, radius_fraction):
     return img.resize((size, size), Image.LANCZOS)
 
 
+IOS_DIR = os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), "mobile", "ios-icons")
+
+
+def make_ios():
+    """The App Store icon set.
+
+    1024 is the one Xcode actually requires now - a single source image
+    it downsamples from. The rest are emitted anyway because older
+    project templates still expect a filled asset catalogue, and a
+    missing size is a build error rather than a warning.
+
+    NO TRANSPARENCY and NO ROUNDED CORNERS: App Store Connect rejects an
+    icon with an alpha channel, and iOS applies its own corner radius -
+    supplying one produces a visibly double-rounded icon.
+    """
+    os.makedirs(IOS_DIR, exist_ok=True)
+    made = []
+    for size in (1024, 180, 167, 152, 120, 87, 80, 76, 60, 58, 40, 29, 20):
+        img = draw_icon(size, inset_fraction=0.10, radius_fraction=0.0)
+        # Flatten onto the ground: an alpha channel is an automatic
+        # rejection from App Store Connect.
+        flat = Image.new("RGB", (size, size), GROUND[:3])
+        flat.paste(img, (0, 0), img)
+        path = os.path.join(IOS_DIR, "AppIcon-%d.png" % size)
+        flat.save(path)
+        made.append(path)
+    return made
+
+
 def main():
+    if "--ios" in sys.argv:
+        paths = make_ios()
+        for path in paths:
+            print("  %-38s %d bytes" % (os.path.relpath(path),
+                                        os.path.getsize(path)))
+        print("%d iOS icons written to %s"
+              % (len(paths), os.path.relpath(IOS_DIR)))
+        return
+
     os.makedirs(OUT_DIR, exist_ok=True)
     made = []
 

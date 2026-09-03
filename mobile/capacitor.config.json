@@ -1,0 +1,34 @@
+{
+  "appId": "com.randomgenerals.ai",
+  "appName": "RandomGenerals AI",
+  "webDir": "www",
+  "server": {
+    "url": "https://randomgenerals.com/app",
+    "cleartext": false,
+    "errorPath": "offline.html",
+    "allowNavigation": ["randomgenerals.com", "*.randomgenerals.com"]
+  },
+  "ios": {
+    "contentInset": "always",
+    "limitsNavigationsToAppBoundDomains": false,
+    "backgroundColor": "#141a22",
+    "scrollEnabled": true
+  },
+  "android": {
+    "backgroundColor": "#141a22",
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 900,
+      "backgroundColor": "#141a22",
+      "showSpinner": false,
+      "androidScaleType": "CENTER_CROP"
+    },
+    "Keyboard": {
+      "resize": "native",
+      "style": "dark",
+      "resizeOnFullScreen": true
+    }
+  }
+}
