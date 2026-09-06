@@ -68,25 +68,15 @@ def main():
 
     print("Connecting to %s:%s ..." % (host, port))
     try:
+        # The connection is opened here purely to get a specific error
+        # out of it. smtplib's auth failures name the actual reason;
+        # mailer._send catches them and falls back to the console, which
+        # is right in production and useless when diagnosing.
         with smtplib.SMTP(host, int(port), timeout=15) as server:
             server.starttls()
             print("  TLS ok")
             server.login(user, password)
             print("  signed in as %s" % user)
-            from email.message import EmailMessage
-            msg = EmailMessage()
-            msg["Subject"] = "RandomGenerals AI - mail is working"
-            msg["From"] = sender
-            msg["To"] = to
-            msg.set_content(
-                "If you are reading this, verification codes and password "
-                "reset codes will reach people.\n\n"
-                "Sent by check_mail.py.")
-            server.send_message(msg)
-        print("  sent to %s" % to)
-        print("")
-        print("Mail is working. Check that inbox (and its spam folder).")
-        return 0
     except smtplib.SMTPAuthenticationError as e:
         print("  REJECTED THE LOGIN: %s" % e)
         print("")
@@ -102,6 +92,30 @@ def main():
         print("A timeout here is usually the host or port being wrong, or")
         print("outbound port %s being blocked on this machine." % port)
         return 1
+
+    # Now send the real thing. A hand-written test message would prove
+    # the SMTP account works and nothing about the email people actually
+    # receive - a broken template renders as a blank message and this
+    # would still have printed "mail is working".
+    try:
+        import mailer
+    except ImportError as e:
+        print("  could not import mailer.py: %s" % e)
+        return 1
+
+    print("")
+    print("Sending the real verification email (code 000000) ...")
+    sent, detail = mailer.send_verification_code(
+        to, "000000", 15, name=os.environ.get("ADMIN_NAME", ""))
+    if not sent:
+        print("  NOT SENT: %s" % detail)
+        return 1
+    print("  %s" % detail)
+    print("")
+    print("Mail is working, and that is the exact message a new signup")
+    print("gets. Check the inbox - and the spam folder, since a first")
+    print("message from a new sender often lands there.")
+    return 0
 
 
 if __name__ == "__main__":
