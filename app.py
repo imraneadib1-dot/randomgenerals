@@ -562,14 +562,26 @@ STRENGTH_LEVELS = {
         # each time and occasionally a wrong one, on questions that have
         # exactly one right answer. 0.2 matches what the code bay
         # already uses.
-        "options": {"num_predict": 1400, "temperature": 0.2,
+        # 1400 was too low, and it is the DEFAULT mode - so the ceiling
+        # most replies were written against was one most long answers
+        # could reach. A truncated reply was then indistinguishable from
+        # a finished one, because nothing read finish_reason; that is
+        # fixed in groq_api.stream_chat, but the better fix is not
+        # hitting the ceiling in the first place.
+        #
+        # Raising it costs nothing on a short answer - max_tokens is a
+        # ceiling, not a target, and a two-line reply still spends two
+        # lines. It only changes what happens to the long ones.
+        "options": {"num_predict": 2600, "temperature": 0.2,
                     "top_p": 0.9},
         "nudge": "Keep the answer brief and to the point - but never "
                  "stop mid-working on a calculation. If it needs steps, "
                  "take them.",
     },
     "deep": {
-        "options": {"num_predict": 2048, "temperature": 0.15},
+        # Deep is chosen when someone wants the thorough version, and
+        # 2048 was barely above quick's old ceiling.
+        "options": {"num_predict": 4096, "temperature": 0.15},
         "nudge": "Work through this thoroughly - consider multiple "
                  "angles, check your own reasoning for mistakes, use any "
                  "search results provided - then give a complete, "
@@ -1402,14 +1414,27 @@ def terms_page():
         {"heading": "Acceptable use", "body": [
             "Do not use the service to:",
             ["break the law, or help anyone else to",
-             "generate sexual content involving minors, or content that "
-             "sexualises real people without consent",
+             # Broadened from "involving minors, or real people without
+             # consent" to all sexually explicit generation. The narrow
+             # version left ordinary pornography permitted by omission,
+             # which is both not what this service is for and the
+             # opposite of what a payment processor reviewing an AI
+             # product needs the terms to say.
+             "generate sexually explicit or pornographic material of any "
+             "kind, including sexual roleplay or companion "
+             "conversations. Sexual content involving a minor, or "
+             "sexual imagery of a real identifiable person, is "
+             "absolutely prohibited",
+             "swap faces, produce deepfakes, or otherwise manipulate the "
+             "likeness of a real person",
              "harass, threaten or defame anyone",
              "produce malware, or material intended to attack systems you "
              "do not own",
              "impersonate a real person or organisation",
              "resell access, or run automated traffic through the service "
              "beyond ordinary personal use"],
+            "The full rules, including how they are enforced, are on the "
+            "<a href=\"/acceptable-use\">Acceptable Use Policy</a>.",
             "We may suspend an account that does these things, without "
             "refunding time already used.",
         ]},
@@ -1564,6 +1589,94 @@ def privacy_page():
     ])
 
 
+@app.route("/acceptable-use")
+def acceptable_use_page():
+    """The rules for what may be generated here, as its own page.
+
+    These rules already existed inside /terms. They are repeated here as
+    a standalone document because payment processors reviewing an AI
+    product look for a named Acceptable Use Policy and do not go hunting
+    through a terms page for a section - Paddle declined this site over
+    product category, and the next processor's published checklist asks
+    for this document by name.
+
+    It also states plainly that this is an interface over third-party
+    models rather than a model of its own, which is the other thing
+    those reviews ask for.
+    """
+    return _legal("acceptable-use", "Acceptable Use Policy", [
+        {"heading": "The short version", "body": [
+            "This is a general-purpose assistant for work, study and "
+            "building things. It is not an adult service, not a "
+            "companion or roleplay service, and not a tool for making "
+            "images of real people.",
+        ]},
+        {"heading": "What this product is", "body": [
+            "RandomGenerals AI is an independent interface built on top "
+            "of third-party AI models. We do not train or own the "
+            "underlying models. Where a model's name is shown in the "
+            "app, it is there so you know which one answered - it is "
+            "not a claim of affiliation with, endorsement by, or "
+            "partnership with whoever makes that model.",
+            "Chat and code replies come from open-weight models served "
+            "by third parties or run on our own server. Image "
+            "generation is served by a third-party model. Which one "
+            "answered is labelled on every reply.",
+        ]},
+        {"heading": "Sexual content is not permitted", "body": [
+            "You may not use this service to generate, request or store "
+            "sexually explicit or pornographic material of any kind.",
+            ["This includes explicit sexual imagery, written "
+             "pornography, and sexual roleplay or companion "
+             "conversations.",
+             "It includes any sexual content involving a minor, or "
+             "anyone depicted as a minor. There is no context in which "
+             "this is acceptable, and we report it.",
+             "It includes sexual or intimate imagery of a real, "
+             "identifiable person, whether or not they are famous, and "
+             "whether or not you say it is fictional."],
+            "The service is filtered to refuse this material. Attempting "
+            "to defeat that filter is itself a breach of these rules.",
+        ]},
+        {"heading": "Real people and likenesses", "body": [
+            "You may not use this service to swap faces, produce "
+            "deepfakes, or manipulate the face or body of a real person. "
+            "You may not generate images intended to pass as genuine "
+            "photographs of a real, identifiable person.",
+            "You may not impersonate a real person or organisation, or "
+            "produce material presented as coming from them.",
+        ]},
+        {"heading": "Other things you may not do", "body": [
+            ["Break the law, or help anyone else to.",
+             "Harass, threaten, bully or defame anyone.",
+             "Produce material designed to attack, break into or "
+             "disrupt systems you do not own.",
+             "Produce malware, ransomware, or tools whose purpose is to "
+             "cause damage.",
+             "Generate content promoting self-harm, suicide, eating "
+             "disorders, or violence against a person or group.",
+             "Produce deliberate disinformation, or content designed to "
+             "manipulate an election.",
+             "Sell or give away access to your account, or resell "
+             "output as though it were a service of your own.",
+             "Run automated traffic through the service beyond ordinary "
+             "personal use."],
+        ]},
+        {"heading": "How this is enforced", "body": [
+            "Prompts are filtered before they reach a model, and "
+            "generated images are checked before they are shown. "
+            "Accounts used for anything on this page can be suspended "
+            "without a refund of time already used, and material "
+            "involving the sexual abuse of children is reported to the "
+            "appropriate authorities.",
+            "If you think something was blocked wrongly, or you want to "
+            "report misuse, email "
+            "<a href=\"mailto:%s\">%s</a>." % (SUPPORT_EMAIL,
+                                               SUPPORT_EMAIL),
+        ]},
+    ])
+
+
 @app.route("/refunds")
 def refunds_page():
     return _legal("refunds", "Refund & Cancellation Policy", [
@@ -1651,6 +1764,7 @@ def robots_txt():
         "Allow: /terms\n"
         "Allow: /privacy\n"
         "Allow: /refunds\n"
+        "Allow: /acceptable-use\n"
         "Allow: /contact\n"
         "Disallow: /app\n"
         "Disallow: /api/\n"
@@ -1672,6 +1786,7 @@ def sitemap_xml():
         ("terms", "yearly", "0.3"),
         ("privacy", "yearly", "0.3"),
         ("refunds", "yearly", "0.3"),
+        ("acceptable-use", "yearly", "0.3"),
         ("contact", "yearly", "0.4"),
     ]
     entries = "".join(
@@ -4890,7 +5005,7 @@ def diagram_route():
     opts = {"num_predict": 900, "temperature": 0.2, "num_ctx": 8192}
     try:
         text = "".join(streamer(model, history, options=opts))
-    except groq_api.RateLimited:
+    except groq_api.ProviderUnavailable:
         # Same failover the chat bay uses: a drained per-minute budget
         # should degrade to the local model, not surface as an error.
         local = _local_alternative("code")
@@ -5147,7 +5262,7 @@ def _run_tool_loop(model, history, specs, provider="groq",
             msg, err = turn(
                 model, convo, tools=specs,
                 options={"num_predict": 900, "temperature": 0.2})
-        except groq_api.RateLimited:
+        except groq_api.ProviderUnavailable:
             # The budget can drain between _groq_has_room() and this call,
             # and the loop's own turns are what drain it. chat_once raises
             # rather than returning an error, so without this the whole
@@ -5408,11 +5523,14 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                 for piece in streamer(model, history, **stream_kwargs):
                     full_reply += piece
                     yield piece
-            except groq_api.RateLimited:
-                # Safe to retry: RateLimited is raised before the first
+            except groq_api.ProviderUnavailable:
+                # Safe to retry: this is raised only before the first
                 # chunk, so nothing has reached the browser yet and the
                 # same conversation can be answered locally without the
-                # reader seeing a seam.
+                # reader seeing a seam. Covers both a drained per-minute
+                # budget and an unreachable host - a failure after the
+                # first token is yielded as a sentence instead, because
+                # by then there is nowhere to fail over to.
                 local = _local_alternative(mode)
                 if not local:
                     full_reply = ("[The fast channel is at its per-minute "

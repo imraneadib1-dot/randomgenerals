@@ -224,13 +224,28 @@ def budget_state():
     return _budget["remaining"], left
 
 
-class RateLimited(Exception):
-    """Groq's per-minute token budget is spent.
+class ProviderUnavailable(Exception):
+    """This channel cannot answer, and nothing has been streamed yet.
 
-    Raised rather than yielded, and always before the first chunk, so a
-    caller can still switch providers - once any text has been streamed
-    to the browser it is too late to answer from somewhere else.
+    The contract every subclass keeps: RAISED ONLY BEFORE THE FIRST
+    CHUNK. That is what makes it recoverable - the caller can answer the
+    same conversation from somewhere else and the reader never sees a
+    seam. Once any text has reached the browser it is too late to switch
+    providers, so a failure after that point is yielded as a sentence
+    instead, never raised.
+
+    Catch this rather than the subclasses: a drained budget and an
+    unreachable host both mean "ask someone else", and the three call
+    sites in app.py do the same thing for both.
     """
+
+
+class RateLimited(ProviderUnavailable):
+    """Groq's per-minute token budget is spent."""
+
+
+class Unreachable(ProviderUnavailable):
+    """Groq could not be reached at all - DNS, TLS, timeout, reset."""
 
 
 # What to ask for when the caller says nothing. "low" rather than the
@@ -488,6 +503,13 @@ def stream_chat(model, history, options=None, images=None, usage=None):
         if effort in VALID_EFFORTS:
             body["reasoning_effort"] = effort
 
+    # Whether any content has reached the caller yet. It decides what a
+    # failure is allowed to do: before the first token the whole request
+    # can still be retried on another provider, and after it the reply
+    # is already on somebody's screen and the only honest option is to
+    # say what happened at the end of it.
+    sent_any = False
+
     try:
         with requests.post(API_ROOT + "/chat/completions", json=body,
                            headers=_headers(), stream=True,
@@ -513,6 +535,13 @@ def stream_chat(model, history, options=None, images=None, usage=None):
                 yield "[Groq error %d. %s]" % (r.status_code, detail)
                 return
 
+            # Why the model stopped. "stop" is a finished answer;
+            # "length" means it ran into max_tokens with more to say.
+            # This was read by nobody, and the difference is the whole
+            # bug: a truncated reply arrived looking exactly like a
+            # complete one that happened to end mid-sentence.
+            finish = None
+
             for raw in r.iter_lines():
                 if not raw:
                     continue
@@ -521,7 +550,7 @@ def stream_chat(model, history, options=None, images=None, usage=None):
                     continue
                 data = line[6:].strip()
                 if data == "[DONE]":
-                    return
+                    break
                 try:
                     chunk = json.loads(data)
                 except json.JSONDecodeError:
@@ -530,15 +559,36 @@ def stream_chat(model, history, options=None, images=None, usage=None):
                 if choices:
                     piece = (choices[0].get("delta") or {}).get("content")
                     if piece:
+                        sent_any = True
                         yield piece
+                    if choices[0].get("finish_reason"):
+                        finish = choices[0]["finish_reason"]
                 # Usage arrives on the final chunk. Reported under the
                 # name the credit accounting already reads, so metering
                 # works the same for every provider.
                 spent = chunk.get("x_groq", {}).get("usage") or chunk.get("usage")
                 if spent and usage is not None:
                     usage["eval_count"] = spent.get("completion_tokens")
+
+            if usage is not None and finish:
+                usage["finish_reason"] = finish
+            if finish == "length":
+                # Said in the reply itself rather than logged, because
+                # the person reading it is the one who needs to know the
+                # answer is unfinished - and told what to do about it,
+                # since "continue" genuinely works from here.
+                yield ("\n\n_…that hit the length limit for one reply. "
+                       "Say **continue** and I'll pick up where I left "
+                       "off._")
     except requests.exceptions.RequestException as e:
-        yield "[Could not reach Groq: %s]" % e
+        if not sent_any:
+            # Nothing has been streamed, so this can still be raised and
+            # answered by another provider instead of becoming an error
+            # message the person has to read.
+            raise Unreachable(str(e))
+        yield ("\n\n_…the connection to the model dropped part-way "
+               "through. The answer above is incomplete — ask again to "
+               "get the rest._")
 
 
 def _supports_effort(model):

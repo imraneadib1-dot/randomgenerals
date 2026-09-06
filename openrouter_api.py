@@ -355,24 +355,53 @@ def stream_chat(model, history, options=None, images=None, usage=None):
         yield "[OpenRouter error %d.]" % r.status_code
         return
 
-    for raw in r.iter_lines(decode_unicode=True):
-        if not raw or not raw.startswith("data: "):
-            continue
-        chunk = raw[6:].strip()
-        if chunk == "[DONE]":
-            break
-        try:
-            data = json.loads(chunk)
-        except ValueError:
-            continue
-        try:
-            delta = data["choices"][0].get("delta") or {}
-        except (KeyError, IndexError):
-            continue
-        piece = delta.get("content")
-        if piece:
-            yield piece
-        if data.get("usage"):
-            note_cost(data["usage"])
-            if usage is not None:
-                usage.update(data["usage"])
+    # Why the model stopped. Read for the same reason as on the Groq
+    # channel: "length" means it ran out of budget mid-answer, and
+    # without checking it a truncated reply is indistinguishable from a
+    # complete one that ended awkwardly.
+    finish = None
+    sent_any = False
+
+    try:
+        for raw in r.iter_lines(decode_unicode=True):
+            if not raw or not raw.startswith("data: "):
+                continue
+            chunk = raw[6:].strip()
+            if chunk == "[DONE]":
+                break
+            try:
+                data = json.loads(chunk)
+            except ValueError:
+                continue
+            try:
+                choice = data["choices"][0]
+            except (KeyError, IndexError):
+                choice = None
+            if choice is not None:
+                piece = (choice.get("delta") or {}).get("content")
+                if piece:
+                    sent_any = True
+                    yield piece
+                if choice.get("finish_reason"):
+                    finish = choice["finish_reason"]
+            if data.get("usage"):
+                note_cost(data["usage"])
+                if usage is not None:
+                    usage.update(data["usage"])
+    except requests.exceptions.RequestException as e:
+        # Mid-stream. Text is already on screen, so this is said at the
+        # end of it rather than raised - there is nowhere to fail over
+        # to once the reader has started reading.
+        if not sent_any:
+            yield "[Could not reach OpenRouter: %s]" % e
+            return
+        yield ("\n\n_…the connection to the model dropped part-way "
+               "through. The answer above is incomplete — ask again to "
+               "get the rest._")
+        return
+
+    if usage is not None and finish:
+        usage["finish_reason"] = finish
+    if finish == "length":
+        yield ("\n\n_…that hit the length limit for one reply. Say "
+               "**continue** and I'll pick up where I left off._")
