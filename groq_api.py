@@ -607,9 +607,32 @@ def effort_for(mode, strength):
     Kept here rather than in app.py because the trade-off it encodes is a
     property of this provider - it is the only one that charges thinking
     against a shared per-minute budget.
+
+    CHAT WAS "low" AND THAT WAS COSTING CORRECT ANSWERS.
+
+    Measured against gpt-oss-120b, five reasoning questions, three runs
+    each, at temperature 0.2:
+
+        low     12/15   2275 tokens
+        medium  15/15   3222 tokens
+
+    The three failures were all the same question - the classic bat and
+    ball, $1.10 total with the bat $1.00 dearer - and low answered 55
+    every single time. Not a wobble: it halves the total instead of
+    solving the equation, and does it reproducibly. Medium answered 5
+    three times out of three.
+
+    42% more tokens for that is worth paying. The per-minute budget is
+    8,000 tokens shared across everyone, so this does tighten things
+    under load - but a rate limit degrades to the local model through a
+    path that already exists and is tested, whereas a confidently wrong
+    answer degrades to nothing at all.
     """
-    if mode == "code":
-        # Code has a right answer, and a wrong one costs a debugging
-        # session rather than a re-read. Worth the tokens.
-        return "high" if strength == "deep" else "medium"
-    return "medium" if strength == "deep" else "low"
+    # `mode` no longer changes the answer. Code was already medium/high
+    # because a wrong answer there costs a debugging session; chat has
+    # now been measured into the same place, for the reason above. The
+    # argument is kept because the two bays are separate decisions that
+    # happen to agree today, and a future measurement could separate
+    # them again without changing every call site.
+    del mode
+    return "high" if strength == "deep" else "medium"
