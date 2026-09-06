@@ -327,6 +327,81 @@ def verify_webhook(raw_body, signature_header):
 ACTIVE_STATUSES = {"active", "trialing", "past_due"}
 
 
+# --------------------------------------------------------------- source IPs
+#
+# Paddle publishes the addresses its webhooks come from. Checking them is
+# defence in depth BEHIND the signature, never instead of it: an address
+# can be spoofed at the packet level and a signature cannot, so the
+# signature stays the thing that actually decides.
+#
+# The list is fetched rather than hard-coded because Paddle changes it,
+# and a hard-coded copy fails silently months later - webhooks start
+# being rejected, subscriptions stop being applied, and the cause is a
+# constant nobody has looked at since.
+_IP_CACHE = {"fetched": 0.0, "cidrs": None, "env": None}
+_IP_TTL_SECONDS = 12 * 3600
+
+
+def allowed_ip_cidrs(force=False):
+    """-> [cidr] from Paddle, or None if the list could not be fetched.
+
+    None is meaningfully different from []: an empty list would mean
+    "Paddle sends from nowhere" and reject everything, where None means
+    "we do not know", which the caller must treat as "do not block".
+    """
+    import time as _time
+    env = environment()
+    fresh = (_IP_CACHE["cidrs"] is not None
+             and _IP_CACHE["env"] == env
+             and (_time.time() - _IP_CACHE["fetched"]) < _IP_TTL_SECONDS)
+    if fresh and not force:
+        return _IP_CACHE["cidrs"]
+    try:
+        r = requests.get("%s/ips" % api_base(), timeout=10,
+                         headers={"Paddle-Version": "1"})
+        r.raise_for_status()
+        cidrs = (r.json().get("data") or {}).get("ipv4_cidrs") or []
+        if not cidrs:
+            raise ValueError("no ipv4_cidrs in response")
+        _IP_CACHE.update({"fetched": _time.time(), "cidrs": cidrs,
+                          "env": env})
+        return cidrs
+    except Exception as e:                          # noqa: BLE001
+        print("[paddle] could not fetch the webhook IP list: %s" % e)
+        # Keep serving a stale list if there is one. An outage at
+        # Paddle's end must not silently widen the check.
+        return _IP_CACHE["cidrs"]
+
+
+def ip_allowed(ip):
+    """-> (allowed, reason). Unknown addresses are allowed, not blocked.
+
+    FAILS OPEN, deliberately. If the list cannot be fetched, rejecting
+    everything would stop real payments being applied - the customer is
+    charged, the webhook is refused, and nobody is upgraded. The
+    signature check is unaffected by any of this and still has to pass,
+    so failing open costs a layer, while failing closed costs money.
+    """
+    cidrs = allowed_ip_cidrs()
+    if not cidrs:
+        return True, "Paddle's IP list is unavailable; signature only"
+    if not ip:
+        return True, "no client address available"
+    try:
+        import ipaddress as _ipaddress
+        addr = _ipaddress.ip_address(ip.strip())
+    except ValueError:
+        return True, "unparseable client address %r" % ip
+    for cidr in cidrs:
+        try:
+            if addr in _ipaddress.ip_network(cidr, strict=False):
+                return True, "in %s" % cidr
+        except ValueError:
+            continue
+    return False, "%s is not one of Paddle's %d published addresses" % (
+        ip, len(cidrs))
+
+
 def _minor(value):
     """Paddle sends money as a STRING in minor units - "199" is $1.99.
 

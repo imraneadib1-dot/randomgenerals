@@ -2385,6 +2385,23 @@ def paddle_webhook():
     configured means the endpoint refuses outright rather than trusting
     the body.
     """
+    # Layer one: is this even coming from Paddle's network? Cheap, and it
+    # turns away path-guessers before any crypto runs. It is NOT the
+    # protection - an address can be spoofed and a signature cannot - so
+    # it fails open when Paddle's published list cannot be fetched, and
+    # the signature below still has to pass either way. See
+    # paddle_billing.ip_allowed for why open rather than closed.
+    #
+    # _client_ip() rather than remote_addr: gunicorn only listens on
+    # 127.0.0.1 and the Cloudflare tunnel is what carries the request in,
+    # so remote_addr is 127.0.0.1 for Paddle exactly as it is for
+    # everybody else, and matching that against the allowlist would
+    # reject every real webhook.
+    allowed, why = paddle_billing.ip_allowed(_client_ip())
+    if not allowed:
+        print("[paddle] webhook refused: %s" % why)
+        return jsonify({"error": "Not from Paddle."}), 403
+
     ok, reason = paddle_billing.verify_webhook(
         request.get_data(), request.headers.get("Paddle-Signature", ""))
     if not ok:
@@ -2625,6 +2642,18 @@ def health():
     })
 
 
+def _paddle_customer_id():
+    """The signed-in account's Paddle customer id, or "".
+
+    Written by the webhook when a subscription event arrives, so it is
+    empty for everyone who has never paid - which is the normal state,
+    not an error.
+    """
+    uid = session.get("user_id")
+    user = USERS.get(uid) if uid else None
+    return (user or {}).get("paddle_customer_id") or ""
+
+
 @app.route("/api/plans", methods=["GET"])
 def get_plans():
     return jsonify({
@@ -2636,6 +2665,15 @@ def get_plans():
         # the API key, which can read and refund, never leaves here.
         "paddle_client_token": paddle_billing.client_token(),
         "paddle_environment": paddle_billing.environment(),
+        # For Paddle Retain, which needs to know WHICH customer is
+        # looking at the page in order to show them anything.
+        #
+        # Empty until the person has paid at least once: a Paddle
+        # customer id is minted by Paddle at first checkout, not by us at
+        # signup. It must be that id - passing our own user id or an
+        # email address gives Retain nothing it can match, and it fails
+        # quietly rather than complaining.
+        "paddle_customer_id": _paddle_customer_id(),
     })
 
 

@@ -2251,7 +2251,7 @@ let billingLive = false;
 // created successfully, the browser navigates, and nothing appears.
 let paddleReady = null;
 
-function loadPaddle(token, environment) {
+function loadPaddle(token, environment, customerId) {
   if (paddleReady) return paddleReady;
   paddleReady = new Promise((resolve, reject) => {
     const s = document.createElement("script");
@@ -2259,9 +2259,20 @@ function loadPaddle(token, environment) {
     s.onload = () => {
       try {
         // Must be set before Initialize, and only for sandbox - calling
-        // it with "production" is not valid.
+        // it with "production" is not valid. Driven by what the server
+        // reports rather than hard-coded, so the same build works
+        // against either without an edit; in live the server says
+        // "production" and this line does nothing.
         if (environment === "sandbox") window.Paddle.Environment.set("sandbox");
-        window.Paddle.Initialize({ token });
+
+        // pwCustomer is what Paddle Retain uses to recognise the person
+        // looking at the page. It is omitted entirely rather than passed
+        // empty when unknown: everyone who has not paid yet has no
+        // Paddle customer id, and handing Retain a blank one is worse
+        // than handing it nothing.
+        const options = { token };
+        if (customerId) options.pwCustomer = { id: customerId };
+        window.Paddle.Initialize(options);
         resolve(window.Paddle);
       } catch (e) {
         reject(e);
@@ -2271,6 +2282,21 @@ function loadPaddle(token, environment) {
     document.head.appendChild(s);
   });
   return paddleReady;
+}
+
+// Paddle.Initialize runs once per page load, and the customer id is not
+// always known at that moment - somebody who signs in, or pays for the
+// first time, acquires one mid-session. Paddle.Update is how that gets
+// through to Retain without a reload.
+function updatePaddleCustomer(customerId) {
+  if (!customerId || !window.Paddle || !window.Paddle.Update) return;
+  if (updatePaddleCustomer.last === customerId) return;
+  updatePaddleCustomer.last = customerId;
+  try {
+    window.Paddle.Update({ pwCustomer: { id: customerId } });
+  } catch (e) {
+    console.error("Paddle.Update failed:", e);
+  }
 }
 
 async function loadPlansMeta() {
@@ -2283,9 +2309,13 @@ async function loadPlansMeta() {
       // Initialised on page load, not on click: Paddle.js opens the
       // overlay by itself when it sees ?_ptxn= in the URL, and it can
       // only do that if it is already running when the page loads.
-      loadPaddle(data.paddle_client_token, data.paddle_environment).catch(
-        (e) => console.error("Paddle failed to initialise:", e),
-      );
+      loadPaddle(
+        data.paddle_client_token,
+        data.paddle_environment,
+        data.paddle_customer_id,
+      )
+        .then(() => updatePaddleCustomer(data.paddle_customer_id))
+        .catch((e) => console.error("Paddle failed to initialise:", e));
     }
 
     if (billingLive) {
