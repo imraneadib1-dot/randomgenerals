@@ -3883,6 +3883,76 @@ BAY_ROUTES = {
 }
 
 
+# HAVING a local vision model is not the same as being able to USE one.
+#
+# Measured on the deployment VM: gemma3:4b answered "what colour is
+# this" about a 200x200 solid red square in 98 seconds, 91 of which were
+# prompt_eval - the time spent looking at the picture before writing a
+# single token. A real screenshot is bigger and blew straight through
+# the 120-second HTTP timeout, so an attached image produced a two
+# minute wait and then a ReadTimeout.
+#
+# That is worse than having no vision at all, because "I can't see
+# images on this deployment" is instant and true, while a two-minute
+# hang followed by an error looks like the site is broken.
+#
+# The number is generous. It is not "fast", it is "a person might
+# plausibly wait": image understanding is a considered request, not a
+# chat turn, so it gets more room than LOCAL_WARM_BUDGET_SECONDS.
+LOCAL_VISION_BUDGET_SECONDS = 30.0
+
+# A 1x1 PNG. Size does not matter for the measurement: gemma3 scales
+# every image to a fixed patch count, so a tiny image costs the same
+# prompt_eval as a large one, which is exactly what makes it a fair and
+# cheap probe.
+_PROBE_PNG = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42m"
+              "P8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+
+_vision_speed: dict[str, float | None] = {"seconds": None}
+
+
+def _local_vision_is_fast():
+    """Whether the local vision model is worth routing to.
+
+    UNMEASURED MEANS NO, which is the opposite of _local_is_fast() and
+    deliberately so. The two have opposite failure costs: guessing wrong
+    about chat sends one reply to a hosted model, while guessing wrong
+    about vision hangs somebody for two minutes and then errors. The
+    probe runs at boot, so on hardware that can actually do this the
+    answer is available long before anyone attaches anything.
+    """
+    seconds = _vision_speed["seconds"]
+    return seconds is not None and seconds <= LOCAL_VISION_BUDGET_SECONDS
+
+
+def _probe_vision_speed():
+    """Time the local vision model once, on a 1x1 image. Never raises."""
+    if not ollama_reachable():
+        return
+    names = ollama_provider().get("models") or []
+    for provider_id, pattern in BAY_ROUTES["vision"]:
+        if provider_id != "ollama":
+            continue
+        match = next((n for n in names if pattern in n.lower()), None)
+        if not match:
+            continue
+        try:
+            started = time.monotonic()
+            requests.post(
+                f"{OLLAMA_URL}/api/chat", headers=ollama_headers(),
+                json={"model": match, "stream": False,
+                      "keep_alive": OLLAMA_KEEP_ALIVE,
+                      "messages": [{"role": "user", "content": "colour?",
+                                    "images": [_PROBE_PNG]}],
+                      "options": {"num_predict": 1}},
+                timeout=LOCAL_VISION_BUDGET_SECONDS * 4)
+            _vision_speed["seconds"] = time.monotonic() - started
+        except (requests.exceptions.RequestException, ValueError):
+            # A timeout here IS the answer: too slow to use.
+            _vision_speed["seconds"] = float("inf")
+        return
+
+
 def _vision_route():
     """A provider/model pair that can read an image. -> (provider, model).
 
@@ -3902,6 +3972,9 @@ def _vision_route():
                 return "openrouter", match
         elif provider_id == "ollama":
             if not ollama_reachable():
+                continue
+            # Measured, not assumed. See LOCAL_VISION_BUDGET_SECONDS.
+            if not _local_vision_is_fast():
                 continue
             names = ollama_provider().get("models") or []
             match = next((n for n in names if pattern in n.lower()), None)
@@ -3944,8 +4017,19 @@ def _groq_has_room(plan):
     return groq_api.budget_ok(priority=(plan == features.PRO))
 
 
+def _boot_probes():
+    """Warm the chat model, then find out if local vision is usable.
+
+    In that order, and in one thread. The vision probe can take a minute
+    and a half on hardware that cannot do it, and running it first would
+    delay the warm-up that every ordinary request depends on.
+    """
+    _warm_providers()
+    _probe_vision_speed()
+
+
 # Safe here: BAY_ROUTES above is what this reads.
-threading.Thread(target=_warm_providers, daemon=True).start()
+threading.Thread(target=_boot_probes, daemon=True).start()
 
 
 def _recommended_routes(providers, plan=None):
