@@ -167,11 +167,66 @@ def main():
     if problems:
         print("Checkout would work, but fix the problems above first.")
         return 1
+
+    # THE ACTUAL TEST, and the reason this section exists.
+    #
+    # Everything above checks configuration, and configuration was
+    # entirely correct here while checkout was switched off at the
+    # account level - so this script printed "Ready to take real
+    # payments" about a site that could not take a payment at all.
+    #
+    # Reading settings cannot detect that. Only asking Paddle to create
+    # a transaction can, which is what the Upgrade button does. It
+    # charges nobody: a transaction becomes a payment only when a card
+    # is entered in the checkout overlay.
+    print("Asking Paddle to create a real checkout, the way the Upgrade")
+    print("button does. This charges nobody.")
+    try:
+        r = requests.post(
+            "%s/transactions" % base,
+            headers={"Authorization": "Bearer %s" % api,
+                     "Content-Type": "application/json",
+                     "Paddle-Version": "1"},
+            json={"items": [{"price_id": price, "quantity": 1}]},
+            timeout=25)
+    except Exception as e:                   # noqa: BLE001
+        print("  could not reach Paddle: %s" % e)
+        return 1
+
+    if r.status_code in (200, 201):
+        print("  created %s - checkout works." % r.json()["data"]["id"])
+    else:
+        detail = ""
+        code_name = ""
+        try:
+            err = r.json().get("error", {})
+            detail, code_name = err.get("detail", ""), err.get("code", "")
+        except ValueError:
+            detail = r.text[:200]
+        print("  REFUSED (%s): %s" % (code_name or r.status_code, detail))
+        print("")
+        if code_name == "transaction_checkout_not_enabled":
+            print("This is not a problem with your keys or this code. Every")
+            print("credential above is correct. Paddle has not finished")
+            print("approving the account, and until they do, nobody can pay")
+            print("and no money can be received.")
+            print("")
+            print("Finish it at https://vendors.paddle.com - look for the")
+            print("verification checklist on the dashboard home. You will")
+            print("need business details, ID, a bank account for payouts,")
+            print("tax information, and your website URL.")
+            print("")
+            print("Re-run this script after they approve it. It will say")
+            print("'created txn_...' when payments genuinely work.")
+        return 1
+
     if declared != "production":
+        print("")
         print("Everything checks out - in SANDBOX. No real money can be")
         print("taken until PADDLE_ENV=production and every credential is")
         print("replaced with its production equivalent.")
         return 0
+    print("")
     print("Ready to take real payments.")
     return 0
 
