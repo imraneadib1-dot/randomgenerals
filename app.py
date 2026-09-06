@@ -1816,13 +1816,14 @@ def google_callback():
 VERIFY_TTL_MINUTES = 15
 
 
-def _issue_code(email):
+def _issue_code(email, name=""):
     """Mint a code, store it, mail it. -> (sent, detail)."""
     code = "%06d" % secrets.randbelow(1000000)
     expires = (datetime.datetime.now(datetime.timezone.utc)
                + datetime.timedelta(minutes=VERIFY_TTL_MINUTES))
     db.save_verification_code(email, code, expires.isoformat())
-    return mailer.send_verification_code(email, code, VERIFY_TTL_MINUTES)
+    return mailer.send_verification_code(email, code, VERIFY_TTL_MINUTES,
+                                         name=name)
 
 
 @app.route("/api/auth/verify/send", methods=["POST"])
@@ -1841,7 +1842,7 @@ def verify_send():
                      "created through Google sign-in.",
         }), 400
 
-    sent, detail = _issue_code(email)
+    sent, detail = _issue_code(email, name=user.get("name") or "")
     # sent=False is the console fallback, which is a working state on
     # a server with no SMTP - not an error to report as one.
     return jsonify({
@@ -2672,7 +2673,8 @@ def reset_request():
     code = "%06d" % secrets.randbelow(1000000)
     expires = now + datetime.timedelta(minutes=RESET_TTL_MINUTES)
     db.save_password_reset(email, code, expires.isoformat(), now.isoformat())
-    mailer.send_reset_code(email, code, RESET_TTL_MINUTES)
+    mailer.send_reset_code(email, code, RESET_TTL_MINUTES,
+                           name=user.get("name") or "")
     return same
 
 

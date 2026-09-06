@@ -79,8 +79,70 @@ def client_ready():
     return configured() and not _is_placeholder(client_token())
 
 
+# Paddle recognises exactly two environments, spelled exactly these two
+# ways. Paddle.js refuses to initialise on anything else, and api_base()
+# would quietly pick the wrong host.
+VALID_ENVIRONMENTS = ("production", "sandbox")
+
+# The near-misses that are unambiguous. This deliberately does NOT try to
+# guess at anything outside the list: mapping an unrecognised value to
+# "production" would point real keys at real money on a typo, and that is
+# the one mistake that must never be made silently.
+_ENV_ALIASES = {"prod": "production", "pro": "production",
+                "live": "production", "production": "production",
+                "sandbox": "sandbox", "sbx": "sandbox", "test": "sandbox",
+                "dev": "sandbox", "development": "sandbox"}
+
+_env_warned = set()
+
+
 def environment():
-    return _env("PADDLE_ENV", "sandbox").strip().lower()
+    """Which Paddle system to talk to. Always one of VALID_ENVIRONMENTS.
+
+    PADDLE_ENV=pro was set on the live server for a while, and everything
+    downstream took the else-branch: real production keys were sent to
+    sandbox-api.paddle.com, and Paddle.js was handed "pro" as its
+    environment. Nothing said so. Checkout simply failed, and the browser
+    reported it as the server being unreachable.
+
+    So an unrecognised value is no longer read as "not production". It is
+    normalised where the intent is obvious, and complained about loudly
+    where it is not.
+    """
+    # An unset variable and a variable set to "" mean the same thing -
+    # nobody chose - so neither is worth complaining about.
+    raw = (_env("PADDLE_ENV", "sandbox").strip().lower() or "sandbox")
+    if raw in _ENV_ALIASES:
+        return _ENV_ALIASES[raw]
+    # Unknown. Fall back to sandbox - the safe direction, since it cannot
+    # charge anyone - but say so once per distinct value rather than
+    # letting it pass as a normal configuration.
+    if raw not in _env_warned:
+        _env_warned.add(raw)
+        print("[paddle] PADDLE_ENV=%r is not a Paddle environment. "
+              "Expected 'production' or 'sandbox'. Falling back to "
+              "sandbox, so no real payment can be taken." % raw)
+    return "sandbox"
+
+
+def environment_problem():
+    """-> a sentence if PADDLE_ENV is not spelled the way Paddle wants.
+
+    Reported even when environment() managed to normalise it, because the
+    variable should be corrected at the source rather than relied on to
+    be guessed correctly.
+    """
+    # An unset variable and a variable set to "" mean the same thing -
+    # nobody chose - so neither is worth complaining about.
+    raw = (_env("PADDLE_ENV", "sandbox").strip().lower() or "sandbox")
+    if raw in VALID_ENVIRONMENTS:
+        return ""
+    if raw in _ENV_ALIASES:
+        return ("PADDLE_ENV is %r, which is being read as %r. Set it to "
+                "exactly %r." % (raw, _ENV_ALIASES[raw], _ENV_ALIASES[raw]))
+    return ("PADDLE_ENV is %r, which is not a Paddle environment. Set it "
+            "to 'production' to take real payments, or 'sandbox' to test. "
+            "Until then no real payment can be taken." % raw)
 
 
 def api_base():
@@ -141,7 +203,10 @@ def config_problem():
                 "redirect to, and Paddle.js cannot start without this "
                 "token - so Upgrade appears to do nothing. Paddle > "
                 "Developer tools > Authentication > Client-side tokens.")
-    return ""
+    # Last, because a misspelled environment with every credential present
+    # is the subtlest of these: nothing is missing, so every other check
+    # passes, and the only symptom is that payment fails.
+    return environment_problem()
 
 
 def _headers():

@@ -56,6 +56,21 @@ def main():
     secret = os.environ.get("PADDLE_WEBHOOK_SECRET", "").strip()
     token = os.environ.get("PADDLE_CLIENT_TOKEN", "").strip()
 
+    # The value itself is checked before anything is compared against it.
+    # PADDLE_ENV=pro sat on the live server unnoticed: every credential
+    # was a real production one, so the credential rows all looked right,
+    # and the only consequence was that all of them were being sent to
+    # the sandbox host.
+    if declared not in ("production", "sandbox"):
+        print("PADDLE_ENV is %r, which is not a Paddle environment." % declared)
+        print("Paddle accepts exactly 'production' or 'sandbox'. Anything")
+        print("else is read as sandbox, so no real payment can be taken.")
+        print("")
+        print("Fix it with:")
+        print("  sudo /opt/randomgenerals/set-env.sh PADDLE_ENV production")
+        print("  sudo systemctl restart randomgenerals")
+        return 1
+
     print("PADDLE_ENV is %r - so this app will talk to %s"
           % (declared,
              "api.paddle.com (REAL MONEY)" if declared == "production"
