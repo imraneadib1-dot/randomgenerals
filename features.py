@@ -71,8 +71,13 @@ FEATURES = {
         # the right answer from a tool. Charging for correctness is the
         # wrong thing to charge for.
         #
-        # Connecting your OWN apps stays paid: that is a capability, and
-        # it costs this server outbound requests. Being right is not.
+        # Connected apps used to be Pro-only, on the reasoning that a
+        # capability is a more honest thing to charge for than a
+        # counter. That was reversed deliberately: connecting one app is
+        # what makes the feature legible at all, and somebody who has
+        # never seen it work has no reason to pay for more of it. So it
+        # follows the same shape as memories and video below - a cap,
+        # not a lock.
         "builtin_tools": True,
         "image_generation": True,
         "code_execution": True,
@@ -107,7 +112,18 @@ FEATURES = {
         # --- desktop ---
         "terminal_unrestricted": False,   # allow-list only
         "terminal_timeout_seconds": 60,
-        "external_connectors": False,
+        "external_connectors": True,
+        # One. Enough to connect the thing you actually wanted to
+        # connect and see it work; short of running a workshop off the
+        # free tier.
+        #
+        # The ceiling is not only commercial. Every connection's
+        # operation list is pasted into the prompt on every message of
+        # that conversation, so connections cost context on each turn -
+        # and this server makes the outbound request, which is why
+        # connectors.py resolves and re-checks every host against the
+        # private ranges.
+        "max_connectors": 1,
     },
     PRO: {
         "max_output_tokens_code": 8000,
@@ -141,6 +157,7 @@ FEATURES = {
         "terminal_unrestricted": True,
         "terminal_timeout_seconds": 1800,
         "external_connectors": True,
+        "max_connectors": 8,
         # First claim on the shared per-minute budget of the fast
         # channel. Read by app.py's _groq_has_room(); see PLANS there for
         # why this is the benefit that matters most on this deployment.
@@ -257,6 +274,10 @@ def public_flags(plan):
         "max_upload_mb": f["max_upload_mb"],
         "terminal_unrestricted": f["terminal_unrestricted"],
         "external_connectors": f["external_connectors"],
+        # Both tiers can connect apps; the number is the difference, so
+        # the browser needs it to say "1 of 1" rather than letting
+        # somebody paste a URL and receive a refusal.
+        "max_connectors": f["max_connectors"],
         "builtin_tools": f["builtin_tools"],
         "max_output_tokens_code": f["max_output_tokens_code"],
         "pro_model_families": sorted(PRO_MODELS),

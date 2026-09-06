@@ -922,6 +922,9 @@ def plan_perks():
          "and voice", True),
         ("Runs Python and searches the web on its own, so arithmetic "
          "and current facts are checked rather than recalled", True),
+        ("<strong>Connect your own app</strong> - paste a link and it "
+         "can use whatever is behind it (%d at a time)"
+         % free["max_connectors"], True),
         ("Remembers up to %d things" % free["max_memories"], True),
         ("%dMB uploads" % free["max_upload_mb"], True),
     ]
@@ -932,8 +935,10 @@ def plan_perks():
          True),
         ("<strong>Image understanding</strong> - it sees what you attach",
          True),
-        ("<strong>Connect your own apps</strong> - paste a link and it "
-         "can use whatever is behind it", True),
+        ("<strong>%d connected apps at once</strong>, against %d - a "
+         "whole toolkit available in the same conversation rather than "
+         "one app at a time" % (pro["max_connectors"],
+                                free["max_connectors"]), True),
         ("Unlimited memory - no %d-item cap" % free["max_memories"], True),
         ("Code replies up to {:,} tokens, against {:,}".format(
             pro["max_output_tokens_code"],
@@ -3562,11 +3567,20 @@ def run_retention():
 def list_connectors():
     """What this account has connected. Tokens are never included."""
     items = db.load_connectors(current_owner_id())
-    return jsonify({"connectors": [
-        {"id": i["id"], "title": i["title"], "kind": i["kind"],
-         "url": i["url"], "operations": len(i["operations"]),
-         "has_token": i["has_token"], "created": i["created"]}
-        for i in items]})
+    plan = features.normalize_plan(current_account()[0].get("plan"))
+    return jsonify({
+        "connectors": [
+            {"id": i["id"], "title": i["title"], "kind": i["kind"],
+             "url": i["url"], "operations": len(i["operations"]),
+             "has_token": i["has_token"], "created": i["created"]}
+            for i in items],
+        # Sent with the list rather than fetched from /api/features,
+        # which the browser never calls. The panel needs the ceiling to
+        # say "1 of 1" instead of letting somebody paste a URL and read
+        # a refusal.
+        "max": max_connectors(plan),
+        "plan": plan,
+    })
 
 
 @app.route("/api/connectors", methods=["POST"])
@@ -3584,15 +3598,28 @@ def add_connector():
     plan = features.normalize_plan(current_account()[0].get("plan"))
     if not features.FEATURES[plan]["external_connectors"]:
         return jsonify({
-            "error": "Connecting apps is a Pro feature.",
+            "error": "Connecting apps is not available on this plan.",
         }), 403
 
     owner_id = current_owner_id()
     existing = db.load_connectors(owner_id)
-    if len(existing) >= MAX_CONNECTORS:
+    limit = max_connectors(plan)
+    if len(existing) >= limit:
+        # Free hits this at one, so the message has to say what to do
+        # about it rather than only stating the rule - and it must not
+        # read as an error, because connecting one app is the intended
+        # free experience rather than a thwarted Pro one.
+        if plan == features.FREE:
+            return jsonify({
+                "error": "Free connects one app at a time. Remove the "
+                         "current one to connect a different app, or "
+                         "upgrade to Pro to connect up to %d at once."
+                         % features.FEATURES[features.PRO]["max_connectors"],
+                "upgrade": True,
+            }), 400
         return jsonify({
             "error": "You can connect up to %d apps. Remove one first."
-                     % MAX_CONNECTORS,
+                     % limit,
         }), 400
 
     found, err = connectors.discover(url, token or None)
@@ -4379,10 +4406,16 @@ PROVIDER_TURNS = {
     "openrouter": openrouter_api.chat_once,
 }
 
-# Per account. Each connection adds its operation list to every request
-# on that channel, so this is a prompt-size ceiling as much as a
-# tidiness one.
-MAX_CONNECTORS = 8
+# Per account, and per PLAN - free connects one, Pro connects eight.
+# Each connection adds its operation list to every request on that
+# channel, so this is a prompt-size ceiling as much as a tidiness one.
+#
+# The number lives in features.py with every other tier difference; this
+# is only the lookup, so there is one place to change it and no way for
+# the limit the API enforces to drift from the limit the plan card
+# advertises.
+def max_connectors(plan):
+    return features.FEATURES[features.normalize_plan(plan)]["max_connectors"]
 
 
 # ----------------------------------------------------------------------
@@ -5491,8 +5524,9 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
             allow_code=True,
             allow_web=True,
         )
-        # Connected apps are the part that stays paid, so they join the
-        # list only for a plan that has them.
+        # Both plans have connected apps now; how MANY differs, and that
+        # is enforced when one is added rather than here. This stays a
+        # flag check so a tier could still switch them off entirely.
         if features.FEATURES[plan]["external_connectors"]:
             extra, connector_map = _connector_tools(current_owner_id())
             tool_specs = tool_specs + extra

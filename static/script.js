@@ -3723,10 +3723,34 @@ initAccountControls();
    on someone else's server - so the button reports progress rather than
    sitting there looking broken.
    ---------------------------------------------------------------- */
-function renderConnectorList(items) {
+function renderConnectorList(items, max, plan) {
   const list = document.getElementById("connectorList");
   if (!list) return;
   list.innerHTML = "";
+
+  // How many of the allowance is spent. Shown whether or not anything
+  // is connected, because on Free the allowance is one - and finding
+  // that out by pasting a link and being refused is a worse way to
+  // learn it than reading it here first.
+  const used = (items || []).length;
+  if (max) {
+    const count = document.createElement("p");
+    count.className = "memory-hint";
+    if (used >= max) {
+      count.textContent =
+        plan === "pro"
+          ? used + " of " + max + " connected — remove one to add another."
+          : used +
+            " of " +
+            max +
+            " connected. Remove it to connect a different app, or upgrade" +
+            " to Pro for more at once.";
+    } else {
+      count.textContent = used + " of " + max + " connected.";
+    }
+    list.appendChild(count);
+  }
+
   if (!items || !items.length) {
     const empty = document.createElement("p");
     empty.className = "memory-hint";
@@ -3780,7 +3804,7 @@ async function loadConnectors() {
     const r = await fetch("/api/connectors");
     if (!r.ok) return;
     const d = await r.json();
-    renderConnectorList(d.connectors || []);
+    renderConnectorList(d.connectors || [], d.max, d.plan);
   } catch (_) {
     /* the panel simply stays as it was */
   }
