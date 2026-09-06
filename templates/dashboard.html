@@ -1,0 +1,338 @@
+<!doctype html>
+{# The owner's dashboard: visitors, money, requests.
+
+   Sibling of stats.html - same shell, same palette, same 404-for-
+   everyone-else gate - but a different question. stats.html describes
+   the product from the database. This one answers "is it working, and
+   is it earning", which needs the two counters stats.py deliberately
+   does not have.
+
+   Charts are CSS bars over a server-computed peak. No chart library:
+   this is thirty numbers, and pulling in a charting bundle to draw
+   thirty bars would be the largest thing on the page by an order of
+   magnitude. #}
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dashboard — RandomGenerals AI</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" href="{{ asset('favicon.svg') }}" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{{ asset('landing.css') }}" />
+    <style>
+      .dash { max-width: 1080px; margin: 0 auto; padding: 32px 24px 96px; }
+      .dash h1 { font-family: Sora, system-ui, sans-serif; margin: 0 0 4px; }
+      .dash-sub { color: var(--text-faint); font-size: 14px; margin: 0 0 26px; }
+      .dash-nav { margin-bottom: 20px; font-size: 13px; }
+      .dash-nav a { color: var(--text-faint); margin-right: 16px; }
+
+      .banner {
+        border-radius: 12px; padding: 14px 18px; margin: 0 0 28px;
+        font-size: 14px; line-height: 1.6; border: 1px solid var(--line);
+      }
+      .banner.bad {
+        border-color: rgba(220, 120, 90, .45);
+        background: rgba(220, 120, 90, .08);
+      }
+      .banner.good {
+        border-color: rgba(120, 190, 140, .35);
+        background: rgba(120, 190, 140, .07);
+      }
+      .banner strong { color: var(--text); }
+
+      .stat-grid {
+        display: grid; gap: 14px; margin-bottom: 10px;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      }
+      .stat {
+        border: 1px solid var(--line); border-radius: 14px;
+        padding: 16px 18px; background: var(--ink-1);
+      }
+      .stat-label {
+        font-size: 11px; letter-spacing: .09em; text-transform: uppercase;
+        color: var(--text-faint); margin-bottom: 8px;
+      }
+      .stat-value {
+        font-family: Sora, system-ui, sans-serif; font-size: 30px;
+        font-weight: 700; color: var(--accent-ink); line-height: 1;
+        word-break: break-word;
+      }
+      .stat-note { font-size: 12px; color: var(--text-soft); margin-top: 7px; }
+
+      .dash h2 {
+        font-family: Sora, system-ui, sans-serif; font-size: 17px;
+        margin: 36px 0 12px; color: var(--text);
+      }
+      .dash h2 span { color: var(--text-faint); font-weight: 400;
+        font-size: 13px; font-family: Inter, system-ui, sans-serif; }
+
+      .spark {
+        display: flex; align-items: flex-end; gap: 2px; height: 92px;
+        border: 1px solid var(--line); border-radius: 12px;
+        padding: 10px; background: var(--ink-1);
+      }
+      .spark span {
+        flex: 1; background: var(--accent); border-radius: 2px 2px 0 0;
+        min-height: 2px; opacity: .85;
+      }
+      .spark span.zero { background: var(--ink-3); opacity: .45; }
+      .spark-axis {
+        display: flex; justify-content: space-between; font-size: 11px;
+        color: var(--text-faint); margin-top: 6px;
+      }
+
+      .bars { display: grid; gap: 9px; }
+      .bar-row {
+        display: grid; grid-template-columns: 200px 1fr 62px;
+        align-items: center; gap: 12px; font-size: 13px;
+      }
+      .bar-name { color: var(--text-soft); overflow: hidden;
+        text-overflow: ellipsis; white-space: nowrap;
+        font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+      .bar-track {
+        background: var(--ink-2); border-radius: 999px; height: 9px;
+        overflow: hidden;
+      }
+      .bar-fill { background: var(--accent); height: 100%;
+        border-radius: 999px; }
+      .bar-num { text-align: right; color: var(--text);
+        font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+
+      table.money {
+        width: 100%; border-collapse: collapse; font-size: 13px;
+        border: 1px solid var(--line); border-radius: 12px;
+        overflow: hidden;
+      }
+      table.money th, table.money td {
+        padding: 10px 14px; text-align: right;
+        border-bottom: 1px solid var(--line);
+      }
+      table.money th:first-child, table.money td:first-child {
+        text-align: left;
+      }
+      table.money th {
+        font-size: 11px; letter-spacing: .07em; text-transform: uppercase;
+        color: var(--text-faint); font-weight: 500; background: var(--ink-1);
+      }
+      table.money tr:last-child td { border-bottom: none; }
+      table.money td { color: var(--text-soft);
+        font-family: 'JetBrains Mono', monospace; }
+      table.money td.earn { color: var(--accent-ink); }
+
+      .empty {
+        border: 1px dashed var(--line); border-radius: 12px;
+        padding: 18px; color: var(--text-faint); font-size: 13px;
+        line-height: 1.6;
+      }
+      .caveat {
+        border-left: 2px solid var(--accent); padding: 2px 0 2px 14px;
+        color: var(--text-soft); font-size: 13px; margin: 36px 0 0;
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body class="legal-page">
+    <main class="dash">
+      <p class="dash-nav">
+        <a href="/">← randomgenerals.com</a>
+        <a href="/stats">product stats →</a>
+      </p>
+      <h1>Dashboard</h1>
+      <p class="dash-sub">Generated {{ d.generated }} · UTC days</p>
+
+      {# The first thing on the page, because a revenue chart reading
+         zero looks the same whether nobody wanted to pay or nobody was
+         able to. This site spent time in the second state. #}
+      {% if d.money.health.ok %}
+        <p class="banner good">
+          <strong>Payments are live.</strong>
+          {{ d.money.health.detail }}
+        </p>
+      {% else %}
+        <p class="banner bad">
+          <strong>Payments cannot be taken right now.</strong>
+          {{ d.money.health.detail }}
+        </p>
+      {% endif %}
+
+      <div class="stat-grid">
+        <div class="stat">
+          <div class="stat-label">Visitors today</div>
+          <div class="stat-value">{{ d.visitors.today }}</div>
+          <div class="stat-note">
+            {{ '{:,}'.format(d.visitors.views_today) }} page views today
+          </div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Page views, all time</div>
+          <div class="stat-value">
+            {{ '{:,}'.format(d.visitors.views_total) }}
+          </div>
+          <div class="stat-note">
+            {{ '{:,}'.format(d.visitors.window_views) }} in the last
+            {{ d.days }} days
+          </div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Earned</div>
+          <div class="stat-value">{{ d.money.headline }}</div>
+          <div class="stat-note">
+            after Paddle's fees · {{ d.money.payments }} payment{{
+              '' if d.money.payments == 1 else 's' }}
+          </div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Subscribers</div>
+          <div class="stat-value">{{ d.money.subscribers }}</div>
+          <div class="stat-note">active in Paddle</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">AI requests</div>
+          <div class="stat-value">{{ '{:,}'.format(d.requests.total) }}</div>
+          <div class="stat-note">
+            {{ '{:,}'.format(d.requests.today) }} today
+          </div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Credits spent</div>
+          <div class="stat-value">
+            {{ '{:,}'.format(d.requests.credits) }}
+          </div>
+          <div class="stat-note">across every account</div>
+        </div>
+      </div>
+
+      <h2>Page views <span>· last {{ d.days }} days</span></h2>
+      <div class="spark">
+        {% for row in d.visitors.series %}
+          <span
+            class="{{ 'zero' if not row.views }}"
+            style="height: {{ (100 * row.views / d.visitors.peak_views)|round(1) }}%"
+            title="{{ row.day }} — {{ row.views }} views, {{ row.visitors }} visitors"
+          ></span>
+        {% endfor %}
+      </div>
+      <div class="spark-axis">
+        <span>{{ d.visitors.series[0].day }}</span>
+        <span>peak {{ d.visitors.peak_views }}</span>
+        <span>{{ d.visitors.series[-1].day }}</span>
+      </div>
+
+      <h2>Distinct visitors <span>· last {{ d.days }} days</span></h2>
+      <div class="spark">
+        {% for row in d.visitors.series %}
+          <span
+            class="{{ 'zero' if not row.visitors }}"
+            style="height: {{ (100 * row.visitors / d.visitors.peak_visitors)|round(1) }}%"
+            title="{{ row.day }} — {{ row.visitors }} visitors"
+          ></span>
+        {% endfor %}
+      </div>
+      <div class="spark-axis">
+        <span>{{ d.visitors.series[0].day }}</span>
+        <span>peak {{ d.visitors.peak_visitors }}</span>
+        <span>{{ d.visitors.series[-1].day }}</span>
+      </div>
+
+      <h2>Most visited pages <span>· last {{ d.days }} days</span></h2>
+      {% if d.visitors.top_pages %}
+        <div class="bars">
+          {% for page in d.visitors.top_pages %}
+            <div class="bar-row">
+              <div class="bar-name" title="{{ page.path }}">{{ page.path }}</div>
+              <div class="bar-track">
+                <div
+                  class="bar-fill"
+                  style="width: {{ (100 * page.views / d.visitors.top_pages[0].views)|round(1) }}%"
+                ></div>
+              </div>
+              <div class="bar-num">{{ '{:,}'.format(page.views) }}</div>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="empty">
+          No page views recorded yet. Counting started when this dashboard
+          was deployed — there is no history before that, because nothing
+          was being written down.
+        </p>
+      {% endif %}
+
+      <h2>AI requests <span>· last {{ d.days }} days</span></h2>
+      <div class="spark">
+        {% for row in d.requests.series %}
+          <span
+            class="{{ 'zero' if not row.messages }}"
+            style="height: {{ (100 * row.messages / d.requests.peak)|round(1) }}%"
+            title="{{ row.day }} — {{ row.messages }} requests, {{ row.credits }} credits"
+          ></span>
+        {% endfor %}
+      </div>
+      <div class="spark-axis">
+        <span>{{ d.requests.series[0].day }}</span>
+        <span>peak {{ d.requests.peak }}</span>
+        <span>{{ d.requests.series[-1].day }}</span>
+      </div>
+
+      <h2>Money</h2>
+      {% if d.money.by_currency %}
+        <table class="money">
+          <tr>
+            <th>Currency</th><th>Payments</th><th>Charged</th>
+            <th>Paddle's fee</th><th>You earned</th>
+          </tr>
+          {% for row in d.money.by_currency %}
+            <tr>
+              <td>{{ row.currency }}</td>
+              <td>{{ row.payments }}</td>
+              <td>{{ row.gross_text }}</td>
+              <td>−{{ row.fee_text }}</td>
+              <td class="earn">{{ row.earnings_text }}</td>
+            </tr>
+          {% endfor %}
+        </table>
+
+        <h2>Recent payments</h2>
+        <table class="money">
+          <tr>
+            <th>Date</th><th>Who</th><th>Charged</th><th>You earned</th>
+          </tr>
+          {% for p in d.money.recent %}
+            <tr>
+              <td>{{ p.day }}</td>
+              <td>{{ p.email or '—' }}</td>
+              <td>{{ p.gross_text }}</td>
+              <td class="earn">{{ p.earnings_text }}</td>
+            </tr>
+          {% endfor %}
+        </table>
+      {% else %}
+        <p class="empty">
+          No payments yet. Every completed Paddle transaction lands here
+          automatically — the webhook writes it the moment the money
+          clears, so nothing has to be entered by hand.
+        </p>
+      {% endif %}
+
+      <p class="caveat">
+        <strong>What these numbers are.</strong>
+        Page views and visitors are counted here, on this server. No
+        third-party analytics, no advertising script, no tracking cookie.
+        A visitor is a salted hash of an address and browser that is
+        thrown away every night — so today's visitor count is real, and
+        nobody can be followed from one day to the next, including by
+        this dashboard. Requests come from counters the app already kept.
+        Money comes from Paddle's own webhooks, and shows what reaches
+        your balance after their fee, not what the customer was charged.
+        Bots and crawlers are filtered out by user agent, which catches
+        the honest ones and not the rest.
+      </p>
+    </main>
+  </body>
+</html>

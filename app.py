@@ -36,6 +36,7 @@ import codeexec  # noqa: E402  sandboxed Python execution - see codeexec.py
 import moderation  # noqa: E402  content filtering - see moderation.py
 import features  # noqa: E402  per-tier feature flags - see features.py
 import stats  # noqa: E402  owner-only usage figures - see stats.py
+import dashboard  # noqa: E402  visitors, money, requests - see dashboard.py
 import groq_api  # noqa: E402  fast open-weight models - see groq_api.py
 import openai_api  # noqa: E402  OpenAI-compatible API - see openai_api.py
 import connectors  # noqa: E402  pasted links, turned into tools
@@ -294,6 +295,62 @@ app.config.update(
     # chances to persist it.
     SESSION_REFRESH_EACH_REQUEST=True,
 )
+
+
+# Paths that are never a person arriving. Assets, polling and the
+# service worker would otherwise drown the real numbers - a single chat
+# session makes dozens of /api calls, and counting those as visits turns
+# "how many people came" into "how chatty was the front end".
+_NOT_A_VISIT = ("/static/", "/api/", "/v1/", "/sw.js", "/favicon",
+                "/manifest.webmanifest", "/robots.txt", "/sitemap.xml",
+                "/healthz")
+
+# Crawlers are most of the traffic to any small site. Counted separately
+# would be better; counted as visitors is simply wrong, and it is the
+# mistake that makes a dashboard say 400 people came on a day nobody did.
+_BOT_HINTS = ("bot", "crawler", "spider", "slurp", "curl/", "wget",
+              "python-requests", "headlesschrome", "lighthouse",
+              "monitoring", "uptime", "preview", "facebookexternalhit",
+              "embedly", "pingdom", "semrush", "ahrefs")
+
+
+def _client_ip():
+    """The visitor's address, from the only header that can be trusted.
+
+    gunicorn binds to 127.0.0.1 and the Cloudflare tunnel is the only
+    thing that reaches it, so request.remote_addr is 127.0.0.1 for
+    everybody on earth and CF-Connecting-IP is what Cloudflare puts the
+    real one in. Nothing outside the tunnel can set that header, because
+    nothing outside the tunnel can open the socket.
+    """
+    return (request.headers.get("CF-Connecting-IP")
+            or (request.headers.get("X-Forwarded-For", "").split(",")[0]
+                .strip())
+            or request.remote_addr or "")
+
+
+@app.before_request
+def _count_visit():
+    """Count page views for the owner's dashboard.
+
+    Deliberately narrow. It runs before the session hook below so it
+    still counts people who are not signed in - who are most of them -
+    and it records a count, never a person: see db.record_visit and the
+    site_visitors table for what is and is not stored.
+    """
+    try:
+        if request.method != "GET":
+            return
+        path = request.path or "/"
+        if path.startswith(_NOT_A_VISIT):
+            return
+        agent = (request.headers.get("User-Agent") or "").lower()
+        if not agent or any(hint in agent for hint in _BOT_HINTS):
+            return
+        db.record_visit(path[:120], _client_ip(), agent)
+    except Exception:                            # noqa: BLE001 - a
+        pass                                     # counter must never
+                                                 # cost somebody a page
 
 
 @app.before_request
@@ -1280,15 +1337,39 @@ def _legal(slug, title, sections):
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "").strip().lower()
 
 
-@app.route("/stats")
-def stats_page():
+def _owner_only():
+    """404 unless the caller is the owner. Call at the top of a route.
+
+    Factored out because there are now four of these and the gate must
+    be identical in all of them - a dashboard that is protected and an
+    /api endpoint behind it that is not is the same as neither being
+    protected.
+    """
     if not ADMIN_EMAIL:
         abort(404)
     uid = session.get("user_id")
     user = USERS.get(uid) if uid else None
     if not user or (user.get("email") or "").strip().lower() != ADMIN_EMAIL:
         abort(404)
+
+
+@app.route("/stats")
+def stats_page():
+    _owner_only()
     return render_template("stats.html", s=stats.collect())
+
+
+@app.route("/dashboard")
+def dashboard_page():
+    """Visitors, money and requests, on one page."""
+    _owner_only()
+    return render_template("dashboard.html", d=dashboard.collect())
+
+
+@app.route("/api/dashboard")
+def dashboard_json():
+    _owner_only()
+    return jsonify(dashboard.collect())
 
 
 @app.route("/api/stats")
@@ -1296,12 +1377,7 @@ def stats_json():
     """The same figures as JSON, for anything that wants to graph them
     elsewhere. Same gate - it would be a strange kind of protection that
     covered the page and not the data behind it."""
-    if not ADMIN_EMAIL:
-        abort(404)
-    uid = session.get("user_id")
-    user = USERS.get(uid) if uid else None
-    if not user or (user.get("email") or "").strip().lower() != ADMIN_EMAIL:
-        abort(404)
+    _owner_only()
     return jsonify(stats.collect())
 
 
@@ -1417,7 +1493,17 @@ def privacy_page():
              "identifier from Paddle. Card details never reach our "
              "servers; Paddle handles them.",
              "<strong>Technical</strong> - ordinary server logs, and a "
-             "signed session cookie that keeps you logged in."],
+             "signed session cookie that keeps you logged in.",
+             "<strong>Visit counts</strong> - we count page views so we "
+             "can see whether anyone is using the site. This is done on "
+             "our own server: there is no analytics provider, no "
+             "advertising script and no tracking cookie. To count the "
+             "same person once a day rather than once a click, your IP "
+             "address and browser are combined with a secret that is "
+             "destroyed every night, and only the resulting hash is "
+             "stored. It cannot be turned back into your address, and "
+             "because the secret changes daily it cannot be used to "
+             "recognise you tomorrow."],
         ]},
         {"heading": "Where prompts actually go", "body": [
             "This matters more than the rest of the page, so it is stated "
@@ -2308,6 +2394,22 @@ def paddle_webhook():
         return jsonify({"error": f"Rejected: {reason}"}), 400
 
     payload = request.get_json(force=True, silent=True) or {}
+
+    # Money first, and independently of everything below. A payment is
+    # recorded even when the account it belongs to cannot be found -
+    # "somebody paid and we do not know who" is a fact worth having on
+    # the dashboard, and the alternative was losing the record entirely.
+    payment = paddle_billing.parse_payment(payload)
+    if payment and payment["txn_id"]:
+        payer = USERS.get(payment["user_id"])
+        db.record_payment(
+            payment["txn_id"], payment["user_id"],
+            payment["email"] or (payer or {}).get("email", ""),
+            payment["currency"], payment["gross"], payment["fee"],
+            payment["earnings"], payment["created"])
+        return jsonify({"received": True, "handled": True,
+                        "recorded": "payment"})
+
     event = paddle_billing.parse_event(payload)
     if not event:
         # Acknowledged, not acted on. Returning an error for events we

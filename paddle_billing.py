@@ -327,6 +327,61 @@ def verify_webhook(raw_body, signature_header):
 ACTIVE_STATUSES = {"active", "trialing", "past_due"}
 
 
+def _minor(value):
+    """Paddle sends money as a STRING in minor units - "199" is $1.99.
+
+    A string because JSON numbers are doubles and Paddle will not put
+    somebody's money through a float. Neither will this: it stays an
+    integer number of cents all the way to the dashboard, and is divided
+    by 100 only for display.
+    """
+    try:
+        return int(str(value or "0").strip() or "0")
+    except (TypeError, ValueError):
+        return 0
+
+
+def parse_payment(payload):
+    """Pull the money out of a transaction.completed webhook.
+
+    -> dict, or None if this event is not a completed payment.
+
+    parse_event() below returns None for anything that is not a
+    subscription event, which meant transaction.completed - the one
+    event that says money actually arrived - was acknowledged and then
+    thrown away. The dashboard needs it, so it is parsed here rather
+    than by widening parse_event: the two produce different shapes and
+    the caller does different things with them.
+    """
+    if payload.get("event_type") != "transaction.completed":
+        return None
+
+    data = payload.get("data") or {}
+    details = data.get("details") or {}
+    totals = details.get("totals") or {}
+    # payout_totals is the same money expressed in the currency Paddle
+    # will actually pay out in, and it carries fee/earnings when totals
+    # does not. Falling back to it is the difference between knowing
+    # what was earned and showing zero.
+    payout = details.get("payout_totals") or {}
+
+    return {
+        "txn_id": data.get("id") or "",
+        "user_id": str((data.get("custom_data") or {}).get("user_id") or ""),
+        "customer_id": data.get("customer_id") or "",
+        "email": ((data.get("customer") or {}).get("email") or ""),
+        "currency": (totals.get("currency_code")
+                     or data.get("currency_code") or "USD"),
+        "gross": _minor(totals.get("grand_total") or totals.get("total")),
+        "fee": _minor(totals.get("fee") or payout.get("fee")),
+        "earnings": _minor(totals.get("earnings") or payout.get("earnings")),
+        # billed_at is when the money moved; occurred_at is when Paddle
+        # got round to telling us, and they differ on a retry.
+        "created": (data.get("billed_at") or payload.get("occurred_at")
+                    or ""),
+    }
+
+
 def parse_event(payload):
     """Normalise a webhook into the fields app.py stores.
 

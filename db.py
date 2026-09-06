@@ -236,6 +236,69 @@ CREATE TABLE IF NOT EXISTS openrouter_spend (
     usd REAL NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS site_visits (
+    -- Page views, aggregated to (day, path) the moment they happen.
+    -- There is no row per request and no row per person: by the time
+    -- anything is written it is already a count, so there is nothing
+    -- here to link back to anybody even in principle.
+    day   TEXT NOT NULL,
+    path  TEXT NOT NULL,
+    views INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, path)
+);
+
+CREATE TABLE IF NOT EXISTS site_visitors (
+    -- One row per distinct visitor per day, so "how many people" can be
+    -- answered separately from "how many page loads".
+    --
+    -- `visitor` is a truncated hash of the caller's IP and user agent
+    -- salted with a value that is thrown away at the end of the day
+    -- (see visitor_salt). That has three consequences worth stating:
+    -- the same person is one row rather than forty; the value cannot be
+    -- turned back into an IP address; and the SAME PERSON GETS A NEW
+    -- HASH TOMORROW, so this can count today's visitors and can never
+    -- follow anyone from one day to the next. That last property is the
+    -- reason for the design, not a limitation of it.
+    day     TEXT NOT NULL,
+    visitor TEXT NOT NULL,
+    PRIMARY KEY (day, visitor)
+);
+
+CREATE TABLE IF NOT EXISTS visit_salt (
+    -- Today's salt, kept only so a restart does not double-count
+    -- everybody. Yesterday's is deleted the first time a new day is
+    -- seen, which is what makes yesterday's hashes permanently
+    -- unreadable rather than merely inconvenient.
+    day  TEXT PRIMARY KEY,
+    salt TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS payments (
+    -- Real money received, one row per completed Paddle transaction.
+    --
+    -- Keyed on Paddle's own transaction id because webhooks are
+    -- at-least-once: Paddle retries anything that does not return 2xx,
+    -- and it retried into a table keyed on anything else would count
+    -- the same payment twice. INSERT OR IGNORE plus this key makes a
+    -- redelivery a no-op.
+    --
+    -- Amounts are in MINOR UNITS (cents), as integers, exactly as
+    -- Paddle sends them. Storing money as a float is how totals end up
+    -- at 1.9899999999999998.
+    txn_id   TEXT PRIMARY KEY,
+    day      TEXT NOT NULL,
+    user_id  TEXT NOT NULL DEFAULT '',
+    email    TEXT NOT NULL DEFAULT '',
+    currency TEXT NOT NULL DEFAULT 'USD',
+    -- What the customer was charged, including tax.
+    gross    INTEGER NOT NULL DEFAULT 0,
+    -- Paddle's cut, and what is actually left to be paid out. These are
+    -- the figures worth looking at: gross is not income.
+    fee      INTEGER NOT NULL DEFAULT 0,
+    earnings INTEGER NOT NULL DEFAULT 0,
+    created  TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS connectors (
     id       TEXT PRIMARY KEY,
     owner_id TEXT NOT NULL,
@@ -739,6 +802,207 @@ def usage_series(owner_id, days=30):
             "messages": row["messages"] if row else 0,
             "credits": row["credits"] if row else 0,
         })
+    return out
+
+
+# ------------------------------------------------------- visits and money
+#
+# Everything below serves the owner's dashboard. Two rules shaped it:
+#
+#   1. Nothing identifies a visitor. Counts are incremented in place, and
+#      the only per-person value is a hash that expires nightly.
+#   2. Nothing here may cost anybody a page. Recording a visit runs on
+#      every request, so it swallows its own errors - a broken counter
+#      must not become a broken site.
+
+def _today():
+    import datetime as _dt
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+
+
+def visitor_salt(day):
+    """Today's salt, creating it once and dropping every older one.
+
+    The delete is the point. While the salt exists, a given IP always
+    hashes the same way, so the same person is counted once. Once it is
+    gone the day's hashes are permanently unreadable - there is no key
+    left to test a guessed IP address against.
+    """
+    conn = _connect()
+    row = conn.execute("SELECT salt FROM visit_salt WHERE day = ?",
+                       (day,)).fetchone()
+    if row:
+        return row["salt"]
+    import secrets as _secrets
+    salt = _secrets.token_hex(16)
+    with conn:
+        conn.execute("INSERT OR IGNORE INTO visit_salt (day, salt) "
+                     "VALUES (?, ?)", (day, salt))
+        conn.execute("DELETE FROM visit_salt WHERE day <> ?", (day,))
+    # Re-read: another worker may have won the insert, and both must
+    # agree on the salt or the same person is counted twice.
+    return conn.execute("SELECT salt FROM visit_salt WHERE day = ?",
+                        (day,)).fetchone()["salt"]
+
+
+def record_visit(path, ip, user_agent):
+    """Count one page view, and the visitor behind it. Never raises."""
+    try:
+        import hashlib as _hashlib
+        day = _today()
+        salt = visitor_salt(day)
+        visitor = _hashlib.sha256(
+            ("%s|%s|%s" % (salt, ip or "", user_agent or "")).encode("utf-8")
+        ).hexdigest()[:32]
+        conn = _connect()
+        with conn:
+            conn.execute(
+                "INSERT INTO site_visits (day, path, views) VALUES (?, ?, 1) "
+                "ON CONFLICT(day, path) DO UPDATE SET views = views + 1",
+                (day, path))
+            conn.execute("INSERT OR IGNORE INTO site_visitors (day, visitor) "
+                         "VALUES (?, ?)", (day, visitor))
+    except Exception:                          # noqa: BLE001
+        pass
+
+
+def visit_series(days=30):
+    """-> [{day, views, visitors}], oldest first, gaps filled with zeroes."""
+    import datetime as _dt
+    today = _dt.datetime.now(_dt.timezone.utc).date()
+    start = (today - _dt.timedelta(days=days - 1)).isoformat()
+    conn = _connect()
+    views = dict(conn.execute(
+        "SELECT day, SUM(views) FROM site_visits WHERE day >= ? "
+        "GROUP BY day", (start,)).fetchall())
+    people = dict(conn.execute(
+        "SELECT day, COUNT(*) FROM site_visitors WHERE day >= ? "
+        "GROUP BY day", (start,)).fetchall())
+    out = []
+    for offset in range(days):
+        key = (_dt.date.fromisoformat(start)
+               + _dt.timedelta(days=offset)).isoformat()
+        out.append({"day": key,
+                    "views": views.get(key, 0),
+                    "visitors": people.get(key, 0)})
+    return out
+
+
+def visit_totals():
+    conn = _connect()
+    total = conn.execute("SELECT COALESCE(SUM(views), 0) "
+                         "FROM site_visits").fetchone()[0]
+    today = conn.execute("SELECT COALESCE(SUM(views), 0) FROM site_visits "
+                         "WHERE day = ?", (_today(),)).fetchone()[0]
+    today_people = conn.execute("SELECT COUNT(*) FROM site_visitors "
+                                "WHERE day = ?", (_today(),)).fetchone()[0]
+    # Distinct visitors cannot be summed across days - the same person
+    # has a different hash each day, so a sum counts one regular reader
+    # as thirty people. All-time uniques are not knowable by design, and
+    # saying so is better than printing a number that means nothing.
+    return {"views_total": total, "views_today": today,
+            "visitors_today": today_people}
+
+
+def top_pages(days=30, limit=8):
+    import datetime as _dt
+    start = (_dt.datetime.now(_dt.timezone.utc).date()
+             - _dt.timedelta(days=days - 1)).isoformat()
+    return [{"path": r[0], "views": r[1]} for r in _connect().execute(
+        "SELECT path, SUM(views) FROM site_visits WHERE day >= ? "
+        "GROUP BY path ORDER BY 2 DESC LIMIT ?", (start, limit)).fetchall()]
+
+
+def record_payment(txn_id, user_id, email, currency, gross, fee, earnings,
+                   created):
+    """Record one completed payment. Idempotent, and never raises.
+
+    INSERT OR IGNORE rather than upsert: Paddle redelivers webhooks, and
+    a completed transaction's totals do not change afterwards, so the
+    first write is the true one and a retry has nothing to add.
+    """
+    try:
+        conn = _connect()
+        with conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO payments (txn_id, day, user_id, "
+                "email, currency, gross, fee, earnings, created) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (txn_id, (created or "")[:10] or _today(), user_id or "",
+                 email or "", currency or "USD", int(gross or 0),
+                 int(fee or 0), int(earnings or 0), created or ""))
+        return True
+    except Exception:                          # noqa: BLE001
+        return False
+
+
+def payment_totals():
+    """-> {currency: {gross, fee, earnings, count}} plus a payment count.
+
+    Grouped by currency because Paddle settles in the customer's
+    currency: adding a EUR payment to a USD one gives a number that is
+    not an amount of money in any currency.
+    """
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT currency, COUNT(*), COALESCE(SUM(gross), 0), "
+        "COALESCE(SUM(fee), 0), COALESCE(SUM(earnings), 0) "
+        "FROM payments GROUP BY currency").fetchall()
+    by_currency = {r[0]: {"count": r[1], "gross": r[2], "fee": r[3],
+                          "earnings": r[4]} for r in rows}
+    return {"by_currency": by_currency,
+            "count": sum(v["count"] for v in by_currency.values())}
+
+
+def payment_series(days=30):
+    import datetime as _dt
+    today = _dt.datetime.now(_dt.timezone.utc).date()
+    start = (today - _dt.timedelta(days=days - 1)).isoformat()
+    have = {r[0]: (r[1], r[2]) for r in _connect().execute(
+        "SELECT day, COUNT(*), COALESCE(SUM(earnings), 0) FROM payments "
+        "WHERE day >= ? GROUP BY day", (start,)).fetchall()}
+    out = []
+    for offset in range(days):
+        key = (_dt.date.fromisoformat(start)
+               + _dt.timedelta(days=offset)).isoformat()
+        count, earnings = have.get(key, (0, 0))
+        out.append({"day": key, "payments": count, "earnings": earnings})
+    return out
+
+
+def recent_payments(limit=10):
+    return [dict(r) for r in _connect().execute(
+        "SELECT txn_id, day, email, currency, gross, fee, earnings "
+        "FROM payments ORDER BY created DESC LIMIT ?", (limit,)).fetchall()]
+
+
+def request_totals():
+    """AI requests, from the counters the app already keeps."""
+    conn = _connect()
+    total = conn.execute("SELECT COALESCE(SUM(messages), 0), "
+                         "COALESCE(SUM(credits), 0) FROM usage_log").fetchone()
+    today = conn.execute("SELECT COALESCE(SUM(messages), 0) FROM usage_log "
+                         "WHERE day = ?", (_today(),)).fetchone()[0]
+    return {"messages_total": total[0], "credits_total": total[1],
+            "messages_today": today}
+
+
+def request_series(days=30):
+    """Site-wide AI requests per day - usage_series() without the owner
+    filter, which is the shape the dashboard needs and the per-account
+    settings panel does not."""
+    import datetime as _dt
+    today = _dt.datetime.now(_dt.timezone.utc).date()
+    start = (today - _dt.timedelta(days=days - 1)).isoformat()
+    have = {r[0]: (r[1], r[2]) for r in _connect().execute(
+        "SELECT day, COALESCE(SUM(messages), 0), COALESCE(SUM(credits), 0) "
+        "FROM usage_log WHERE day >= ? GROUP BY day", (start,)).fetchall()}
+    out = []
+    for offset in range(days):
+        key = (_dt.date.fromisoformat(start)
+               + _dt.timedelta(days=offset)).isoformat()
+        messages, credits = have.get(key, (0, 0))
+        out.append({"day": key, "messages": messages, "credits": credits})
     return out
 
 
