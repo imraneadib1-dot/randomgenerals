@@ -27,6 +27,20 @@ const IS_DEV = process.env.RG_DEV === "1";
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
 
+// The APP, not the site root.
+//
+// startBackend() returns the server's base URL, and "/" there is the
+// marketing landing page - hero image, Features/Pricing/FAQ nav, a
+// cookie banner and a "Start free" button. That page exists to persuade
+// somebody to try the product. Serving it to a person who has already
+// installed the desktop app asks them to be sold something they have
+// bought, and puts a landing page between them and the assistant.
+const APP_PATH = "/app";
+
+function appUrl(base) {
+  return base.replace(/\/+$/, "") + APP_PATH;
+}
+
 function createWindow(startUrl) {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -169,7 +183,7 @@ if (!app.requestSingleInstanceLock()) {
 
     try {
       const { url } = await startBackend({ dev: IS_DEV, onStatus: setStatus });
-      createWindow(url);
+      createWindow(appUrl(url));
       if (setupWindow && !setupWindow.isDestroyed()) setupWindow.close();
       setupWindow = null;
     } catch (err) {
@@ -192,7 +206,9 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0 && mainWindow === null) {
-      startBackend({ dev: IS_DEV }).then(({ url }) => createWindow(url));
+      startBackend({ dev: IS_DEV }).then(({ url }) =>
+        createWindow(appUrl(url)),
+      );
     }
   });
 
