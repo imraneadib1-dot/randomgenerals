@@ -2798,6 +2798,46 @@ html.time-night .night-moon {
 /* ---------------------------------------------------------------- */
 /* Greeting on the empty state                                       */
 /* ---------------------------------------------------------------- */
+
+/* The mark, above the greeting on an empty thread.
+ *
+ * currentColor, and a colour set here rather than inherited: this is
+ * the one place the logo appears at size, and at 30% opacity against
+ * the accent it reads as a watermark the eye passes over on the way to
+ * the composer - not a splash screen demanding to be looked at.
+ *
+ * It is the only decoration on an otherwise empty page, so it carries
+ * the brand without anything else having to. */
+.empty-mark {
+  display: block;
+  width: clamp(44px, 7vw, 62px);
+  height: auto;
+  margin: 0 auto 18px;
+  color: var(--accent);
+  opacity: 0.32;
+  /* Fades in rather than appearing - the empty state is re-rendered on
+     every new thread, and a mark that pops each time reads as a glitch. */
+  animation: mark-in 620ms ease-out both;
+}
+
+@keyframes mark-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+  }
+  to {
+    opacity: 0.32;
+    transform: none;
+  }
+}
+
+/* Anyone who has asked not to see motion gets the mark without it. */
+@media (prefers-reduced-motion: reduce) {
+  .empty-mark {
+    animation: none;
+  }
+}
+
 .greeting {
   font-family: var(--font-display);
   font-size: clamp(1.6rem, 3.6vw, 2.3rem);

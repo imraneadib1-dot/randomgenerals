@@ -1,4 +1,4 @@
-const BAY_ORDER = ["code", "chat", "image", "video"];
+const BAY_ORDER = ["chat", "code", "image", "video"];
 
 const BAY_META = {
   code: {
@@ -57,7 +57,12 @@ const PROVIDER_META = {
   imagegen: { label: "Image" },
 };
 
-let currentBay = "code";
+// Chat, not code. This is a general assistant that can also write
+// code, and landing in the code bay asks a first-time visitor to
+// have a programming question ready before the product will talk
+// to them. The bay is remembered per person from here on, so this
+// only decides the very first visit.
+let currentBay = "chat";
 let currentThreadId = null;
 let providers = [];
 let activeProvider = null;
@@ -2739,6 +2744,71 @@ function greetingFor(hour) {
   return "Good evening";
 }
 
+/** The three-ring mark, drawn rather than loaded.
+ *
+ *  Inline SVG rather than <img src="logo.svg">: the file strokes with
+ *  currentColor so it themes with everything around it, and an <img>
+ *  gets its own document where currentColor resolves to black.
+ *
+ *  Geometry is the same as static/logo.svg and tools/make_icons.py -
+ *  three internally tangent circles, each touching the one containing
+ *  it on the OPPOSITE side, which is what makes the gap sweep round
+ *  into a coil instead of stacking into a crescent.
+ */
+function brandMark() {
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", "0 0 200 200");
+  svg.setAttribute("class", "empty-mark");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "6.5");
+  for (const [cy, r] of [
+    [100, 88],
+    [69, 57],
+    [93, 33],
+  ]) {
+    const c = document.createElementNS(NS, "circle");
+    c.setAttribute("cx", "100");
+    c.setAttribute("cy", String(cy));
+    c.setAttribute("r", String(r));
+    svg.appendChild(c);
+  }
+  return svg;
+}
+
+/** Ask for a name, only once somebody has asked to be asked. */
+function promptForName(host) {
+  host.replaceChildren();
+  host.append(brandMark());
+  const row = document.createElement("div");
+  row.className = "name-prompt";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.maxLength = 40;
+  input.placeholder = "Your name";
+  input.setAttribute("aria-label", "Your name");
+  const save = document.createElement("button");
+  save.type = "button";
+  save.textContent = "Save";
+  const commit = () => {
+    const v = input.value.trim();
+    if (v) writePref(NAME_KEY, v);
+    renderGreeting();
+  };
+  save.addEventListener("click", commit);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") commit();
+    // Escape backs out without setting anything, so the offer is not a
+    // trap once taken up.
+    if (e.key === "Escape") renderGreeting();
+  });
+  row.append(input, save);
+  host.append(row);
+  input.focus();
+}
+
 function renderGreeting() {
   if (!emptyState) return;
   let host = document.getElementById("greetingHost");
@@ -2751,33 +2821,30 @@ function renderGreeting() {
   }
   host.replaceChildren();
 
+  host.append(brandMark());
+
   const name = (readPref(NAME_KEY) || "").trim();
   if (!name) {
+    // NO LONGER A QUESTION YOU HAVE TO ANSWER.
+    //
+    // This used to be "What should I call you?" with a text field and a
+    // Save button - a form standing between somebody and the thing they
+    // opened the app to do, asking them to give something up before it
+    // had done anything for them. The name is a nicety; it was being
+    // collected like a requirement.
+    //
+    // Now it greets and gets out of the way. Anyone who wants to be
+    // called something can say so, and the offer sits under the
+    // greeting at the weight of an aside rather than a gate.
     const h = document.createElement("h2");
     h.className = "greeting";
-    h.textContent = "What should I call you?";
-    const row = document.createElement("div");
-    row.className = "name-prompt";
-    const input = document.createElement("input");
-    input.type = "text";
-    input.maxLength = 40;
-    input.placeholder = "Your name";
-    input.setAttribute("aria-label", "Your name");
-    const save = document.createElement("button");
-    save.type = "button";
-    save.textContent = "Save";
-    const commit = () => {
-      const v = input.value.trim();
-      if (!v) return;
-      writePref(NAME_KEY, v);
-      renderGreeting();
-    };
-    save.addEventListener("click", commit);
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") commit();
-    });
-    row.append(input, save);
-    host.append(h, row);
+    h.textContent = greetingFor(new Date().getHours());
+    const ask = document.createElement("button");
+    ask.type = "button";
+    ask.className = "greeting-edit";
+    ask.textContent = "add your name";
+    ask.addEventListener("click", () => promptForName(host));
+    host.append(h, ask);
     return;
   }
 
@@ -3335,7 +3402,7 @@ function initSettingsControls() {
     });
   }
   if (bay) {
-    bay.value = readPref(PREF_BAY) || "code";
+    bay.value = readPref(PREF_BAY) || "chat";
     bay.addEventListener("change", () => writePref(PREF_BAY, bay.value));
   }
   if (enter) {
