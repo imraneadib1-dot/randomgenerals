@@ -80,6 +80,31 @@ def _looks_like_text(path):
     return control <= len(decoded) * 0.02
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
+# Documents that are not plain text but can still be read - the
+# extraction for each lives in extract_text().
+DOCUMENT_EXTENSIONS = {".pdf", ".docx"}
+
+
+def accept_attribute():
+    """Every extension this module can read, for an <input accept="">.
+
+    Generated rather than typed into the template. The template's list
+    was written by hand and had drifted: TEXT_EXTENSIONS had grown to
+    around eighty entries after a .bat upload came back "unsupported",
+    and the file picker still offered the original thirty - so the
+    server could read a file the chooser would not let anyone select.
+
+    Extensions only. A picker cannot express "and anything that turns
+    out to be text when sniffed", which is what _looks_like_text() adds
+    on the server, so dragging a file in still reaches paths this list
+    does not name.
+    """
+    every = TEXT_EXTENSIONS | IMAGE_EXTENSIONS | DOCUMENT_EXTENSIONS
+    # Entries like ".gitignore" are whole filenames rather than
+    # extensions; TEXT_FILENAMES covers those and a picker cannot filter
+    # on them anyway.
+    return ",".join(sorted(e for e in every if e.startswith(".")))
+
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 

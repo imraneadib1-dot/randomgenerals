@@ -1832,7 +1832,8 @@ def landing():
 
 @app.route("/app")
 def index():
-    return render_template("index.html", plan_perks=plan_perks())
+    return render_template("index.html", plan_perks=plan_perks(),
+                           accept_types=attachments.accept_attribute())
 
 
 # ----------------------------------------------------------------------

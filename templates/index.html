@@ -423,7 +423,10 @@
               id="fileInput"
               multiple
               hidden
-              accept=".txt,.md,.py,.js,.jsx,.ts,.tsx,.json,.csv,.html,.htm,.css,.c,.cpp,.h,.hpp,.java,.cs,.go,.rs,.rb,.php,.sh,.yaml,.yml,.xml,.sql,.log,.ini,.cfg,.toml,.pdf,.docx,.png,.jpg,.jpeg,.gif,.webp,.bmp"
+              {# Generated from attachments.py, so the picker offers
+                 exactly what the server can read - the hand-written
+                 list here had drifted about fifty extensions behind. #}
+              accept="{{ accept_types }}"
             />
             <input type="file" id="folderInput" webkitdirectory hidden />
             <button
