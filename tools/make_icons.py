@@ -99,7 +99,54 @@ def make_ios():
     return made
 
 
+WIN_DIR = os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), "desktop", "resources")
+
+
+def make_windows():
+    """desktop/resources/icon.ico - the Windows app icon.
+
+    THIS FILE DID NOT EXIST, and two places already pointed at it:
+    BrowserWindow's `icon` option and electron-builder.yml. Neither
+    errors when it is missing - Electron falls back to its own default -
+    so the app shipped, ran, and showed a generic Electron logo in the
+    title bar, the taskbar and Alt-Tab.
+
+    ONE .ico HOLDS SEVERAL SIZES, and that is the whole point of the
+    format. Windows picks from them by context: 16px in the title bar,
+    32px in the taskbar, 48px in Explorer, 256px in the large-icon
+    view. Supplying only a big one leaves Windows to downscale it
+    itself, which on a thin ring like this mark turns into mush at
+    16px.
+
+    The small sizes get a tighter crop for the same reason - at 16px a
+    7% margin is one pixel of nothing on each side, and the ring needs
+    those pixels more than the padding.
+    """
+    os.makedirs(WIN_DIR, exist_ok=True)
+    path = os.path.join(WIN_DIR, "icon.ico")
+    sizes = [256, 128, 64, 48, 32, 24, 16]
+    frames = []
+    for size in sizes:
+        inset = 0.03 if size <= 32 else 0.07
+        radius = 0.0 if size <= 32 else 0.18
+        frames.append(draw_icon(size, inset_fraction=inset,
+                                radius_fraction=radius))
+    # Pillow writes every size given in `sizes` into the one file, taking
+    # the largest image as the source for each.
+    frames[0].save(path, format="ICO",
+                   sizes=[(s, s) for s in sorted(sizes)])
+    return path
+
+
 def main():
+    if "--win" in sys.argv:
+        path = make_windows()
+        print("  %-38s %d bytes" % (os.path.relpath(path),
+                                    os.path.getsize(path)))
+        print("Windows icon written. Rebuild the desktop app to use it.")
+        return
+
     if "--ios" in sys.argv:
         paths = make_ios()
         for path in paths:

@@ -54,6 +54,31 @@ function createWindow(startUrl) {
     },
   });
 
+  // THE MENU BAR IS HIDDEN, NOT DELETED, and the difference matters.
+  //
+  // "File Edit View Window Help" across the top is Electron's default
+  // menu. It belongs to a text editor, not to this - every useful action
+  // is already in the app's own header - so it goes.
+  //
+  // But Menu.setApplicationMenu(null) removes the menu OBJECT, and that
+  // object is where Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+A and Ctrl+Z are
+  // registered as accelerators. Deleting it to tidy the chrome is how an
+  // app ends up unable to paste into its own message box.
+  //
+  // So the menu still exists and its shortcuts still fire; only the bar
+  // is invisible. autoHideMenuBar stays false so Alt does not summon it
+  // back either - with it true, the bar reappears on every Alt press,
+  // which is worse than leaving it up.
+  mainWindow.autoHideMenuBar = false;
+  mainWindow.setMenuBarVisibility(false);
+
+  // Keep the window title as the product name. By default Electron
+  // adopts the page's <title>, which here is "RandomGenerals - your
+  // local assistant" - a description that belongs on a browser tab
+  // competing for attention, not in the title bar, the taskbar hover
+  // and Alt-Tab of an app you have already chosen to open.
+  mainWindow.on("page-title-updated", (event) => event.preventDefault());
+
   mainWindow.once("ready-to-show", () => mainWindow?.show());
   mainWindow.loadURL(startUrl);
 
