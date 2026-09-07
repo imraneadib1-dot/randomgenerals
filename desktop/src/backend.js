@@ -87,6 +87,54 @@ function resolvePython(appRoot) {
   return candidates[candidates.length - 1];
 }
 
+/**
+ * Settings for this install, from a .env beside the app's own data.
+ *
+ * WHY NOT THE .env IN THE SERVER FOLDER
+ *
+ * That folder is part of the package: .dockerignore and the
+ * electron-builder filter both exclude .env from the build precisely so
+ * nobody's keys end up inside a file other people download, and an app
+ * update replaces the whole directory anyway - taking any settings with
+ * it.
+ *
+ * userData is the opposite on both counts. It is never shipped, and it
+ * survives updates. So this is where a GROQ_API_KEY belongs on a
+ * desktop install: present on the machine that needs it, absent from
+ * everything that leaves it.
+ *
+ * Format is a plain .env - KEY=value per line, # for comments - because
+ * that is what the file is called and guessing otherwise would be a
+ * surprise.
+ */
+function readUserEnv() {
+  const file = path.join(app.getPath("userData"), ".env");
+  const out = {};
+  let text;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return out; // No file is the normal state, not an error.
+  }
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq < 1) continue;
+    const key = line.slice(0, eq).trim();
+    let value = line.slice(eq + 1).trim();
+    // Strip one layer of matching quotes, which people add out of habit
+    // and which would otherwise become part of the key.
+    if (value.length > 1 &&
+        ((value.startsWith('"') && value.endsWith('"')) ||
+         (value.startsWith("'") && value.endsWith("'")))) {
+      value = value.slice(1, -1);
+    }
+    if (key) out[key] = value;
+  }
+  return out;
+}
+
 /** Run a command to completion, streaming its output to `onLine`. */
 function run(cmd, args, { cwd, onLine } = {}) {
   return new Promise((resolve) => {
@@ -217,6 +265,10 @@ async function startBackend({ dev = false, onStatus = () => {} } = {}) {
     windowsHide: true,
     env: {
       ...process.env,
+      // Before the fixed values below, so this cannot be used to switch
+      // debug back on or grant itself Pro - those two are the reason
+      // the order matters rather than being arbitrary.
+      ...readUserEnv(),
       PORT: String(port),
       // Debug off always: Werkzeug's debugger is an interactive Python
       // console on error pages. Harmless on a dev laptop, a remote code
