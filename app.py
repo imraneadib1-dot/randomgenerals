@@ -4234,6 +4234,46 @@ RATE_LIMIT_WAIT_SECONDS = 25
 # 3,500, which on this hardware is four minutes.
 LOCAL_FALLBACK_MAX_TOKENS = 900
 
+# How much conversation a local model is handed on the failover path.
+#
+# Reading the prompt is most of the work for a small model on shared
+# cores, so a long thread costs more before the first token than the
+# whole reply does after it. 12,000 characters is roughly 3,000 tokens -
+# enough for the question and a couple of turns of context.
+LOCAL_FALLBACK_MAX_CHARS = 12000
+
+
+def _trim_for_local(history):
+    """Cut a conversation down to what a small local model can read.
+
+    Keeps the system prompt and the newest message - the question being
+    asked is the one thing that must survive - and drops whole turns
+    from the middle. A single oversized message is truncated with a
+    marker, so the model says it only saw part rather than answering as
+    though it saw everything.
+    """
+    kept = list(history or [])
+
+    def size(msgs):
+        return sum(len(m.get("content") or "") for m in msgs
+                   if isinstance(m.get("content"), str))
+
+    while size(kept) > LOCAL_FALLBACK_MAX_CHARS and len(kept) > 2:
+        kept.pop(1 if kept[0].get("role") == "system" else 0)
+
+    if size(kept) > LOCAL_FALLBACK_MAX_CHARS:
+        for i in range(len(kept) - 1, -1, -1):
+            content = kept[i].get("content")
+            if isinstance(content, str) and len(content) > 2000:
+                others = size([m for j, m in enumerate(kept) if j != i])
+                room = max(1500, LOCAL_FALLBACK_MAX_CHARS - others)
+                kept[i] = dict(kept[i], content=(
+                    content[:room]
+                    + "\n\n[... truncated to fit a smaller model. Say so "
+                      "rather than answering as though you saw all of it.]"))
+                break
+    return kept
+
 
 def _groq_has_room(plan):
     """Whether this plan may spend the shared per-minute budget now.
@@ -5949,6 +5989,14 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                 if opts.get("num_predict", 0) > LOCAL_FALLBACK_MAX_TOKENS:
                     opts["num_predict"] = LOCAL_FALLBACK_MAX_TOKENS
                     local_kwargs["options"] = opts
+                # AND THE PROMPT, not only the reply. Capping output
+                # alone still handed a 1B model the whole conversation -
+                # a pasted file included - and reading it is most of the
+                # work: the request then went silent long enough to trip
+                # the read timeout and surface an Ollama traceback,
+                # which is how this failure looked from the outside even
+                # after the fast channel was fixed.
+                history = _trim_for_local(history)
                 for piece in streamer(model, history, **local_kwargs):
                     full_reply += piece
                     yield piece
