@@ -147,6 +147,125 @@ PRO_RESERVE_TOKENS = 2500
 # to avoid.
 DEFAULT_REQUEST_TOKENS = 1200
 
+# THE WHOLE REQUEST COUNTS, NOT JUST THE REPLY.
+#
+# Groq charges prompt + max_tokens against tokens-per-minute for a
+# SINGLE request, and refuses outright with 413 when that sum exceeds
+# the limit - a different failure from running out mid-window:
+#
+#   Groq error 413. Request too large ... on tokens per minute (TPM):
+#   Limit 8000, Requested 8996, please reduce your m
+#
+# Nothing was measuring the sum, so a long enough conversation could not
+# be answered at all: every retry rebuilt the same oversized request and
+# was refused again. Raising the reply ceiling to 2600 for accuracy made
+# it arrive sooner.
+TPM_LIMIT = 8000
+
+# Headroom for what the estimate cannot see - the tool schemas, the
+# role scaffolding Groq adds, and the fact that a character-based
+# estimate is an estimate.
+TPM_MARGIN = 700
+
+# Characters per token, near enough. Real tokenisation needs the
+# model's vocabulary, which is not worth a dependency here: this is used
+# to decide how much to trim, and being slightly pessimistic only costs
+# a little context.
+CHARS_PER_TOKEN = 3.6
+
+
+def estimate_tokens(messages):
+    """Roughly how many tokens these messages will cost."""
+    total = 0
+    for m in messages or []:
+        content = m.get("content")
+        if isinstance(content, str):
+            total += len(content) / CHARS_PER_TOKEN
+        elif isinstance(content, list):
+            # Multimodal parts: count the text, and allow a flat cost per
+            # image, which is nearer the truth than ignoring them.
+            for part in content:
+                if part.get("type") == "text":
+                    total += len(part.get("text") or "") / CHARS_PER_TOKEN
+                else:
+                    total += 800
+        # Per-message role and delimiter overhead.
+        total += 4
+    return int(total)
+
+
+def fit_to_budget(messages, want_reply_tokens):
+    """Trim history and the reply ceiling so the request is accepted.
+
+    -> (messages, reply_tokens). Drops the OLDEST turns first, and never
+    the system prompt or the newest message: losing the question being
+    asked to make room for the conversation about it would be the wrong
+    trade every time.
+    """
+    room = TPM_LIMIT - TPM_MARGIN
+    reply = max(256, int(want_reply_tokens or 0) or 256)
+
+    kept = list(messages or [])
+    prompt = estimate_tokens(kept)
+
+    # OLD CONTEXT GOES FIRST, REPLY LENGTH SECOND, and the order is the
+    # whole judgement here. Trimming the ceiling first kept every
+    # message and answered a long conversation in 512 tokens - which for
+    # "write me the CSS and the JS" is a truncated answer to a question
+    # that was fully understood. Dropping turns from six messages ago
+    # costs some memory of the conversation; capping the reply costs the
+    # answer itself.
+    #
+    # The system prompt is index 0 and the last message is the question
+    # being asked, so trimming happens strictly between them.
+    while prompt + reply > room and len(kept) > 2:
+        drop_at = 1 if kept and kept[0].get("role") == "system" else 0
+        kept.pop(drop_at)
+        prompt = estimate_tokens(kept)
+
+    # Only once there is no old context left to give up.
+    while prompt + reply > room and reply > 512:
+        reply = max(512, reply - 256)
+
+    # STILL TOO BIG MEANS ONE ENORMOUS MESSAGE - a pasted file, usually.
+    # There is nothing left to drop, and shrinking the reply cannot help
+    # when the prompt alone is over the limit: that path returned a
+    # request that was still refused, which is the failure this function
+    # exists to prevent.
+    #
+    # So the message itself is cut. That loses part of what somebody
+    # sent, which is why it is last and why the model is told - a
+    # silently truncated file would have it answering confidently about
+    # code it was never shown the end of.
+    if prompt + reply > room:
+        reply = 512
+        # Budget for the offending message alone: the room, less the
+        # reply we still intend to produce, less everything else in the
+        # request. Computed against the OTHERS rather than the total,
+        # because sizing it against the total left the sum over the
+        # limit by exactly what the other messages cost.
+        for i in range(len(kept) - 1, -1, -1):
+            content = kept[i].get("content")
+            if not isinstance(content, str):
+                continue
+            others = estimate_tokens(
+                [m for j, m in enumerate(kept) if j != i])
+            allowed_tokens = room - reply - others - 60
+            allowed_chars = int(max(400, allowed_tokens) * CHARS_PER_TOKEN)
+            if len(content) > allowed_chars:
+                kept[i] = dict(
+                    kept[i],
+                    content=content[:allowed_chars]
+                    + "\n\n[... truncated: this message was too long to "
+                      "send in one request. Say so in your reply rather "
+                      "than answering as though you saw all of it.]")
+                break
+        prompt = estimate_tokens(kept)
+        if prompt + reply > room:
+            reply = max(256, room - prompt)
+
+    return kept, reply
+
 
 def _parse_duration(text):
     """Go's duration format ('772ms', '45.6s', '1m26.4s') -> seconds."""
@@ -481,6 +600,14 @@ def stream_chat(model, history, options=None, images=None, usage=None):
     if opts.get("num_predict"):
         body["max_tokens"] = int(opts["num_predict"])
 
+    # Make the whole request fit inside one minute's allowance. Groq
+    # counts prompt + max_tokens together and refuses with 413 when the
+    # sum is over - see fit_to_budget. Done here rather than in app.py
+    # because the limit is a property of this provider.
+    body["messages"], fitted = fit_to_budget(
+        body["messages"], body.get("max_tokens") or DEFAULT_REQUEST_TOKENS)
+    body["max_tokens"] = fitted
+
     # How long the model thinks before it starts answering. Ollama has no
     # equivalent, so this arrives under its own name and is simply absent
     # on that channel rather than being translated into something.
@@ -525,6 +652,17 @@ def stream_chat(model, history, options=None, images=None, usage=None):
             if r.status_code in (401, 403):
                 yield "[Groq rejected the key (%d).]" % r.status_code
                 return
+            if r.status_code == 413:
+                # The request did not fit in one minute's allowance,
+                # despite fit_to_budget - so the estimate was under.
+                # Raised, not yielded: nothing has streamed, so the
+                # caller can still answer this locally, and a person
+                # reading a reply should never be shown a sentence
+                # containing the words "service tier" and an
+                # organisation id.
+                raise Unreachable(
+                    "the conversation grew past what one request may "
+                    "spend in a minute")
             if r.status_code != 200:
                 detail = ""
                 try:
