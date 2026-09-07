@@ -25,7 +25,13 @@ extraResources:
       - "**/*.py"
       - templates/**/*
       - static/**/*
+      # BOTH. requirements-desktop.txt is what the first run actually
+      # installs (see ensureDependencies in src/backend.js); shipping
+      # only requirements.txt would leave that install with no file to
+      # read, and the app would fail on the machine of every person who
+      # downloaded it.
       - requirements.txt
+      - requirements-desktop.txt
       - "!**/__pycache__/**"
       - "!.venv/**"
       - "!venv/**"

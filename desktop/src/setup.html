@@ -1,0 +1,66 @@
+<!doctype html>
+<!--
+  Shown while the first run builds a Python environment and installs
+  dependencies. That takes about a minute, and before this existed the
+  app showed nothing at all for the whole of it - which reads as a
+  launcher that did not work rather than one that is busy.
+
+  No preload and no IPC: main.js pushes text in with
+  executeJavaScript(), so this page needs no privileges of its own.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'"
+    />
+    <title>Starting RandomGenerals AI</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0;
+        height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #141a22;
+        color: #e9e8e1;
+        font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI",
+          Roboto, Arial, sans-serif;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      .box { width: 380px; padding: 0 28px; text-align: center; }
+      .mark {
+        width: 46px; height: 46px; margin: 0 auto 20px;
+        border: 3px solid #6e6420; border-radius: 50%;
+        border-top-color: transparent;
+        animation: spin 1.1s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      h1 {
+        margin: 0 0 8px; font-size: 16px; font-weight: 600;
+        letter-spacing: .01em;
+      }
+      p.sub { margin: 0 0 22px; color: #8b94a0; font-size: 13px; }
+      #status {
+        min-height: 3.2em;
+        color: #b9c0c9;
+        font-family: "SF Mono", Menlo, Consolas, monospace;
+        font-size: 12px;
+        word-break: break-word;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="box">
+      <div class="mark"></div>
+      <h1>Setting up RandomGenerals AI</h1>
+      <p class="sub">
+        This happens once. It builds a private Python environment so the
+        app never touches anything else installed on your machine.
+      </p>
+      <div id="status">Starting…</div>
+    </div>
+  </body>
+</html>

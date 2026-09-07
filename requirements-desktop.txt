@@ -1,0 +1,42 @@
+# What the desktop app installs on first run.
+#
+# WHY NOT requirements.txt
+#
+# That file pins torch, diffusers, transformers, accelerate and
+# safetensors - about 2.3GB - for local image generation in imagegen.py.
+# Downloading that before somebody can send their first message is not a
+# first run, it is an afternoon, and on a laptop without a GPU it buys a
+# feature that would be too slow to use anyway.
+#
+# WHY NOT requirements-cloud.txt
+#
+# Close, but it pins gunicorn, which is a production WSGI server for a
+# public host. The desktop app spawns Flask on a loopback-only port for
+# exactly one user, so gunicorn would be an unused download.
+#
+# So: everything the app imports at startup, and nothing else. Local
+# image generation stays available to anyone who wants it - installing
+# torch into the same venv afterwards is enough, and imagegen.py already
+# reports itself unavailable rather than failing when it is absent.
+
+Flask==3.0.3
+python-dotenv==1.0.1
+requests==2.32.3
+stripe==11.1.1
+
+# Reading attached files. attachments.py imports both at module level.
+pypdf==6.16.1
+python-docx==1.2.0
+
+# Resampling for imagegen.py's hosted path, and the image the app shows
+# after generating one. Pure wheels, so no build step on any platform.
+Pillow==12.3.0
+
+# Symbolic maths for the code sandbox. codeexec.py grants this package
+# by name so generated maths is computed rather than guessed at - see
+# the note there. Pure Python.
+sympy==1.14.0
+
+# Free-tier text-to-video (hfvideo.py). HTTP only, no torch. Optional at
+# runtime: without HF_TOKEN the bay simply reports itself unavailable.
+huggingface_hub>=0.34

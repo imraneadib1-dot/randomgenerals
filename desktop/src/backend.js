@@ -56,28 +56,143 @@ function resolveAppRoot(dev) {
   return path.join(process.resourcesPath, "server");
 }
 
+/** Where python lives inside a venv, per platform. */
+function venvPython(venvDir) {
+  return process.platform === "win32"
+    ? path.join(venvDir, "Scripts", "python.exe")
+    : path.join(venvDir, "bin", "python");
+}
+
+/** The app's own venv, kept in userData rather than beside the server.
+ *
+ *  Two reasons. It survives an app update, which replaces the resources
+ *  directory wholesale; and userData is writable on every platform,
+ *  where the install directory may not be. */
+function managedVenv() {
+  return path.join(app.getPath("userData"), "venv");
+}
+
 function resolvePython(appRoot) {
-  // Prefer a venv shipped/created next to the server, then fall back to
-  // whatever Python is on PATH.
-  const candidates =
-    process.platform === "win32"
-      ? [
-          path.join(appRoot, ".venv", "Scripts", "python.exe"),
-          path.join(appRoot, "venv", "Scripts", "python.exe"),
-          "python",
-        ]
-      : [
-          path.join(appRoot, ".venv", "bin", "python"),
-          path.join(appRoot, "venv", "bin", "python"),
-          "python3",
-        ];
+  // Prefer the venv this app manages, then one shipped or created
+  // beside the server, then whatever Python is on PATH.
+  const candidates = [
+    venvPython(managedVenv()),
+    venvPython(path.join(appRoot, ".venv")),
+    venvPython(path.join(appRoot, "venv")),
+    process.platform === "win32" ? "python" : "python3",
+  ];
   for (const c of candidates) {
-    if (c === "python" || c === "python3" || fs.existsSync(c)) return c;
+    if (!c.includes(path.sep) || fs.existsSync(c)) return c;
   }
   return candidates[candidates.length - 1];
 }
 
-async function startBackend({ dev = false } = {}) {
+/** Run a command to completion, streaming its output to `onLine`. */
+function run(cmd, args, { cwd, onLine } = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, { cwd, windowsHide: true });
+    let tail = "";
+    const take = (buf) => {
+      tail = (tail + buf.toString()).slice(-4000);
+      if (onLine) {
+        buf
+          .toString()
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .forEach((l) => onLine(l));
+      }
+    };
+    child.stdout?.on("data", take);
+    child.stderr?.on("data", take);
+    child.on("error", (err) => resolve({ code: -1, output: err.message }));
+    child.on("close", (code) => resolve({ code, output: tail }));
+  });
+}
+
+/**
+ * Make sure there is a Python that can actually run the server.
+ *
+ * THIS DID NOT EXIST, and the header of this file claimed it did -
+ * "provisions dependencies on first run instead". Nothing provisioned
+ * anything. resolvePython() fell through to `python` on PATH and the
+ * server was spawned against whatever that happened to be, so on any
+ * machine without Flask already installed the app died with "the local
+ * server didn't start within 60s" and an error dialog telling the user
+ * to run a first-run setup that was never written.
+ *
+ * The install is deliberately requirements-desktop.txt, not
+ * requirements.txt: the latter pins torch and friends, ~2.3GB, for a
+ * local image model that a laptop without a GPU cannot use anyway.
+ *
+ * -> { ok, python, reason }
+ */
+async function ensureDependencies(appRoot, onStatus = () => {}) {
+  const venv = managedVenv();
+  const py = venvPython(venv);
+  const reqs = path.join(appRoot, "requirements-desktop.txt");
+  // Keyed on the requirements file's contents, so upgrading the app
+  // reinstalls only when the dependency list actually changed.
+  const stamp = path.join(venv, ".installed-from");
+  const want = fs.existsSync(reqs) ? fs.readFileSync(reqs, "utf8") : "";
+
+  if (fs.existsSync(py) && fs.existsSync(stamp)) {
+    try {
+      if (fs.readFileSync(stamp, "utf8") === want) {
+        return { ok: true, python: py };
+      }
+    } catch {
+      /* fall through and reinstall */
+    }
+  }
+
+  const base = process.platform === "win32" ? "python" : "python3";
+  onStatus("Looking for Python…");
+  const probe = await run(base, ["--version"]);
+  if (probe.code !== 0) {
+    return {
+      ok: false,
+      reason:
+        "Python 3.10 or newer is required and was not found.\n\n" +
+        "Install it from python.org, making sure to tick " +
+        '"Add Python to PATH", then start this app again.',
+    };
+  }
+  onStatus(`Found ${probe.output.trim() || "Python"}.`);
+
+  if (!fs.existsSync(py)) {
+    onStatus("Creating a private Python environment…");
+    const made = await run(base, ["-m", "venv", venv]);
+    if (made.code !== 0 || !fs.existsSync(py)) {
+      return {
+        ok: false,
+        reason: `Could not create the Python environment.\n\n${made.output}`,
+      };
+    }
+  }
+
+  onStatus("Installing dependencies. This happens once and takes a minute…");
+  const install = await run(
+    py,
+    ["-m", "pip", "install", "--disable-pip-version-check", "-r", reqs],
+    { onLine: (l) => onStatus(l.slice(0, 120)) },
+  );
+  if (install.code !== 0) {
+    return {
+      ok: false,
+      reason: `Installing dependencies failed.\n\n${install.output}`,
+    };
+  }
+
+  try {
+    fs.writeFileSync(stamp, want, "utf8");
+  } catch {
+    // Only costs a redundant reinstall next launch.
+  }
+  onStatus("Ready.");
+  return { ok: true, python: py };
+}
+
+async function startBackend({ dev = false, onStatus = () => {} } = {}) {
   const appRoot = resolveAppRoot(dev);
   const entry = path.join(appRoot, "app.py");
 
@@ -85,9 +200,17 @@ async function startBackend({ dev = false } = {}) {
     throw new Error(`Couldn't find the server at ${entry}`);
   }
 
+  // In development the repo's own venv and PATH are already set up, and
+  // building a second environment inside userData would only shadow it.
+  let python = resolvePython(appRoot);
+  if (!dev) {
+    const ready = await ensureDependencies(appRoot, onStatus);
+    if (!ready.ok) throw new Error(ready.reason);
+    python = ready.python;
+  }
+
   const port = await findFreePort();
   const url = `http://127.0.0.1:${port}`;
-  const python = resolvePython(appRoot);
 
   backendProcess = spawn(python, ["app.py"], {
     cwd: appRoot,
@@ -144,4 +267,4 @@ function stopBackend() {
   backendProcess = null;
 }
 
-module.exports = { startBackend, stopBackend };
+module.exports = { startBackend, stopBackend, ensureDependencies };

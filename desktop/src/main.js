@@ -114,19 +114,49 @@ if (!app.requestSingleInstanceLock()) {
     registerEditorHandlers(ipcMain);
     registerLicenseHandlers(ipcMain);
 
+    // A window BEFORE the backend, because the first run installs a
+    // Python environment and that takes about a minute. Without this
+    // the app shows nothing at all for the whole of it, which reads as
+    // a launcher that did not work rather than one that is busy.
+    let setupWindow = new BrowserWindow({
+      width: 460,
+      height: 340,
+      resizable: false,
+      show: true,
+      title: "Starting RandomGenerals AI",
+      backgroundColor: "#141a22",
+      webPreferences: { nodeIntegration: false, contextIsolation: true },
+    });
+    setupWindow.setMenuBarVisibility(false);
+    setupWindow.loadFile(path.join(__dirname, "setup.html"));
+
+    const setStatus = (text) => {
+      if (!setupWindow || setupWindow.isDestroyed()) return;
+      // JSON.stringify escapes quotes and newlines, so a pip line
+      // containing either cannot break out of the expression.
+      setupWindow.webContents
+        .executeJavaScript(
+          `(()=>{const el=document.getElementById("status");` +
+            `if(el)el.textContent=${JSON.stringify(String(text))};})()`,
+        )
+        .catch(() => {});
+    };
+
     try {
-      const { url } = await startBackend({ dev: IS_DEV });
+      const { url } = await startBackend({ dev: IS_DEV, onStatus: setStatus });
       createWindow(url);
+      if (setupWindow && !setupWindow.isDestroyed()) setupWindow.close();
+      setupWindow = null;
     } catch (err) {
+      if (setupWindow && !setupWindow.isDestroyed()) setupWindow.close();
+      setupWindow = null;
       // A failed backend start is the single most likely first-run
       // problem (no Python, no dependencies, port in use), so it gets a
       // real dialog explaining what to do rather than a blank window.
-      dialog.showErrorBox(
-        "RandomGenerals AI could not start",
-        `${err.message}\n\n` +
-          "This app needs Python 3.10+ and Ollama installed.\n" +
-          "Run the first-run setup, or see the README for details.",
-      );
+      // err.message now carries the specific reason from
+      // ensureDependencies() - which Python was missing, or what pip
+      // said - rather than only a timeout.
+      dialog.showErrorBox("RandomGenerals AI could not start", err.message);
       app.quit();
     }
   });
