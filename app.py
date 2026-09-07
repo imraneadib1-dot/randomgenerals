@@ -5996,8 +5996,14 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                 # the read timeout and surface an Ollama traceback,
                 # which is how this failure looked from the outside even
                 # after the fast channel was fixed.
-                history = _trim_for_local(history)
-                for piece in streamer(model, history, **local_kwargs):
+                # A NEW NAME, deliberately. Assigning to `history` here
+                # would make it local to this whole generator, and the
+                # first stream above reads it before this line runs -
+                # which failed with "cannot access local variable
+                # 'history' where it is not associated with a value" on
+                # every request, including ones that never got here.
+                local_history = _trim_for_local(history)
+                for piece in streamer(model, local_history, **local_kwargs):
                     full_reply += piece
                     yield piece
         except GeneratorExit:
