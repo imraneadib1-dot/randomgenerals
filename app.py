@@ -1611,6 +1611,77 @@ def privacy_page():
     ])
 
 
+# ----------------------------------------------------------------------
+# Downloads
+#
+# The desktop build, served from the site rather than from a release
+# host. One less account to depend on, and the page can tell the truth
+# about what is actually on disk instead of linking at a tag that may
+# not have an artefact attached.
+#
+# Files live OUTSIDE the repository - dropping a 124MB zip into static/
+# would put it in git, in every clone, and in the Docker build context.
+# The directory is created by the deploy, not by this file.
+# ----------------------------------------------------------------------
+DOWNLOADS_DIR = os.environ.get(
+    "DOWNLOADS_DIR",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloads"))
+
+# Named explicitly rather than globbed, so a stray file in that
+# directory cannot become a download link, and so the label and the
+# filename cannot drift apart.
+DOWNLOAD_BUILDS = [
+    {
+        "id": "windows",
+        "file": "RandomGenerals-windows-x64.zip",
+        "label": "Windows",
+        "detail": "Windows 10 or 11, 64-bit",
+        "note": "Unzip anywhere and run RandomGenerals.exe. "
+                "Windows will warn that the app is unsigned - "
+                "More info, then Run anyway.",
+    },
+]
+
+
+def _download_view():
+    """What is actually on disk, with sizes. Never invents a link."""
+    out = []
+    for build in DOWNLOAD_BUILDS:
+        path = os.path.join(DOWNLOADS_DIR, build["file"])
+        exists = os.path.isfile(path)
+        row = dict(build, available=exists, size="", updated="")
+        if exists:
+            size = os.path.getsize(path)
+            row["size"] = "%.0f MB" % (size / (1024 * 1024))
+            row["updated"] = datetime.datetime.fromtimestamp(
+                os.path.getmtime(path),
+                datetime.timezone.utc).strftime("%d %B %Y")
+        out.append(row)
+    return out
+
+
+@app.route("/download")
+def download_page():
+    return render_template("download.html", builds=_download_view())
+
+
+@app.route("/download/<build_id>")
+def download_build(build_id):
+    """Send the file. 404 if it is not one of ours, or not there."""
+    build = next((b for b in DOWNLOAD_BUILDS if b["id"] == build_id), None)
+    if not build:
+        abort(404)
+    path = os.path.join(DOWNLOADS_DIR, build["file"])
+    if not os.path.isfile(path):
+        abort(404)
+    # send_from_directory rather than send_file with a joined path: it
+    # refuses to serve anything outside the directory, which matters
+    # because build_id came off the URL. The allow-list above already
+    # makes traversal impossible; this is the belt to its braces.
+    return send_from_directory(DOWNLOADS_DIR, build["file"],
+                               as_attachment=True)
+
+
 @app.route("/acceptable-use")
 def acceptable_use_page():
     """The rules for what may be generated here, as its own page.
@@ -1787,6 +1858,7 @@ def robots_txt():
         "Allow: /privacy\n"
         "Allow: /refunds\n"
         "Allow: /acceptable-use\n"
+        "Allow: /download\n"
         "Allow: /contact\n"
         "Disallow: /app\n"
         "Disallow: /api/\n"
@@ -1809,6 +1881,10 @@ def sitemap_xml():
         ("privacy", "yearly", "0.3"),
         ("refunds", "yearly", "0.3"),
         ("acceptable-use", "yearly", "0.3"),
+        # Monthly and higher priority than the legal pages: this one
+        # changes whenever a build ships, and it is a page people are
+        # meant to arrive at rather than consult.
+        ("download", "monthly", "0.7"),
         ("contact", "yearly", "0.4"),
     ]
     entries = "".join(

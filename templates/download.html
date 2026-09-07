@@ -1,0 +1,187 @@
+<!doctype html>
+{# The download page.
+
+   Same shell as the legal pages: static, no scroll-driven video, no
+   animation. Someone here has already decided to install the thing and
+   wants the button - a page that performs at them is in the way.
+
+   Every figure on it comes from the file on disk (see _download_view in
+   app.py), so a build that is not there says so instead of offering a
+   link that 404s. #}
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Download — RandomGenerals</title>
+    <meta
+      name="description"
+      content="Download RandomGenerals for the desktop. Chat, code, images and diagrams, running on your own machine."
+    />
+    <link rel="canonical" href="{{ request.url_root }}download" />
+    <link rel="icon" href="{{ asset('favicon.svg') }}" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=Sora:wght@400;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{{ asset('landing.css') }}" />
+    <style>
+      .dl { max-width: 760px; margin: 0 auto; padding: 40px 22px 90px; }
+      .dl h1 { font-family: Sora, system-ui, sans-serif; margin: 0 0 8px; }
+      .dl .lede {
+        color: var(--text-soft);
+        font-size: 17px;
+        line-height: 1.6;
+        margin: 0 0 36px;
+        max-width: 56ch;
+      }
+      .dl-card {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 26px;
+        margin-bottom: 18px;
+        background: var(--ink-1);
+      }
+      .dl-card h2 {
+        font-family: Sora, system-ui, sans-serif;
+        font-size: 19px;
+        margin: 0 0 4px;
+      }
+      .dl-meta {
+        color: var(--text-faint);
+        font-size: 13px;
+        margin: 0 0 18px;
+        font-family: "JetBrains Mono", monospace;
+      }
+      .dl-note {
+        color: var(--text-soft);
+        font-size: 14px;
+        line-height: 1.65;
+        margin: 16px 0 0;
+      }
+      .dl-unavailable {
+        color: var(--text-faint);
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      .dl-steps {
+        margin: 40px 0 0;
+        padding: 0;
+        list-style: none;
+        counter-reset: step;
+      }
+      .dl-steps li {
+        counter-increment: step;
+        position: relative;
+        padding-left: 42px;
+        margin-bottom: 20px;
+        color: var(--text-soft);
+        font-size: 15px;
+        line-height: 1.65;
+      }
+      .dl-steps li::before {
+        content: counter(step);
+        position: absolute;
+        left: 0;
+        top: -1px;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        border: 1px solid var(--line);
+        display: grid;
+        place-items: center;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 12px;
+        color: var(--text-faint);
+      }
+      .dl-steps strong { color: var(--text); font-weight: 600; }
+      .dl h3 {
+        font-family: Sora, system-ui, sans-serif;
+        font-size: 16px;
+        margin: 40px 0 10px;
+      }
+      .dl-nav { margin-bottom: 22px; font-size: 13px; }
+      .dl-nav a { color: var(--text-faint); }
+    </style>
+  </head>
+  <body class="legal-page">
+    <main class="dl">
+      <p class="dl-nav"><a href="/">← randomgenerals.com</a></p>
+      <h1>Download RandomGenerals</h1>
+      <p class="lede">
+        The same assistant, running as an app on your own machine. Your
+        conversations stay on your computer rather than on this server.
+      </p>
+
+      {% for build in builds %}
+        <div class="dl-card">
+          <h2>{{ build.label }}</h2>
+          {% if build.available %}
+            <p class="dl-meta">
+              {{ build.size }} · updated {{ build.updated }}
+            </p>
+            <a class="btn btn-primary btn-lg"
+               href="/download/{{ build.id }}">
+              Download for {{ build.label }}
+            </a>
+            <p class="dl-note">{{ build.note }}</p>
+          {% else %}
+            <p class="dl-meta">{{ build.detail }}</p>
+            {# Says so rather than offering a link that 404s. #}
+            <p class="dl-unavailable">
+              Not published yet. The web app at
+              <a href="/app">randomgenerals.com/app</a> works today and
+              needs no install.
+            </p>
+          {% endif %}
+        </div>
+      {% endfor %}
+
+      <h3>What happens the first time you open it</h3>
+      <ol class="dl-steps">
+        <li>
+          <strong>Windows will warn you.</strong> "Windows protected your
+          PC" appears because the app is not code-signed — a certificate
+          costs a few hundred dollars a year. Click <strong>More
+          info</strong>, then <strong>Run anyway</strong>.
+        </li>
+        <li>
+          <strong>It sets itself up, once.</strong> About a minute, while
+          it builds a private Python environment. It does not touch
+          anything else installed on your machine, and it does not do
+          this again.
+        </li>
+        <li>
+          <strong>You need Python 3.10 or newer.</strong> If it is
+          missing the app says so and points you at
+          <a href="https://www.python.org/downloads/" rel="noopener">python.org</a>
+          — tick "Add Python to PATH" when installing.
+        </li>
+      </ol>
+
+      <h3>What is different from the website</h3>
+      <p class="dl-note">
+        Accounts and payment stay here. Signing in with Google and
+        upgrading both need a fixed public address, which an app running
+        on your own computer does not have — so the app links back to
+        this site for those, and picks up the account you signed into.
+        Everything else runs locally.
+      </p>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-brand">
+        <span>RandomGenerals</span>
+        <p>Chat, code, images and voice, on real hardware.</p>
+      </div>
+      <div class="footer-links">
+        <a href="/terms">Terms</a>
+        <a href="/privacy">Privacy</a>
+        <a href="/refunds">Refunds</a>
+        <a href="/acceptable-use">Acceptable use</a>
+        <a href="/contact">Contact</a>
+      </div>
+    </footer>
+  </body>
+</html>
