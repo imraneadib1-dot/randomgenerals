@@ -4158,6 +4158,30 @@ def _local_alternative(mode):
     """
     if not ollama_reachable():
         return None
+
+    # REACHABLE IS NOT THE SAME AS USABLE, and this is the second place
+    # that distinction has cost a working reply.
+    #
+    # On the deployment VM Ollama answers, eventually. The fast channel
+    # hits its per-minute limit, the request falls back here, and the
+    # visitor waits out the full 120-second HTTP timeout before being
+    # shown:
+    #
+    #   [Error talking to ollama: HTTPConnectionPool(host='localhost',
+    #    port=11434): Read timed out. (read timeout=120)]
+    #
+    # Two minutes of waiting to be told it did not work is worse than
+    # being told immediately that the channel is busy and when it frees
+    # up - which is what the caller does when this returns None.
+    #
+    # _local_is_fast() is measured, not guessed: the boot warm-up times
+    # a real request. Unlike the vision probe this one treats UNKNOWN as
+    # usable, because the measurement may not have finished on the first
+    # request after a restart and refusing then would strand the very
+    # first visitor.
+    if not _local_is_fast():
+        return None
+
     # Fetched once. ollama_provider() is an HTTP round trip, and this
     # runs on the failover path, where latency is already the reason we
     # are here.
@@ -4179,6 +4203,15 @@ def _local_alternative(mode):
 # it stays shorter than somebody's patience - past about half a minute
 # a spinner is worse than a sentence telling them when to come back.
 RATE_LIMIT_WAIT_SECONDS = 25
+
+# The longest reply asked of a local model on the failover path.
+#
+# Measured on the deployment VM: gemma3:1b writes about 180 tokens in
+# 12 seconds. 900 is therefore roughly a minute of generation - long
+# enough for a real answer, short enough that somebody waiting for it
+# does not conclude the app has hung. The code bay's own ceiling is
+# 3,500, which on this hardware is four minutes.
+LOCAL_FALLBACK_MAX_TOKENS = 900
 
 
 def _groq_has_room(plan):
@@ -4616,7 +4649,18 @@ def stream_ollama(model, history, options=None, images=None, usage=None):
         json=body,
         headers=ollama_headers(),
         stream=True,
-        timeout=120,
+        # (connect, read). The read timeout applies BETWEEN CHUNKS on a
+        # streamed response, not to the whole reply - so this is "how
+        # long may it go silent", not "how long may it take".
+        #
+        # It was a single 120, which meant a stall - a model still
+        # loading, or a request queued behind another one - showed
+        # nothing at all for two minutes and then an HTTPConnectionPool
+        # traceback in the middle of the conversation. Two minutes of
+        # nothing is worse than a quick, honest failure: once tokens are
+        # flowing they arrive every fraction of a second, so 45 seconds
+        # of silence already means something is wrong.
+        timeout=(10, 45),
     ) as r:
         r.raise_for_status()
         for line in r.iter_lines():
@@ -5871,7 +5915,20 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                 provider, model = "ollama", local
                 streamer = PROVIDER_STREAMERS[provider]
                 fell_back_to_cloud = True
-                for piece in streamer(model, history, **stream_kwargs):
+                # A CEILING THE LOCAL MODEL CAN ACTUALLY REACH.
+                #
+                # The code bay asks for up to 3,500 tokens, which is a
+                # fair request of a hosted 120B and a very long wait from
+                # a 1B on two shared cores. The fallback exists to get an
+                # answer out, not to attempt the same answer slowly, so
+                # it asks for a shorter one - which is also honest about
+                # what a model this size is good for.
+                local_kwargs = dict(stream_kwargs)
+                opts = dict(local_kwargs.get("options") or {})
+                if opts.get("num_predict", 0) > LOCAL_FALLBACK_MAX_TOKENS:
+                    opts["num_predict"] = LOCAL_FALLBACK_MAX_TOKENS
+                    local_kwargs["options"] = opts
+                for piece in streamer(model, history, **local_kwargs):
                     full_reply += piece
                     yield piece
         except GeneratorExit:
