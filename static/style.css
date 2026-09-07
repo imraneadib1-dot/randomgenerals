@@ -49,12 +49,23 @@
   --sky-mid: #1e3346;
   --sky-bottom: #2a4155;
 
-  /* Panels are a barely-lit surface that still reads as raised. */
-  --surface: rgba(223, 226, 220, 0.05);
-  --surface-raised: rgba(223, 226, 220, 0.08);
-  --panel: rgba(20, 41, 66, 0.8);
-  --border: rgba(223, 226, 220, 0.12);
-  --border-strong: rgba(160, 131, 72, 0.34);
+  /* Panels are a barely-lit surface that still reads as raised.
+     RAISED FROM 0.05/0.08/0.12. At those values a panel and the ground
+     behind it differed by about two levels out of 255 - the separation
+     existed in the stylesheet and not on the screen, so cards, the
+     sidebar and the composer all read as one flat field. These are
+     still subtle; they are just now visible. */
+  --surface: rgba(223, 226, 220, 0.075);
+  --surface-raised: rgba(223, 226, 220, 0.115);
+  --panel: rgba(20, 41, 66, 0.85);
+  --border: rgba(223, 226, 220, 0.17);
+  --border-strong: rgba(160, 131, 72, 0.38);
+
+  /* A one-pixel light line along the top of a raised surface. This is
+     what actually sells depth on a dark UI - a shadow says an object is
+     above the ground, and a lit edge says light is falling on it. Cheap,
+     and it does more than another 20% of shadow would. */
+  --edge-lit: inset 0 1px 0 rgba(223, 226, 220, 0.07);
 
   /* Peach, and two steps down from it. Stepping the same hue rather
      than fading to grey keeps the text warm against the cool ground at
@@ -110,6 +121,33 @@
   --radius-sm: 10px;
   --radius-md: 14px;
   --radius-lg: 22px;
+
+  /* A TYPE SCALE, rather than a size per component.
+     Sizes were set individually wherever they were needed - 14.5px
+     here, 10.5px there, 13px somewhere else - which is how a stylesheet
+     ends up with eleven sizes that are each nearly the same as two
+     others. These are a ratio apart, so a heading and the text under it
+     look related rather than arbitrary, and there is a name to reach
+     for instead of a number to invent.
+
+     Body is 15px, up from 14.5. A chat reply is read for minutes at a
+     time; half a pixel is not a design decision worth making at the
+     cost of legibility. */
+  --text-xs: 11px;    /* labels, timestamps, the role line */
+  --text-sm: 13px;    /* secondary copy, hints, chips */
+  --text-base: 15px;  /* body - messages, prose */
+  --text-md: 17px;    /* section headings inside panels */
+  --text-lg: 21px;    /* panel titles */
+  --text-xl: 27px;    /* the greeting */
+
+  /* Vertical rhythm. Same reasoning: a handful of steps, used
+     everywhere, instead of a margin chosen per element. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 18px;
+  --space-5: 26px;
+  --space-6: 38px;
 
   --shadow-card: 0 20px 50px rgba(0, 0, 0, 0.45), 0 2px 10px rgba(0, 0, 0, 0.3);
   --shadow-soft: 0 6px 20px rgba(0, 0, 0, 0.3);
@@ -420,8 +458,12 @@ html.time-night .night-moon {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  gap: 12px;
-  padding: 13px 22px;
+  gap: var(--space-3);
+  /* A little more room than 13px. The top bar carries the brand, the
+     bay switch and the account controls; at the old height those three
+     groups were closer to each other than the bar was to its own edge,
+     which reads as cramped rather than dense. */
+  padding: var(--space-4) var(--space-5);
   /* A translucent dark strip, matching the landing page's sticky nav -
      this was a solid blue gradient under the light theme, which was the
      one piece of chrome that stayed bright after the palette went dark. */
@@ -429,7 +471,9 @@ html.time-night .night-moon {
   -webkit-backdrop-filter: blur(18px);
   backdrop-filter: blur(18px);
   border-bottom: 1px solid var(--border);
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+  /* The lit edge belongs on the inside top here: the bar is the highest
+     surface on the page, so light lands on it before anything else. */
+  box-shadow: var(--edge-lit), 0 4px 24px rgba(0, 0, 0, 0.35);
 }
 
 .topbar-brand {
@@ -671,11 +715,15 @@ html.time-night .night-moon {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 9px 10px;
+  padding: 10px var(--space-3);
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--ink-soft);
   cursor: pointer;
+  /* Colour and background move on hover and selection; transitioning
+     them stops the list flickering as the pointer crosses it. */
+  transition: background 140ms ease, color 140ms ease,
+    border-color 140ms ease;
   white-space: nowrap;
   overflow: hidden;
   border: 1px solid transparent;
@@ -708,7 +756,9 @@ html.time-night .night-moon {
   background: var(--surface-raised);
   border-color: var(--border-strong);
   color: var(--ink);
-  box-shadow: none;
+  /* The lit edge, plus a rail in the active bay's colour down the left.
+     A border alone has to be read; a coloured rail is seen. */
+  box-shadow: var(--edge-lit), inset 3px 0 0 var(--bay);
 }
 .thread-item.active .thread-title {
   color: var(--ink);
@@ -1199,13 +1249,28 @@ html.time-night .night-moon {
 }
 
 .chat-log {
-  max-width: 760px;
+  /* 820, up from 760. The assistant's own 68ch measure already governs
+     line length, so the narrower column was not protecting readability
+     - it was only squeezing code blocks and tables, which have no
+     measure and want the room. */
+  max-width: 820px;
   margin: 0 auto;
-  padding: 30px 22px 24px;
+  padding: var(--space-6) var(--space-5) var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  /* A turn is a question and its answer. Spacing them evenly makes the
+     conversation one undifferentiated column; this is the base gap, and
+     the rule below closes the gap between a question and ITS reply so
+     the pair reads as a pair. */
+  gap: var(--space-5);
   min-height: 100%;
+}
+
+/* An assistant reply belongs to the message above it. Half the gap
+   after a user message groups them, and the full gap before the next
+   question separates the turns. */
+.msg.user + .msg.assistant {
+  margin-top: calc(var(--space-5) * -0.45);
 }
 
 .empty-state {
@@ -1256,18 +1321,18 @@ html.time-night .night-moon {
 }
 
 .empty-hints {
-  margin-top: 24px;
+  margin-top: var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-1);
   font-family: var(--font-body);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   color: var(--ink-faint);
 }
 .empty-hints span {
   color: var(--ink-soft);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--text-xs);
 }
 
 .msg {
@@ -1306,11 +1371,11 @@ html.time-night .night-moon {
   gap: 6px;
   font-family: var(--font-body);
   font-weight: 700;
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   color: var(--ink-faint);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 5px;
+  letter-spacing: 0.06em;
+  margin-bottom: var(--space-2);
   padding: 0 4px;
 }
 
@@ -1322,15 +1387,21 @@ html.time-night .night-moon {
 }
 
 .msg-bubble {
-  padding: 12px 18px;
+  padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-lg);
-  font-size: 14.5px;
-  line-height: 1.65;
+  font-size: var(--text-base);
+  /* 1.75 rather than 1.65. Long-form prose on a dark ground needs more
+     leading than the same text on white - light type on dark blooms
+     slightly, and tight lines start to run together. */
+  line-height: 1.75;
   word-wrap: break-word;
 }
 
 .msg.user .msg-bubble {
   background: var(--user-bubble);
+  /* The lit top edge again. On the one element in the conversation that
+     IS a raised object, it is worth the pixel. */
+  box-shadow: var(--edge-lit);
   /* Was rgba(59,130,246,...) - a BLUE border, left over from a palette
      this app no longer uses. There is no blue anywhere else in the
      scheme, so it read as a stray. */
@@ -2844,7 +2915,7 @@ html.time-night .night-moon {
 
 .greeting {
   font-family: var(--font-display);
-  font-size: clamp(1.6rem, 3.6vw, 2.3rem);
+  font-size: clamp(var(--text-xl), 3.6vw, 2.3rem);
   font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1.15;
@@ -3696,9 +3767,9 @@ html.time-night .night-moon {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 8px;
-  margin-top: 26px;
-  max-width: 560px;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+  max-width: 600px;
 }
 
 .starters button {
@@ -3706,9 +3777,12 @@ html.time-night .night-moon {
   background: var(--surface);
   color: var(--ink-soft);
   border-radius: 999px;
-  padding: 8px 15px;
+  /* Roomier. These are the only things to click on an empty screen, so
+     they should look like invitations rather than tags. */
+  padding: 10px var(--space-4);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--text-sm);
+  box-shadow: var(--edge-lit);
   cursor: pointer;
   transition: color 0.16s ease, border-color 0.16s ease,
     transform 0.16s ease, background 0.16s ease;
@@ -3988,11 +4062,18 @@ html[data-motion="reduced"] *::after {
   --sky-mid: #f7f5f0;
   --sky-bottom: #efece4;
 
-  --surface: rgba(24, 42, 58, 0.04);
-  --surface-raised: rgba(255, 255, 255, 0.86);
-  --panel: rgba(255, 255, 255, 0.82);
-  --border: rgba(24, 42, 58, 0.14);
+  --surface: rgba(24, 42, 58, 0.05);
+  --surface-raised: rgba(255, 255, 255, 0.9);
+  --panel: rgba(255, 255, 255, 0.86);
+  --border: rgba(24, 42, 58, 0.16);
   --border-strong: rgba(122, 99, 53, 0.42);
+
+  /* WHITE, not near-white. The dark theme's lit edge is light falling
+     on a raised surface; on a white panel that same line is invisible,
+     so here it is the opposite gesture - a hairline of pure white above
+     a surface that is already almost white, which reads as a highlight
+     rather than as nothing. */
+  --edge-lit: inset 0 1px 0 rgba(255, 255, 255, 0.9);
 
   --ink: #182a3a;
   --ink-soft: #42566a;
