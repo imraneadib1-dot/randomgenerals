@@ -4171,6 +4171,16 @@ def _local_alternative(mode):
     return names[0] if names else None
 
 
+# How long a request may wait for the per-minute budget to refill
+# before giving up and saying so.
+#
+# Groq's window is a minute, so the wait is at most this and usually a
+# few seconds. Sitting on the request is only better than failing while
+# it stays shorter than somebody's patience - past about half a minute
+# a spinner is worse than a sentence telling them when to come back.
+RATE_LIMIT_WAIT_SECONDS = 25
+
+
 def _groq_has_room(plan):
     """Whether this plan may spend the shared per-minute budget now.
 
@@ -5816,9 +5826,46 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                 # by then there is nowhere to fail over to.
                 local = _local_alternative(mode)
                 if not local:
-                    full_reply = ("[The fast channel is at its per-minute "
-                                  "limit and no local model is running to "
-                                  "take over. Try again in a moment.]")
+                    # NO LOCAL MODEL - but that used to end the request,
+                    # and it should not. The per-minute budget refills on
+                    # a fixed window and the response headers say exactly
+                    # when: "try again in a moment" was asking somebody
+                    # to do by hand, without knowing the number, the one
+                    # thing the server could do for them.
+                    #
+                    # A desktop install shares one free key with the
+                    # public site, so it hits this while the site is
+                    # busy and is left with no fallback at all. Waiting
+                    # out a window that is usually seconds away turns a
+                    # dead end into a pause.
+                    _left, resets_in = groq_api.budget_state()
+                    waited = False
+                    if resets_in and resets_in <= RATE_LIMIT_WAIT_SECONDS:
+                        # +1 so the window has genuinely rolled over
+                        # rather than landing on the boundary.
+                        time.sleep(resets_in + 1)
+                        waited = True
+                    if waited:
+                        try:
+                            for piece in streamer(model, history,
+                                                  **stream_kwargs):
+                                full_reply += piece
+                                yield piece
+                            # `return` still runs the finally below,
+                            # which is what saves and moderates the
+                            # reply - so there is nothing to do here.
+                            return
+                        except groq_api.ProviderUnavailable:
+                            # Still busy after the window rolled - the
+                            # site is under sustained load rather than
+                            # briefly spiky. Fall through and say so.
+                            pass
+                    _left, resets_in = groq_api.budget_state()
+                    full_reply = (
+                        "[The fast channel has used its per-minute "
+                        "allowance and there is no local model here to "
+                        "take over. It refills in about %d seconds - "
+                        "send that again then.]" % max(1, int(resets_in or 5)))
                     yield full_reply
                     return
                 provider, model = "ollama", local
