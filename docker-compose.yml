@@ -1,0 +1,79 @@
+# Run the whole thing with one command.
+#
+#     cp .env.example .env     # then fill in GROQ_API_KEY
+#     docker compose up --build
+#     open http://localhost:7860
+#
+# WHY THIS FILE EXISTS RATHER THAN A `docker run` IN THE README
+#
+# The Dockerfile's own header warns that leaving DB_PATH at its default
+# wipes every account, thread and credit balance on each deploy, because
+# the container filesystem does not survive one. That warning has to be
+# acted on by whoever runs the image, and a warning that depends on
+# being read is a warning that eventually is not. Here the volume is
+# declared, so getting it right is the default rather than the careful
+# path.
+
+services:
+  app:
+    build: .
+    # A name, so `docker compose logs app` and `docker exec` are typeable.
+    container_name: randomgenerals
+    restart: unless-stopped
+    ports:
+      - "${PORT:-7860}:7860"
+
+    # Secrets come from .env, which is NOT baked into the image - see
+    # .dockerignore, where excluding it is the first entry and the
+    # reason the file was written. env_file passes it at RUN time
+    # instead, so the values live in the container's environment and
+    # never in a layer anyone can pull and unpack.
+    env_file:
+      - .env
+
+    environment:
+      # The one setting that decides whether this is a real deployment
+      # or a demo. /data is the volume below; the default inside the
+      # image is a path on the container filesystem, which is discarded
+      # on every rebuild.
+      DB_PATH: /data/app.db
+      APP_DEBUG: "0"
+      ALLOW_MOCK_UPGRADE: "0"
+      PYTHONUNBUFFERED: "1"
+      # No proxy in front of this by default, so the app must not trust
+      # X-Forwarded-* headers - anyone could set them. Set it to 1 only
+      # when something you control terminates TLS in front.
+      TRUST_PROXY: "0"
+      FORCE_HTTPS_COOKIES: "0"
+
+    volumes:
+      # Accounts, threads, credits, memories. The whole database.
+      - rg-data:/data
+      # Generated images and uploads. Separate volume rather than part
+      # of the image: these are written at runtime and would otherwise
+      # be lost on rebuild alongside everything else.
+      - rg-generated:/app/static/generated
+      - rg-uploads:/app/static/uploads
+
+    # The image already declares a HEALTHCHECK against /api/health;
+    # start_period is generous because the first boot builds the schema
+    # and warms a model before it answers.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import sys, urllib.request
+          sys.exit(0 if urllib.request.urlopen(
+              "http://127.0.0.1:7860/api/health", timeout=4).status == 200
+              else 1)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  rg-data:
+  rg-generated:
+  rg-uploads:

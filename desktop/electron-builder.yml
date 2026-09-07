@@ -35,6 +35,23 @@ extraResources:
       - "!brain/corpus/**"
       - "!app.db*"
       - "!.env"
+      # THE BUILD OUTPUT LIVES INSIDE THE DIRECTORY BEING COPIED.
+      #
+      # `from: ../` is the repository root, and dist/ is under it. With
+      # "**/*.py" matching, a second build copied the first build's
+      # resources/server into the new one, then that copy into the next,
+      # until Windows refused the path length:
+      #
+      #   error: open("desktop/dist/win-unpacked/resources/server/
+      #   desktop/dist/win-unpacked/resources/server/...")
+      #   Filename too long
+      #
+      # Excluding the whole desktop directory also drops node_modules,
+      # which is ~200MB of Electron's own build tooling and has no
+      # business inside the server resources either.
+      - "!desktop/**"
+      - "!mobile/**"
+      - "!.git/**"
 
 win:
   target:

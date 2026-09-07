@@ -1,0 +1,90 @@
+# What must NOT go into the image.
+#
+# There was no .dockerignore, so `COPY . .` in the Dockerfile took the
+# whole working directory. Three separate problems, worst first:
+#
+#   1. .env went in. That file holds the live Paddle API key, the SMTP
+#      password, the Groq key and the settings encryption key. Anyone
+#      who can pull the image can read them - `docker history` and an
+#      unpacked layer are enough, and deleting the file in a later layer
+#      does not remove it from the earlier one.
+#   2. app.db went in, so a published image would carry real accounts,
+#      real conversations and real email addresses.
+#   3. .venv, node_modules and the brain checkpoints went in, which is
+#      hundreds of megabytes of host-specific binaries that the image
+#      cannot use anyway - it installs its own from
+#      requirements-cloud.txt.
+#
+# Anything listed here is also excluded from the build CONTEXT, so it is
+# never even uploaded to the daemon. That is why the build gets faster
+# as well as smaller and safer.
+
+# ---- secrets. Never, under any circumstances. ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+secrets/
+
+# ---- real data ----
+app.db
+app.db-wal
+app.db-shm
+*.sqlite
+*.sqlite3
+data/
+chat_data.json
+credits.json
+users.json
+logs/
+
+# ---- things the image builds for itself ----
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+node_modules/
+desktop/node_modules/
+desktop/dist/
+
+# ---- large local artefacts the container never runs ----
+# The local image and language models, and their caches. The container
+# is CPU-only and answers from Groq - see the Dockerfile's note on why
+# torch is not installed either.
+brain/checkpoint-*.npz
+brain/corpus/
+.cache/
+.ollama/
+models/
+mobile/
+desktop/
+
+# ---- user-generated content, regenerated at runtime ----
+static/uploads/
+static/generated/
+static/video/renders/
+
+# ---- version control and editor noise ----
+.git/
+.gitignore
+.github/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---- local-only tooling that has no job inside the container ----
+.claude/
+tools/
+scripts/
+deploy/
+deploy.sh
+cloudflared-config.yml
+*.md
+!README.md

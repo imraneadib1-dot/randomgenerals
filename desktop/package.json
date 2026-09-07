@@ -20,5 +20,8 @@
   },
   "dependencies": {
     "electron-updater": "^6.3.9"
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
   }
 }
