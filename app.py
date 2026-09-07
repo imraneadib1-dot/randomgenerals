@@ -975,7 +975,10 @@ def plan_perks():
 
 DATA_LOCK = threading.Lock()
 CREDITS_LOCK = threading.Lock()
-USERS_LOCK = threading.Lock()
+# RLock, not Lock. _find_or_create_user() has to hold this across the
+# "is this email taken" check AND the save that follows, and save_users()
+# takes the same lock - which a plain Lock would deadlock on.
+USERS_LOCK = threading.RLock()
 
 
 def now_iso():
@@ -1842,9 +1845,41 @@ def index():
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
+def _find_or_create_user(email, password_hash="", google_id=None):
+    """Look up an account by email, or make one. -> (uid, created).
+
+    ATOMIC, and that is the point. Both callers used to do this as two
+    steps - check USERS for the email, then create if absent - with
+    nothing between them. Two requests arriving together (a double-
+    clicked Google button is enough) both saw no account and both made
+    one, leaving two entries with the same email in USERS.
+
+    db.save_users() then deletes every row and reinserts them, so the
+    duplicate hit the UNIQUE constraint on users.email and threw. Not
+    once: from then on EVERY save failed, so nothing about any account
+    could be persisted at all. It surfaced as a 500 on /api/credits,
+    which is merely where the next save happened to be attempted.
+
+    USERS_LOCK is an RLock so this can hold it across the check, the
+    insert and save_users() - which takes the same lock - without the
+    deadlock that a plain Lock would give.
+    """
+    with USERS_LOCK:
+        existing = next((u for u in USERS.values()
+                         if (u.get("email") or "") == email), None)
+        if existing:
+            return existing["id"], False
+        return _create_user(email, password_hash=password_hash,
+                            google_id=google_id), True
+
+
 def _create_user(email, password_hash="", google_id=None):
-    """Adds a new row to USERS and returns its id. Caller has already
-    checked the email isn't taken."""
+    """Adds a new row to USERS and returns its id.
+
+    Prefer _find_or_create_user() from request paths: this one assumes
+    the caller has already established the email is free, and doing that
+    outside the lock is what produced duplicate accounts.
+    """
     uid = str(uuid.uuid4())
     USERS[uid] = {
         "id": uid,
@@ -1911,7 +1946,14 @@ def auth_signup():
     if err:
         return jsonify({"error": err}), 400
 
-    uid = _create_user(email, password_hash=generate_password_hash(password))
+    # Checked again, atomically. The check above is kept because it
+    # answers with the right status code for the ordinary case; this one
+    # closes the gap between that check and the insert, where two
+    # simultaneous signups for the same address both used to get through.
+    uid, created = _find_or_create_user(
+        email, password_hash=generate_password_hash(password))
+    if not created:
+        return jsonify({"error": "An account with that email already exists."}), 409
     USERS[uid]["name"] = name
     USERS[uid]["birth_year"] = birth_year
     save_users()
@@ -1996,16 +2038,17 @@ def google_callback():
     if not email or not info.get("email_verified"):
         return redirect("/app?auth_error=unverified_email")
 
-    user = next((u for u in USERS.values() if u["email"] == email), None)
-    if user:
-        uid = user["id"]
+    # One atomic step. A double-clicked sign-in button fires this
+    # callback twice, and as a look-then-create it made two accounts
+    # with the same address - which then broke every subsequent save.
+    uid, created = _find_or_create_user(email, google_id=info.get("sub"))
+    if not created:
+        user = USERS[uid]
         # A local-signup account signing in with Google for the first
         # time - link it rather than silently ignoring the Google id.
         if not user.get("google_id"):
             user["google_id"] = info.get("sub")
             save_users()
-    else:
-        uid = _create_user(email, google_id=info.get("sub"))
 
     _migrate_guest_threads(uid)
     session["user_id"] = uid

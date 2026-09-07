@@ -39,8 +39,35 @@ _LEGACY_FILES = {
 
 _GUEST_OWNER = "guest"  # sentinel row in `credits` for the shared, signed-out pool
 
-_lock = threading.Lock()
-_conn: sqlite3.Connection | None = None
+# ONE CONNECTION PER THREAD, not one per process.
+#
+# It was one shared connection with check_same_thread=False, and gunicorn
+# runs eight threads. Writes took _lock; reads did not - load_credits and
+# every other SELECT called conn.execute() straight off the shared
+# object. Two threads using one sqlite3 connection at the same moment is
+# undefined, and what it actually produced was:
+#
+#     sqlite3.InterfaceError: bad parameter or other API misuse
+#
+# on /api/usage and /api/credits, intermittently, for real visitors. The
+# parameter was fine every time; the connection was busy.
+#
+# Locking the reads too would fix the crash and serialise every request
+# in the process behind one mutex. A connection each is better and is
+# what WAL was already enabled for: WAL allows many readers alongside
+# one writer, across connections, which is exactly this workload.
+#
+# _lock stays, for the multi-statement full-replace saves. Those DELETE
+# every row and reinsert, and two of them interleaving would be a mess
+# regardless of how many connections are involved.
+_lock = threading.RLock()
+_local = threading.local()
+
+# Schema creation and migration run once per process, not once per
+# thread. Guarded by its own lock so the second thread to arrive waits
+# for the first to finish rather than racing it through CREATE TABLE.
+_init_lock = threading.Lock()
+_initialised = False
 
 
 SCHEMA = """
@@ -392,17 +419,33 @@ def _migrate_columns(conn):
 
 
 def _connect():
-    global _conn
-    if _conn is None:
-        _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-        _conn.row_factory = sqlite3.Row
-        _conn.execute("PRAGMA journal_mode=WAL")   # readers don't block the writer
-        _conn.execute("PRAGMA foreign_keys=ON")
-        _conn.executescript(SCHEMA)
-        _conn.commit()
-        _migrate_columns(_conn)
-        _migrate_legacy_json(_conn)
-    return _conn
+    """This thread's connection, opening and initialising it if needed."""
+    global _initialised
+
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        return conn
+
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")   # readers don't block the writer
+    conn.execute("PRAGMA foreign_keys=ON")
+    # With several connections there is now a real writer lock to
+    # contend for. Waiting five seconds for it beats "database is
+    # locked" on a page load; WAL keeps writers rare enough that this
+    # should never actually be reached.
+    conn.execute("PRAGMA busy_timeout=5000")
+
+    with _init_lock:
+        if not _initialised:
+            conn.executescript(SCHEMA)
+            conn.commit()
+            _migrate_columns(conn)
+            _migrate_legacy_json(conn)
+            _initialised = True
+
+    _local.conn = conn
+    return conn
 
 
 def _migrate_legacy_json(conn):
@@ -583,6 +626,27 @@ def load_users():
 def save_users(users):
     """Replace `users` and their `credits` rows with the contents of
     `users`. Same full-replace reasoning as save_threads()."""
+    # Caught here rather than left to the UNIQUE constraint, because the
+    # constraint's own message names neither account and arrives after
+    # every row has already been deleted. Two entries sharing an address
+    # meant this function threw on every call from then on, so nothing
+    # about any account could be saved - and it surfaced as a 500 on
+    # whichever endpoint next tried. _find_or_create_user() in app.py is
+    # what stops them being created; this is what makes it obvious if
+    # one ever gets in anyway.
+    seen = {}
+    for uid, u in users.items():
+        email = (u.get("email") or "").strip()
+        if not email:
+            continue
+        if email in seen:
+            raise RuntimeError(
+                "Refusing to save: %r is on two accounts (%s and %s). "
+                "Nothing was written. Merge or remove one of them - see "
+                "_find_or_create_user() in app.py for how this is meant "
+                "to be prevented." % (email, seen[email], uid))
+        seen[email] = uid
+
     conn = _connect()
     with _lock:
         conn.execute("DELETE FROM users")
