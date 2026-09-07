@@ -1052,6 +1052,26 @@ _local_speed: dict[str, float | None] = {"warm_seconds": None}
 # that was fine.
 LOCAL_WARM_BUDGET_SECONDS = 25.0
 
+# What the warm-up asks, and the point is that it is not "hi".
+#
+# About 700 characters - a short question with a little context, which
+# is the smallest thing a real request looks like. The old probe sent
+# two characters and asked for one token; this asks the model to do the
+# kind of work it will actually be given, so the number it produces
+# means something.
+WARMUP_PROBE_PROMPT = (
+    "Here is a short function:\n\n"
+    "def total(items):\n"
+    "    n = 0\n"
+    "    for i in items:\n"
+    "        n = n + i['price'] * i['qty']\n"
+    "    return n\n\n"
+    "It is called on every request and the list can hold a few thousand "
+    "rows. Briefly: is there anything worth changing about it, and why? "
+    "Two or three sentences is plenty - this is a warm-up, not a "
+    "review, and the answer is discarded."
+)
+
 
 def _local_is_fast():
     """Whether the local model should be the default anyone lands on.
@@ -1115,13 +1135,28 @@ def _warm_providers():
                     "keep_alive": OLLAMA_KEEP_ALIVE,
                     # The real system prompt, so the shared prefix is
                     # already in the KV cache when someone actually types.
+                    #
+                    # AND A PROMPT WITH SOMETHING IN IT. This asked "hi"
+                    # and requested ONE token, which on the deployment VM
+                    # returned in 0.7 seconds - so _local_is_fast() said
+                    # yes, the router sent real work to Ollama, and real
+                    # work took 55 to 90 seconds to produce its FIRST
+                    # token. Measured, at 2k, 6k and 12k characters of
+                    # prompt; the machine was never fast, the probe was
+                    # measuring the one request shape that is.
+                    #
+                    # Reading the prompt is most of the cost for a small
+                    # model on shared cores, so a probe with no prompt
+                    # measures almost nothing about serving one.
                     "messages": [
                         {"role": "system", "content": CHAT_SYSTEM_PROMPT},
-                        {"role": "user", "content": "hi"},
+                        {"role": "user", "content": WARMUP_PROBE_PROMPT},
                     ],
                     # Must match what _stream_reply() sends for chat, or
                     # this warms a runner that the first request discards.
-                    "options": {"num_predict": 1, "num_ctx": 8192},
+                    # 24 tokens rather than 1: enough to include the cost
+                    # of actually starting to generate.
+                    "options": {"num_predict": 24, "num_ctx": 8192},
                 },
                 timeout=300)
             # The warm-up is already a real request, so timing it is free
