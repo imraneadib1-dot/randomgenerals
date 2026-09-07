@@ -1,4 +1,4 @@
-# RandomGenerals AI — iOS / Android shell
+# RandomGenerals — iOS / Android shell
 
 Capacitor wraps the live site in a native app. This directory holds
 everything that can be prepared on Windows. The parts that need a Mac are

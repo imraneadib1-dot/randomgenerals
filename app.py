@@ -597,7 +597,7 @@ STRENGTH_LEVELS = {
 DEFAULT_STRENGTH = "quick"
 
 CHAT_SYSTEM_PROMPT = (
-    "You are RandomGenerals AI, a friendly and knowledgeable general-purpose "
+    "You are RandomGenerals, a friendly and knowledgeable general-purpose "
     "assistant. Answer clearly and conversationally. Match your length to "
     "the question - short answers for simple questions, more detail when "
     "it's actually warranted. Don't force markdown structure (headers, "
@@ -1411,7 +1411,7 @@ def stats_json():
 def terms_page():
     return _legal("terms", "Terms of Service", [
         {"heading": "What this is", "body": [
-            "RandomGenerals AI is a hosted assistant for chat, code, image "
+            "RandomGenerals is a hosted assistant for chat, code, image "
             "generation and video editing. Using it means accepting these "
             "terms.",
             "You must be at least 16, or old enough to enter a contract "
@@ -1634,7 +1634,7 @@ def acceptable_use_page():
             "images of real people.",
         ]},
         {"heading": "What this product is", "body": [
-            "RandomGenerals AI is an independent interface built on top "
+            "RandomGenerals is an independent interface built on top "
             "of third-party AI models. We do not train or own the "
             "underlying models. Where a model's name is shown in the "
             "app, it is there so you know which one answered - it is "
@@ -4159,7 +4159,7 @@ def list_providers():
                     "off-device, so prompts leave this machine.")
         providers.append({
             "id": "groq",
-            "label": "RandomGenerals AI Turbo",
+            "label": "RandomGenerals Turbo",
             "available": bool(groq_models),
             "models": groq_models,
             "model_info": [describe_model(m, plan) for m in groq_models],
@@ -4313,7 +4313,7 @@ def ollama_provider(plan=None):
 
     THE LABEL IS THE PRODUCT NAME, THE NOTE IS THE TRUTH
 
-    Both channels are called RandomGenerals AI, because that is what this
+    Both channels are called RandomGenerals, because that is what this
     is - a visitor did not come here to choose between vendors, and a
     picker offering "Cloud" and "Fast cloud" was advertising suppliers
     instead of the thing they came for.
@@ -4347,7 +4347,7 @@ def ollama_provider(plan=None):
 
     return {
         "id": "ollama",
-        "label": "RandomGenerals AI",
+        "label": "RandomGenerals",
         # HIDDEN FROM THE PICKER, NOT REMOVED.
         #
         # Two jobs remain that the hosted channel cannot do, so the

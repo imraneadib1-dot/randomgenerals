@@ -1,8 +1,8 @@
 {
   "name": "randomgenerals-desktop",
-  "productName": "RandomGenerals AI",
+  "productName": "RandomGenerals",
   "version": "1.0.0",
-  "description": "Desktop shell for RandomGenerals AI - local LLM chat, code, and image generation.",
+  "description": "Desktop shell for RandomGenerals - local LLM chat, code, and image generation.",
   "main": "src/main.js",
   "author": "RandomGenerals",
   "license": "UNLICENSED",

@@ -1,4 +1,4 @@
-# RandomGenerals AI
+# RandomGenerals
 
 A chat, coding, image and diagram assistant that runs on one free
 virtual machine — two ARM cores, 11.9 GB of RAM, no GPU.

@@ -1,5 +1,5 @@
 appId: com.randomgenerals.ai
-productName: RandomGenerals AI
+productName: RandomGenerals
 copyright: Copyright © RandomGenerals
 
 directories:
@@ -75,7 +75,7 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: RandomGenerals AI
+  shortcutName: RandomGenerals
   deleteAppDataOnUninstall: false   # keep chats/licence across upgrades
 
 publish:

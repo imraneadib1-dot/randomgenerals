@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Provision an Oracle Cloud Always Free ARM VM to run RandomGenerals AI.
+# Provision an Oracle Cloud Always Free ARM VM to run RandomGenerals.
 #
 # Run ON the VM, once, after SSHing in:
 #   curl -fsSL <raw-url>/deploy/oracle-setup.sh -o setup.sh && bash setup.sh
@@ -129,7 +129,7 @@ log "Environment"
 if [ ! -f "$APP_DIR/.env" ]; then
   SECRET="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
   cat > "$APP_DIR/.env" <<ENVEOF
-# RandomGenerals AI - Oracle Always Free VM.
+# RandomGenerals - Oracle Always Free VM.
 
 # Signs session cookies. Generated once at install; changing it signs
 # everyone out.
@@ -210,7 +210,7 @@ fi
 log "systemd service"
 sudo tee "/etc/systemd/system/${SERVICE_NAME}.service" >/dev/null <<EOF
 [Unit]
-Description=RandomGenerals AI
+Description=RandomGenerals
 After=network-online.target
 Wants=network-online.target
 

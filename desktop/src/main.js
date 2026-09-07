@@ -36,7 +36,7 @@ function createWindow(startUrl) {
     show: false,
     backgroundColor: "#05080f", // matches the app's dark ground, so there
     // is no white flash before first paint
-    title: "RandomGenerals AI",
+    title: "RandomGenerals",
     icon: path.join(__dirname, "..", "resources", "icon.ico"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -123,7 +123,7 @@ if (!app.requestSingleInstanceLock()) {
       height: 340,
       resizable: false,
       show: true,
-      title: "Starting RandomGenerals AI",
+      title: "Starting RandomGenerals",
       backgroundColor: "#141a22",
       webPreferences: { nodeIntegration: false, contextIsolation: true },
     });
@@ -156,7 +156,7 @@ if (!app.requestSingleInstanceLock()) {
       // err.message now carries the specific reason from
       // ensureDependencies() - which Python was missing, or what pip
       // said - rather than only a timeout.
-      dialog.showErrorBox("RandomGenerals AI could not start", err.message);
+      dialog.showErrorBox("RandomGenerals could not start", err.message);
       app.quit();
     }
   });

@@ -59,7 +59,7 @@ jobs:
       - name: Upload installer as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RandomGenerals-AI-Windows
+          name: RandomGenerals-Windows
           path: desktop/dist/*.exe
           if-no-files-found: error
           retention-days: 14

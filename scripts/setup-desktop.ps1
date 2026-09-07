@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  One-time setup for building the RandomGenerals AI desktop app.
+  One-time setup for building the RandomGenerals desktop app.
 
 .DESCRIPTION
   Checks for and installs the toolchain (Node.js), installs the Electron

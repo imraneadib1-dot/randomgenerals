@@ -24,7 +24,16 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$taskName = "RandomGeneralsAI"
+$taskName = "RandomGenerals"
+# The name this script used before the product dropped "AI".
+# Removed on sight: renaming the task without unregistering the
+# old one would leave it running and scheduled, with nothing
+# that knows its name any more.
+$legacyTaskName = "RandomGeneralsAI"
+if (Get-ScheduledTask -TaskName $legacyTaskName -ErrorAction SilentlyContinue) {
+    Unregister-ScheduledTask -TaskName $legacyTaskName -Confirm:$false
+    Write-Host "Removed the old '$legacyTaskName' task." -ForegroundColor Yellow
+}
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $serveScript = Join-Path $repoRoot "scripts\serve.ps1"
 
@@ -74,7 +83,7 @@ Register-ScheduledTask `
     -Action $action `
     -Trigger $trigger `
     -Settings $settings `
-    -Description "Runs the RandomGenerals AI server and public tunnel." | Out-Null
+    -Description "Runs the RandomGenerals server and public tunnel." | Out-Null
 
 Write-Host "Installed scheduled task '$taskName'." -ForegroundColor Green
 Write-Host @"

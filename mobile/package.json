@@ -2,7 +2,7 @@
   "name": "randomgenerals-mobile",
   "version": "1.0.0",
   "private": true,
-  "description": "iOS and Android shell for RandomGenerals AI, built with Capacitor.",
+  "description": "iOS and Android shell for RandomGenerals, built with Capacitor.",
   "scripts": {
     "sync": "cap sync",
     "ios": "cap add ios && cap sync ios && cap open ios",

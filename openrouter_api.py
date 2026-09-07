@@ -199,7 +199,7 @@ def _headers():
         # Neither is required and neither carries anything about the
         # person asking - it is the app identifying itself, not them.
         "HTTP-Referer": "https://randomgenerals.com",
-        "X-Title": "RandomGenerals AI",
+        "X-Title": "RandomGenerals",
     }
 
 

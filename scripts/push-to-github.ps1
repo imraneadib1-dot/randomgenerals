@@ -8,7 +8,7 @@ $ErrorActionPreference = "Continue"
 Set-Location $PSScriptRoot\..
 
 Write-Host ""
-Write-Host "  Pushing RandomGenerals AI to GitHub" -ForegroundColor Cyan
+Write-Host "  Pushing RandomGenerals to GitHub" -ForegroundColor Cyan
 Write-Host "  ===================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  A GitHub sign-in window will open in your browser." -ForegroundColor Yellow

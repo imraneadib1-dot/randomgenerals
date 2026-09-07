@@ -22,7 +22,7 @@ Real sending needs an SMTP account, set in .env:
     SMTP_USER=you@gmail.com
     SMTP_PASS=an app password, not your login password
     SMTP_FROM=you@gmail.com
-    MAIL_FROM_NAME=RandomGenerals AI     (optional display name)
+    MAIL_FROM_NAME=RandomGenerals     (optional display name)
 
 Gmail requires an app password - Google Account, Security, 2-Step
 Verification, App passwords - because it no longer accepts a plain
@@ -38,7 +38,7 @@ import smtplib
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
 
-PRODUCT = "RandomGenerals AI"
+PRODUCT = "RandomGenerals"
 SITE_URL = "https://randomgenerals.com"
 
 # The palette from the app's own stylesheet, so an email looks like it

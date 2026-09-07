@@ -18,7 +18,7 @@ const BAY_META = {
   chat: {
     eyebrow: "randomgenerals --chat",
     title: "What's on your mind?",
-    sub: "Ask anything. RandomGenerals AI keeps it conversational — no forced structure.",
+    sub: "Ask anything. RandomGenerals keeps it conversational — no forced structure.",
     placeholder: "Ask me anything…",
     hints:
       "<div><span>Enter</span> to send · <span>Shift+Enter</span> for a new line</div>" +
@@ -52,8 +52,8 @@ const BAY_META = {
 // the label has to follow that. Kept as a fallback for a provider the
 // server names but does not label.
 const PROVIDER_META = {
-  ollama: { label: "RandomGenerals AI" },
-  groq: { label: "RandomGenerals AI Turbo" },
+  ollama: { label: "RandomGenerals" },
+  groq: { label: "RandomGenerals Turbo" },
   imagegen: { label: "Image" },
 };
 
