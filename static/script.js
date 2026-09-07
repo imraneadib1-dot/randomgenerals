@@ -3004,9 +3004,24 @@ function applyVideoAccess(d) {
   // as "3D mode" locked the whole bay behind a credits notice - with the
   // diagram bay, which needs no key and no balance, sitting right there
   // unreachable. Anything that cannot generate falls through to drawing.
+  // "Usable" has to mean usable BY THIS PERSON, not merely installed.
+  //
+  // This checked the key and the balance and ignored the plan, so a
+  // deployment with a video backend put the bay into video mode for
+  // everybody - and then a free account hit "Video generation is a Pro
+  // feature". A whole bay spent on an advert, with the diagram mode
+  // that needs no key, no balance and no plan sitting right behind it
+  // unreachable.
+  //
+  // quota.allowed already carries the answer: it is false for a plan
+  // without video and for a guest who would need an account first. If
+  // this person cannot generate a video, the bay draws diagrams, which
+  // they can.
+  const entitled = !d.quota || d.quota.allowed !== false;
   const mediaUsable =
-    d.configured && (d.credits === undefined || d.credits === null
-                     || d.credits > 0);
+    d.configured
+    && entitled
+    && (d.credits === undefined || d.credits === null || d.credits > 0);
   const kind =
     !mediaUsable ? "diagram"
       : d.kind === "model" ? "model"
