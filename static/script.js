@@ -2711,6 +2711,28 @@ function renderAbout() {
 const bootScreen = document.getElementById("bootScreen");
 const bootLabel = document.getElementById("bootLabel");
 
+/** Name the fourth tab after what that bay is currently doing.
+ *
+ * It is not a video bay with a diagram fallback - diagram is the FLOOR,
+ * and on a deployment with no usable media backend it is the only thing
+ * that bay ever does. A fixed label is therefore wrong most of the time
+ * whichever word is chosen: "Video" on a machine that only draws
+ * diagrams, or "Diagram" above a panel headed "Make a video".
+ *
+ * So the tab says what the panel underneath it says.
+ */
+function updateGenBayLabel(kind) {
+  const label = document.getElementById("genBayLabel");
+  const icon = document.getElementById("genBayIcon");
+  if (label) {
+    label.textContent =
+      kind === "model" ? "3D" : kind === "video" ? "Video" : "Diagram";
+  }
+  if (icon) {
+    icon.textContent = kind === "model" ? "◆" : kind === "video" ? "▶" : "◇";
+  }
+}
+
 async function boot() {
   const minHold = new Promise((resolve) => setTimeout(resolve, 650));
   bootLabel.textContent = "reaching the local model…";
@@ -2990,6 +3012,8 @@ function applyVideoAccess(d) {
       : d.kind === "model" ? "model"
       : "video";
 
+  updateGenBayLabel(kind);
+
   if (kind === "diagram") {
     genKind = "diagram";
     genLocked.hidden = true;
@@ -3042,6 +3066,7 @@ function applyVideoAccess(d) {
   genKind = d.kind === "model" ? "model"
     : d.kind === "video" && d.configured ? "video"
     : "diagram";
+  updateGenBayLabel(genKind);
   if (genTitle) {
     genTitle.textContent =
       genKind === "model" ? "Make a 3D model"

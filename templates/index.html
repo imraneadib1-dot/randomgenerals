@@ -127,8 +127,11 @@
           role="tab"
           aria-selected="false"
         >
-          <span class="bay-icon">▶</span>
-          <span>Video</span>
+          <span class="bay-icon" id="genBayIcon">◇</span>
+          <!-- Label set by JS. This bay is a diagram bay unless a video
+               or 3D backend is usable, so a fixed word is wrong half the
+               time - see updateGenBayLabel() in script.js. -->
+          <span id="genBayLabel">Diagram</span>
         </button>
       </div>
 
