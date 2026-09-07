@@ -543,6 +543,18 @@ def chat_once(model, history, tools=None, options=None, timeout=120):
         effort = opts.get("reasoning_effort", DEFAULT_EFFORT)
         if effort in VALID_EFFORTS:
             body["reasoning_effort"] = effort
+
+    # The same ceiling as the streaming path, for the same reason - and
+    # this one needs it MORE. chat_once carries the tool loop, which
+    # sends the whole conversation plus every connector's operation
+    # list, so it reaches the 413 sooner than a plain reply does.
+    # Fitting only stream_chat left the tool loop failing, and that
+    # failure then cascaded into a local fallback which could not carry
+    # the oversized prompt either.
+    body["messages"], fitted = fit_to_budget(
+        body["messages"], body.get("max_tokens") or DEFAULT_REQUEST_TOKENS)
+    body["max_tokens"] = fitted
+
     try:
         r = requests.post(API_ROOT + "/chat/completions", json=body,
                           headers=_headers(), timeout=timeout)
