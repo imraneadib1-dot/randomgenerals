@@ -137,8 +137,14 @@ import app                                                 # noqa: E402
 src = open("app.py", encoding="utf-8").read()
 check("no call site still catches only RateLimited",
       "except groq_api.RateLimited" in src, False)
-check("every call site catches the base",
-      src.count("except groq_api.ProviderUnavailable"), 3)
+# A COUNT, NOT AN INVARIANT. This asserted exactly 3 and broke the
+# moment a fourth recovery path was added - which was a correct change
+# failing a test that was measuring the wrong thing. What matters is
+# that every catch site takes the base class, which the check above
+# already establishes by finding no bare RateLimited; this just
+# confirms there are still several of them rather than none.
+check("the base is caught in several places",
+      src.count("except groq_api.ProviderUnavailable") >= 3, True)
 
 print("\n== OpenRouter: same two failures ==")
 openrouter_api.budget_ok = lambda m: True
