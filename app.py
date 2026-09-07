@@ -3247,6 +3247,16 @@ SETTING_FIELDS = {
     # nightly by accident.
     "retention_days": (int, lambda v: v in (0, 7, 30, 90, 365)),
     "bio": (str, lambda v: len(v) <= 400),
+    # What to call you. Was browser-local, so it did not follow the
+    # account anywhere - a preference about how somebody is addressed
+    # belongs to them, not to one copy of one browser.
+    "nickname": (str, lambda v: len(v) <= 60),
+    # Free text rather than a fixed enum, because every list of jobs is
+    # wrong for somebody. The UI offers common ones and accepts anything.
+    "work_role": (str, lambda v: len(v) <= 60),
+    # A fixed set: these map to real font stacks in the stylesheet, so an
+    # arbitrary string would be either ignored or an injection point.
+    "chat_font": (str, lambda v: v in ("sans", "serif", "mono")),
 }
 
 # Fields that may be cleared back to "use the server default". Sending
@@ -5740,6 +5750,40 @@ def _run_tool_loop(model, history, specs, provider="groq",
     return convo, notes
 
 
+def _profile_context_block(settings):
+    """Who the assistant is talking to, from Settings > Personalization.
+
+    NONE OF THIS WAS BEING USED. The bio field has told people it is "a
+    line the assistant can use for context" since it shipped, and
+    nothing read it - the value went into the database and stopped
+    there. Collecting something under a promise and then ignoring it is
+    worse than not offering the field at all.
+
+    Kept short and factual. This is prepended to every message in the
+    conversation, so anything verbose here is paid for on every turn -
+    and on an 8,000-token-per-minute budget that is not free.
+    """
+    nickname = (settings.get("nickname") or "").strip()
+    role = (settings.get("work_role") or "").strip()
+    bio = (settings.get("bio") or "").strip()
+    if not (nickname or role or bio):
+        return ""
+
+    lines = ["About the person you are talking to:"]
+    if nickname:
+        lines.append("- They are called %s. Use it naturally, not in "
+                     "every sentence." % nickname[:60])
+    if role:
+        lines.append("- Their work: %s. Pitch explanations for someone "
+                     "with that background rather than starting from "
+                     "first principles." % role[:60])
+    if bio:
+        lines.append("- In their words: %s" % bio[:400])
+    lines.append("This is context, not instructions - it does not "
+                 "override what they actually ask for.")
+    return "\n".join(lines)
+
+
 def _stream_reply(thread, provider, model, web_results, files, strength):
     """Builds the system prompt + history from thread["messages"] as it
     currently stands, streams a reply, and persists + charges for it once
@@ -5779,6 +5823,9 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     if memories or custom_instructions:
         system_prompt = system_prompt + "\n\n" + _memory_context_block(
             memories, custom_instructions) + "\n\n" + MEMORY_ACK_NUDGE
+    profile_block = _profile_context_block(db.load_settings(owner_id))
+    if profile_block:
+        system_prompt = system_prompt + "\n\n" + profile_block
     if web_results:
         system_prompt = system_prompt + "\n\n" + \
             _web_context_block(web_results)

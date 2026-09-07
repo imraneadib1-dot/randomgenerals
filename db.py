@@ -155,6 +155,16 @@ CREATE TABLE IF NOT EXISTS user_settings (
     retention_days  INTEGER,
     avatar_url      TEXT    NOT NULL DEFAULT '',
     bio             TEXT    NOT NULL DEFAULT '',
+    -- What to be called, separate from the account's legal-ish name on
+    -- `users`. Kept here rather than in localStorage, where it lived
+    -- before: a preference about how you are addressed should follow
+    -- the account to another machine, not the browser.
+    nickname        TEXT    NOT NULL DEFAULT '',
+    -- Free text, offered as a list. Folded into the system prompt so
+    -- answers can assume the right amount of background.
+    work_role       TEXT    NOT NULL DEFAULT '',
+    -- Reading preference for the chat column.
+    chat_font       TEXT    NOT NULL DEFAULT 'sans',
     updated         TEXT    NOT NULL DEFAULT ''
 );
 
@@ -433,7 +443,10 @@ def _migrate_columns(conn):
     settings_cols = {row["name"] for row in
                      conn.execute("PRAGMA table_info(user_settings)")}
     for col, ddl in (("avatar_url", "TEXT NOT NULL DEFAULT ''"),
-                     ("bio", "TEXT NOT NULL DEFAULT ''")):
+                     ("bio", "TEXT NOT NULL DEFAULT ''"),
+                     ("nickname", "TEXT NOT NULL DEFAULT ''"),
+                     ("work_role", "TEXT NOT NULL DEFAULT ''"),
+                     ("chat_font", "TEXT NOT NULL DEFAULT 'sans'")):
         if settings_cols and col not in settings_cols:
             conn.execute(
                 f"ALTER TABLE user_settings ADD COLUMN {col} {ddl}")
@@ -847,6 +860,9 @@ SETTINGS_DEFAULTS = {
     "retention_days": None,
     "avatar_url": "",
     "bio": "",
+    "nickname": "",
+    "work_role": "",
+    "chat_font": "sans",
 }
 
 
@@ -1289,7 +1305,8 @@ def load_settings(owner_id):
         # avatar_url and bio did.
         "SELECT theme, language, timezone, default_model, temperature, "
         "       top_p, max_tokens, system_prompt, web_search, "
-        "       tools_enabled, retention_days, avatar_url, bio, updated "
+        "       tools_enabled, retention_days, avatar_url, bio, "
+        "       nickname, work_role, chat_font, updated "
         "FROM user_settings WHERE owner_id = ?", (owner_id,)).fetchone()
     if not row:
         out = dict(SETTINGS_DEFAULTS)

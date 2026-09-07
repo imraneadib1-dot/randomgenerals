@@ -897,6 +897,40 @@
               </div>
             </div>
             <p class="memory-hint" id="avatarStatus"></p>
+
+            <label class="memory-label" for="profileNickname">
+              What should the assistant call you?
+            </label>
+            <p class="memory-hint">
+              Used in the greeting. Stored on your account, so it follows
+              you to another device &mdash; it used to live only in this
+              browser.
+            </p>
+            <input type="text" id="profileNickname" class="tl-input"
+                   maxlength="60" placeholder="e.g. Imrane" />
+
+            <label class="memory-label" for="profileRole">
+              What best describes your work?
+            </label>
+            <p class="memory-hint">
+              Lets replies assume the right amount of background instead of
+              explaining what you already know. Type anything &mdash; the
+              list is a shortcut, not the options.
+            </p>
+            <input type="text" id="profileRole" class="tl-input"
+                   maxlength="60" list="roleSuggestions"
+                   placeholder="e.g. Software developer" />
+            <datalist id="roleSuggestions">
+              <option value="Software developer"></option>
+              <option value="Student"></option>
+              <option value="Designer"></option>
+              <option value="Founder"></option>
+              <option value="Data or analytics"></option>
+              <option value="Writer"></option>
+              <option value="Teacher"></option>
+              <option value="Other"></option>
+            </datalist>
+
             <label class="memory-label" for="profileBio">About you</label>
             <p class="memory-hint">
               A line the assistant can use for context &mdash; what you work
@@ -1241,6 +1275,22 @@
               <option value="system">Match my system</option>
               <option value="dark">Dark</option>
               <option value="light">Light</option>
+            </select>
+          </div>
+
+          <div class="memory-divider"></div>
+
+          <div class="appearance-section">
+            <label class="memory-label" for="chatFontSelect">Chat font</label>
+            <p class="memory-hint">
+              Only the conversation changes &mdash; the interface keeps its
+              own type. Serif is easier on long prose; monospace lines code
+              up but is tiring to read paragraphs in.
+            </p>
+            <select id="chatFontSelect" class="model-select">
+              <option value="sans">Sans-serif &mdash; the default</option>
+              <option value="serif">Serif &mdash; better for long reading</option>
+              <option value="mono">Monospace &mdash; everything aligned</option>
             </select>
           </div>
 

@@ -2856,7 +2856,17 @@ function promptForName(host) {
   save.textContent = "Save";
   const commit = () => {
     const v = input.value.trim();
-    if (v) writePref(NAME_KEY, v);
+    if (v) {
+      writePref(NAME_KEY, v);
+      // And to the account, so it is there on the next device rather
+      // than only in this browser.
+      accountNickname = v;
+      if (typeof patchSettingsDebounced === "function") {
+        patchSettingsDebounced({ nickname: v });
+      }
+      const field = document.getElementById("profileNickname");
+      if (field) field.value = v;
+    }
     renderGreeting();
   };
   save.addEventListener("click", commit);
@@ -2885,7 +2895,13 @@ function renderGreeting() {
 
   host.append(brandMark());
 
-  const name = (readPref(NAME_KEY) || "").trim();
+  // THE ACCOUNT FIRST, the browser second. This used to read only
+  // localStorage, so somebody who set their name here was a stranger
+  // again on their phone - and the desktop app, being a different
+  // browser profile entirely, never knew it at all. The local value is
+  // kept as a fallback for signed-out visitors, who have nowhere else
+  // to put it.
+  const name = (accountNickname || readPref(NAME_KEY) || "").trim();
   if (!name) {
     // NO LONGER A QUESTION YOU HAVE TO ANSWER.
     //
@@ -4188,6 +4204,11 @@ function renderSettingsDoc() {
     S("profileBio").value = s.bio || "";
     S("bioCount").textContent = (s.bio || "").length;
   }
+  accountNickname = s.nickname || "";
+  if (S("profileNickname")) S("profileNickname").value = s.nickname || "";
+  if (S("profileRole")) S("profileRole").value = s.work_role || "";
+  if (S("chatFontSelect")) S("chatFontSelect").value = s.chat_font || "sans";
+  applyChatFont(s.chat_font || "sans");
   renderAvatar(s.avatar_url);
   if (S("setWebSearch")) S("setWebSearch").checked = !!s.web_search;
   if (S("setTools")) S("setTools").checked = !!s.tools_enabled;
@@ -4692,6 +4713,42 @@ function initProfileControls() {
       patchSettingsDebounced({ bio: bio.value });
     });
   }
+
+  const nick = S("profileNickname");
+  if (nick) {
+    nick.addEventListener("input", () => {
+      patchSettingsDebounced({ nickname: nick.value });
+      // The greeting is rendered from this, so it should not wait for a
+      // reload to agree with the field that just changed it.
+      if (typeof renderGreeting === "function") renderGreeting();
+    });
+  }
+
+  const role = S("profileRole");
+  if (role) {
+    role.addEventListener("input", () => {
+      patchSettingsDebounced({ work_role: role.value });
+    });
+  }
+
+  const font = S("chatFontSelect");
+  if (font) {
+    font.addEventListener("change", () => {
+      // Applied before the save lands: a font picker that waits for a
+      // round trip feels broken even when it is working.
+      applyChatFont(font.value);
+      patchSettingsDebounced({ chat_font: font.value });
+    });
+  }
+}
+
+/** Put the chosen font on <html>; the stylesheet does the rest. */
+let accountNickname = "";
+
+function applyChatFont(value) {
+  const allowed = ["sans", "serif", "mono"];
+  document.documentElement.dataset.chatFont =
+    allowed.includes(value) ? value : "sans";
 }
 
 async function loadTemplates() {

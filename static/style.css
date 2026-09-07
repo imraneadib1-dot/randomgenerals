@@ -4398,3 +4398,38 @@ input[type="range"]:focus-visible { outline: 2px solid var(--deck); outline-offs
   flex-shrink: 0;
 }
 label.btn-secondary { cursor: pointer; }
+
+/* ---------------------------------------------------------------- */
+/* Chat font                                                         */
+/*                                                                   */
+/* Set as data-chat-font on <html> from the saved setting. Scoped to */
+/* the conversation on purpose: the interface keeps its own type, so */
+/* choosing serif for reading does not turn buttons and labels into  */
+/* a different product.                                              */
+/* ---------------------------------------------------------------- */
+:root[data-chat-font="serif"] .msg-bubble {
+  font-family: "Cormorant Garamond", Georgia, "Times New Roman", serif;
+  /* Serif faces here have a smaller x-height than Inter, so the same
+     px value reads noticeably smaller. Nudged up to match. */
+  font-size: calc(var(--text-base) + 2px);
+  line-height: 1.7;
+}
+
+:root[data-chat-font="mono"] .msg-bubble {
+  font-family: var(--font-mono);
+  /* And monospace runs wider, so the same size overflows the measure.
+     Down one step, and the line-height eased because mono glyphs sit
+     taller in the box. */
+  font-size: calc(var(--text-base) - 1px);
+  line-height: 1.68;
+}
+
+/* Code blocks stay monospace whatever the prose is set to - that is
+   what makes them legible, not a preference. */
+:root[data-chat-font="serif"] .msg-bubble pre,
+:root[data-chat-font="serif"] .msg-bubble code,
+:root[data-chat-font="mono"] .msg-bubble pre,
+:root[data-chat-font="mono"] .msg-bubble code {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
