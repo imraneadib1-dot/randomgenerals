@@ -270,6 +270,11 @@ async function startBackend({ dev = false, onStatus = () => {} } = {}) {
       // the order matters rather than being arbitrary.
       ...readUserEnv(),
       PORT: String(port),
+      // Tells the server it is the desktop build, so /api/auth/me and
+      // /api/plans can say so and the UI can send account and billing
+      // work to the website - the two things a random loopback port
+      // cannot do. See IS_DESKTOP in app.py.
+      RG_DESKTOP: "1",
       // Debug off always: Werkzeug's debugger is an interactive Python
       // console on error pages. Harmless on a dev laptop, a remote code
       // execution hole the moment anything else can reach the port.

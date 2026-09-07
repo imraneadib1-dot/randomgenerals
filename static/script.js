@@ -2342,12 +2342,32 @@ async function loadPlansMeta() {
       // the same sentence twice, the second one clipped by the modal.
       // One statement, in one place, and no dead-end click.
       planProBtn.disabled = true;
-      planProBtn.textContent = "Pro not available yet";
-      planProBtn.title =
-        "This server hasn't been connected to a payment provider.";
-      planFineprint.textContent =
-        "Pro isn't purchasable yet — this server hasn't been connected " +
-        "to Stripe. Everything in Free works normally.";
+      if (data.desktop) {
+        // Not "not available yet" - it IS available, just not from
+        // here. Paddle's checkout only opens on a domain it has
+        // approved, and this app runs on a loopback port that never can
+        // be. Sending somebody to the place it works beats a dead
+        // button explaining a limitation they cannot act on.
+        const site = (data.site_url || "https://randomgenerals.com") + "/app";
+        planProBtn.textContent = "Upgrade on the website";
+        planProBtn.disabled = false;
+        planProBtn.title = "Opens randomgenerals.com in your browser";
+        planProBtn.onclick = (e) => {
+          e.preventDefault();
+          window.open(site, "_blank", "noopener");
+        };
+        planFineprint.textContent =
+          "Checkout runs on randomgenerals.com — payment providers only " +
+          "accept approved domains, which a desktop app's local address " +
+          "cannot be. Signing in there upgrades this app too.";
+      } else {
+        planProBtn.textContent = "Pro not available yet";
+        planProBtn.title =
+          "This server hasn't been connected to a payment provider.";
+        planFineprint.textContent =
+          "Pro isn't purchasable yet — this server hasn't been connected " +
+          "to a payment provider. Everything in Free works normally.";
+      }
     }
     setError(planError, "");
   } catch (err) {
@@ -2620,6 +2640,26 @@ async function loadAuthState() {
     const configured = data.google_configured !== false;
     googleSignInBtn.hidden = !configured;
     googleNotConfiguredNote.hidden = configured;
+
+    // On the desktop build, Google sign-in cannot complete here at all:
+    // the redirect_uri must match one registered with Google, and this
+    // app takes a fresh random port every launch. So rather than a
+    // hidden button and a "not configured" note - which reads as broken
+    // - offer the place where it does work.
+    if (data.desktop && !configured) {
+      googleNotConfiguredNote.hidden = false;
+      googleNotConfiguredNote.replaceChildren();
+      const line = document.createElement("span");
+      line.textContent = "Accounts live on the website. ";
+      const link = document.createElement("a");
+      link.href = (data.site_url || "https://randomgenerals.com") + "/app";
+      link.textContent = "Sign in there";
+      // Electron sends any non-loopback URL to the real browser, so this
+      // opens outside the app rather than navigating it away.
+      link.target = "_blank";
+      link.rel = "noopener";
+      googleNotConfiguredNote.append(line, link);
+    }
   } catch (err) {
     currentUser = null;
   }

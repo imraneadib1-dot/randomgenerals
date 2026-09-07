@@ -1935,12 +1935,41 @@ def _migrate_guest_threads(uid):
         save_threads()
 
 
+# WHERE ACCOUNTS AND BILLING ACTUALLY LIVE.
+#
+# The desktop build spawns this same server on a loopback port, so
+# everything below works there EXCEPT the two things that need a fixed,
+# registered public address:
+#
+#   Google sign-in. The redirect_uri has to match one registered in
+#   Cloud Console exactly, and the desktop app takes a FRESH RANDOM PORT
+#   on every launch (findFreePort in desktop/src/backend.js). There is
+#   no port to register, so no OAuth flow can complete there - copying
+#   the client id and secret onto the machine would not change that.
+#
+#   Paddle checkout. It only opens on a domain Paddle has approved.
+#   127.0.0.1 is not one and cannot become one.
+#
+# So neither is a missing key on the desktop; both are things that
+# belong to the website. RG_DESKTOP is set by backend.js, and the two
+# endpoints below hand it to the browser so the UI can offer a way
+# through instead of a disabled button and a "not configured" note.
+IS_DESKTOP = os.environ.get("RG_DESKTOP") == "1"
+PUBLIC_SITE_URL = os.environ.get(
+    "PUBLIC_SITE_URL", "https://randomgenerals.com").rstrip("/")
+
+
 @app.route("/api/auth/me", methods=["GET"])
 def auth_me():
     uid = session.get("user_id")
     if uid and uid in USERS:
         return jsonify({"user": public_user(USERS[uid])})
-    return jsonify({"user": None, "google_configured": google_oauth_configured()})
+    return jsonify({
+        "user": None,
+        "google_configured": google_oauth_configured(),
+        "desktop": IS_DESKTOP,
+        "site_url": PUBLIC_SITE_URL,
+    })
 
 
 @app.route("/api/auth/signup", methods=["POST"])
@@ -2852,6 +2881,8 @@ def get_plans():
         # email address gives Retain nothing it can match, and it fails
         # quietly rather than complaining.
         "paddle_customer_id": _paddle_customer_id(),
+        "desktop": IS_DESKTOP,
+        "site_url": PUBLIC_SITE_URL,
     })
 
 
