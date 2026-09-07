@@ -4686,6 +4686,17 @@ def is_vision_model(model):
 
 
 def stream_ollama(model, history, options=None, images=None, usage=None):
+    # TRIMMED HERE, not at each call site. There are three ways a
+    # request reaches Ollama - chosen as the default, pre-empted because
+    # the fast channel had no room, and failed over to after an error -
+    # and only the last one was cutting the prompt down. The other two
+    # handed a 1B model on shared cores an entire conversation, which it
+    # spends longer reading than answering, and the request went silent
+    # past the read timeout.
+    #
+    # Doing it inside the streamer means every path is covered and none
+    # can be forgotten when a fourth is added.
+    history = _trim_for_local(history)
     if images:
         # Ollama expects images on the specific message they belong to -
         # these came from the user's current turn, so attach them there
@@ -5996,14 +6007,9 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                 # the read timeout and surface an Ollama traceback,
                 # which is how this failure looked from the outside even
                 # after the fast channel was fixed.
-                # A NEW NAME, deliberately. Assigning to `history` here
-                # would make it local to this whole generator, and the
-                # first stream above reads it before this line runs -
-                # which failed with "cannot access local variable
-                # 'history' where it is not associated with a value" on
-                # every request, including ones that never got here.
-                local_history = _trim_for_local(history)
-                for piece in streamer(model, local_history, **local_kwargs):
+                # No trimming here any more - stream_ollama does it for
+                # every path into it, this one included.
+                for piece in streamer(model, history, **local_kwargs):
                     full_reply += piece
                     yield piece
         except GeneratorExit:
