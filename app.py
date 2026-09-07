@@ -2484,7 +2484,27 @@ def subscribe():
                 return_url=request.host_url.rstrip("/") + "/app",
             )
             if err:
-                return jsonify({"error": f"Could not start checkout: {err}"}), 502
+                # 400, NOT 502. A payment provider declining is not a
+                # gateway failure, and the status matters for more than
+                # correctness: Cloudflare substitutes its own error page
+                # for a 5xx from the origin, so this JSON never reached
+                # the browser. res.json() then threw, the catch in
+                # changePlan() fired, and the person was told "Could not
+                # reach the server" about a server that had answered
+                # them in full.
+                #
+                # Paddle's own sentence is passed through. When it is the
+                # account-level refusal, it is the only thing that
+                # explains why a correctly configured Upgrade button
+                # cannot work.
+                friendly = err
+                if "aren't enabled for this account" in err:
+                    friendly = (
+                        "Payments are not active on this site yet - the "
+                        "payment provider has not finished approving the "
+                        "account. Nothing is wrong with your card or your "
+                        "sign-in, and Free carries on working normally.")
+                return jsonify({"error": friendly, "detail": err}), 400
             return jsonify({"checkout_url": url})
 
         if billing_live():
@@ -2506,7 +2526,8 @@ def subscribe():
                     checkout_kwargs["customer_email"] = user["email"]
                 checkout = stripe.checkout.Session.create(**checkout_kwargs)
             except stripe.StripeError as e:
-                return jsonify({"error": f"Could not start checkout: {e}"}), 502
+                # 400 for the same reason as the Paddle branch above.
+                return jsonify({"error": f"Could not start checkout: {e}"}), 400
             return jsonify({"checkout_url": checkout.url})
 
         if not _may_mock_upgrade(user):

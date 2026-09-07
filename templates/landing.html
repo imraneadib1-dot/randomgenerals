@@ -73,6 +73,12 @@
         {% if not signed_in %}
         <a class="btn btn-ghost" href="/app">Sign in</a>
         {% endif %}
+        {# Beside Open app, not instead of it. The two are different
+           intentions - use it now in this tab, or take it away with you
+           - and burying the second in the footer meant most people
+           never learned there was a desktop build at all. Ghost rather
+           than primary so it offers without competing. #}
+        <a class="btn btn-ghost" href="/download">Download</a>
         <a class="btn btn-primary" href="/app">
           {{ "Open app" if signed_in else "Launch app" }}
         </a>
@@ -95,6 +101,7 @@
       <a href="#how">How it works</a>
       <a href="#pricing">Pricing</a>
       <a href="#faq">FAQ</a>
+      <a href="/download">Download</a>
       <a class="btn btn-primary btn-block" href="/app">Launch app</a>
     </nav>
 
