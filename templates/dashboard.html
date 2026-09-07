@@ -82,6 +82,20 @@
         min-height: 2px; opacity: .85;
       }
       .spark span.zero { background: var(--ink-3); opacity: .45; }
+      /* A day BEFORE counting existed. Visually distinct from a counted
+         day that happened to be quiet, because those mean opposite
+         things and a flat bar cannot say which it is. */
+      .spark span.blank {
+        background: repeating-linear-gradient(
+          45deg, var(--ink-2), var(--ink-2) 2px,
+          transparent 2px, transparent 4px);
+        opacity: .5;
+        min-height: 100%;
+      }
+      .note {
+        font-size: 12px; color: var(--text-faint); margin: 8px 0 0;
+        line-height: 1.6;
+      }
       .spark-axis {
         display: flex; justify-content: space-between; font-size: 11px;
         color: var(--text-faint); margin-top: 6px;
@@ -144,7 +158,16 @@
         <a href="/stats">product stats →</a>
       </p>
       <h1>Dashboard</h1>
-      <p class="dash-sub">Generated {{ d.generated }} · UTC days</p>
+      <p class="dash-sub">
+        {% if d.launch %}
+          Everything since launch — {{ d.launch }} to today,
+          {{ d.days }} day{{ '' if d.days == 1 else 's' }}{% if
+            d.bucket == 'week' %}, shown by week{% endif %}.
+        {% else %}
+          No activity recorded yet.
+        {% endif %}
+        · Generated {{ d.generated }} · UTC
+      </p>
 
       {# The first thing on the page, because a revenue chart reading
          zero looks the same whether nobody wanted to pay or nobody was
@@ -175,8 +198,7 @@
             {{ '{:,}'.format(d.visitors.views_total) }}
           </div>
           <div class="stat-note">
-            {{ '{:,}'.format(d.visitors.window_views) }} in the last
-            {{ d.days }} days
+            {{ '{:,}'.format(d.visitors.window_views) }} since launch
           </div>
         </div>
         <div class="stat">
@@ -208,13 +230,13 @@
         </div>
       </div>
 
-      <h2>Page views <span>· last {{ d.days }} days</span></h2>
+      <h2>Page views <span>· since launch</span></h2>
       <div class="spark">
         {% for row in d.visitors.series %}
           <span
-            class="{{ 'zero' if not row.views }}"
-            style="height: {{ (100 * row.views / d.visitors.peak_views)|round(1) }}%"
-            title="{{ row.day }} — {{ row.views }} views, {{ row.visitors }} visitors"
+            class="{{ 'blank' if not row.counted else ('zero' if not row.views) }}"
+            style="height: {{ 100 if not row.counted else (100 * row.views / d.visitors.peak_views)|round(1) }}%"
+            title="{% if not row.counted %}{{ row.day }} — not counted yet{% else %}{{ row.day }} — {{ row.views }} views, {{ row.visitors }} visitors{% endif %}"
           ></span>
         {% endfor %}
       </div>
@@ -223,14 +245,24 @@
         <span>peak {{ d.visitors.peak_views }}</span>
         <span>{{ d.visitors.series[-1].day }}</span>
       </div>
+      {% if d.visitors.counted_days < d.days %}
+        <p class="note">
+          The hatched bars are before {{ d.visits_began }}, when visit
+          counting was added. The app was running then — nobody was
+          counting. Only {{ d.visitors.counted_days }} of {{ d.days }}
+          {{ 'weeks' if d.bucket == 'week' else 'days' }} have visitor
+          data behind them, and drawing the rest as zero would say
+          nobody came rather than nobody looked.
+        </p>
+      {% endif %}
 
-      <h2>Distinct visitors <span>· last {{ d.days }} days</span></h2>
+      <h2>Distinct visitors <span>· since launch</span></h2>
       <div class="spark">
         {% for row in d.visitors.series %}
           <span
-            class="{{ 'zero' if not row.visitors }}"
-            style="height: {{ (100 * row.visitors / d.visitors.peak_visitors)|round(1) }}%"
-            title="{{ row.day }} — {{ row.visitors }} visitors"
+            class="{{ 'blank' if not row.counted else ('zero' if not row.visitors) }}"
+            style="height: {{ 100 if not row.counted else (100 * row.visitors / d.visitors.peak_visitors)|round(1) }}%"
+            title="{% if not row.counted %}{{ row.day }} — not counted yet{% else %}{{ row.day }} — {{ row.visitors }} visitors{% endif %}"
           ></span>
         {% endfor %}
       </div>
@@ -240,7 +272,7 @@
         <span>{{ d.visitors.series[-1].day }}</span>
       </div>
 
-      <h2>Most visited pages <span>· last {{ d.days }} days</span></h2>
+      <h2>Most visited pages <span>· since launch</span></h2>
       {% if d.visitors.top_pages %}
         <div class="bars">
           {% for page in d.visitors.top_pages %}
@@ -264,7 +296,7 @@
         </p>
       {% endif %}
 
-      <h2>AI requests <span>· last {{ d.days }} days</span></h2>
+      <h2>AI requests <span>· since launch</span></h2>
       <div class="spark">
         {% for row in d.requests.series %}
           <span

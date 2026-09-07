@@ -147,9 +147,71 @@ check("payments", d["money"]["payments"], 2)
 check("two currencies -> no single headline", d["money"]["headline"],
       "2 currencies")
 check("peaks never zero", d["requests"]["peak"] >= 1, True)
-check("series is 30 days", len(d["visitors"]["series"]), 30)
+# The default is no longer a rolling 30-day window: collect() reports
+# everything since launch. Every row here was written today, so launch
+# is today and the span is one day.
+check("span defaults to since-launch, not 30 days",
+      len(d["visitors"]["series"]), d["days"])
+check("and launch is reported", bool(d["launch"]), True)
 json.dumps(d)                      # must be serialisable for /api/dashboard
 print("  %-52s ok" % "collect() is JSON-serialisable")
+
+
+print("")
+print("== since launch, and the gap before counting existed ==")
+import datetime as _dt
+
+# usage_log dates the launch here because save_users() deletes and
+# reinserts every user row - a backdated account inserted directly
+# would be destroyed by the next save, which is exactly how the first
+# version of this test fooled itself.
+_launch = (_dt.date.today() - _dt.timedelta(days=20)).isoformat()
+db._connect().execute(
+    "INSERT INTO usage_log (owner_id, day, messages, credits) "
+    "VALUES (?, ?, 1, 1)", ("seed", _launch))
+# A path the earlier section did not use: site_visits is keyed on
+# (day, path), and "/" today already has a row from the visit checks
+# above.
+db._connect().execute(
+    "INSERT INTO site_visits (day, path, views) VALUES (?, '/since-test', 4)",
+    (_dt.date.today().isoformat(),))
+db._connect().commit()
+
+check("launch_day finds the earliest record", db.launch_day(), _launch)
+d2 = dashboard.collect()
+check("span reaches back to launch", d2["days"], 21)
+check("series covers every day of it",
+      len(d2["visitors"]["series"]), 21)
+check("first row IS launch day", d2["visitors"]["series"][0]["day"], _launch)
+check("only days after counting began are counted",
+      d2["visitors"]["counted_days"], 1)
+check("uncounted days are flagged, not silently zero",
+      d2["visitors"]["series"][0]["counted"], False)
+check("a counted day says so", d2["visitors"]["series"][-1]["counted"], True)
+
+print("")
+print("== weekly buckets once a range outgrows a bar per day ==")
+_old = (_dt.date.today() - _dt.timedelta(days=400)).isoformat()
+db._connect().execute(
+    "INSERT INTO usage_log (owner_id, day, messages, credits) "
+    "VALUES (?, ?, 1, 1)", ("seed2", _old))
+db._connect().commit()
+before = sum(r["views"] for r in db.visit_series(since=db.launch_day()))
+d3 = dashboard.collect()
+check("long range switches to weeks", d3["bucket"], "week")
+check("fewer buckets than days",
+      len(d3["visitors"]["series"]) < d3["days"], True)
+check("every series buckets the same way",
+      len(d3["requests"]["series"]) == len(d3["visitors"]["series"])
+      == len(d3["money"]["series"]), True)
+check("bucketing loses no views",
+      sum(r["views"] for r in d3["visitors"]["series"]), before)
+check("an explicit short range stays daily",
+      dashboard.collect(days=10)["bucket"], "day")
+check("and honours the days it was given",
+      dashboard.collect(days=10)["days"], 10)
+json.dumps(d3)
+print("  %-52s ok" % "still JSON-serialisable when bucketed")
 
 print("\n== the gate ==")
 check("/dashboard 404s for a stranger", client.get("/dashboard").status_code,

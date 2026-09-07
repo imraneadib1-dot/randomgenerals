@@ -930,11 +930,80 @@ def record_visit(path, ip, user_agent):
         pass
 
 
-def visit_series(days=30):
-    """-> [{day, views, visitors}], oldest first, gaps filled with zeroes."""
+def launch_day():
+    """The first day this app has any record of. -> "YYYY-MM-DD" or None.
+
+    Taken as the earliest date across the tables that were written from
+    the very beginning - accounts, per-day usage counters, and threads.
+    NOT from site_visits: counting page views started long after launch,
+    so the first visit is the day instrumentation arrived, not the day
+    the product did.
+
+    Threads carry only `updated`, so an old thread that was touched
+    yesterday reports yesterday. That can only ever make the answer
+    LATER than the truth, never earlier, and the other two sources are
+    append-only - so the minimum across all three is still the earliest
+    day anything is known to have happened.
+    """
+    conn = _connect()
+    candidates = []
+    for sql in ("SELECT MIN(substr(created, 1, 10)) FROM users",
+                "SELECT MIN(day) FROM usage_log",
+                "SELECT MIN(substr(updated, 1, 10)) FROM threads",
+                "SELECT MIN(day) FROM payments"):
+        try:
+            value = conn.execute(sql).fetchone()[0]
+        except Exception:                      # noqa: BLE001 - a missing
+            continue                           # table must not break this
+        if value:
+            candidates.append(value)
+    return min(candidates) if candidates else None
+
+
+def first_visit_day():
+    """The first day page views were counted at all. -> day or None.
+
+    Separate from launch_day() on purpose. The gap between them is a
+    period the app existed and was not counting visitors, and drawing
+    that as zeroes would read as "nobody came" when it means "nobody
+    was looking".
+    """
+    conn = _connect()
+    row = conn.execute("SELECT MIN(day) FROM site_visits").fetchone()
+    return row[0] if row and row[0] else None
+
+
+def _span(days=None, since=None):
+    """-> (start_day, number_of_days), whichever way the caller asked.
+
+    `since` wins when given, so a dashboard can ask for "everything from
+    launch" without knowing today's date or doing the arithmetic.
+    """
     import datetime as _dt
     today = _dt.datetime.now(_dt.timezone.utc).date()
-    start = (today - _dt.timedelta(days=days - 1)).isoformat()
+    if since:
+        try:
+            start = _dt.date.fromisoformat(since)
+        except (ValueError, TypeError):
+            start = today
+        # A future or malformed start would give a negative range.
+        if start > today:
+            start = today
+        return start.isoformat(), (today - start).days + 1
+    n = max(1, int(days or 30))
+    return (today - _dt.timedelta(days=n - 1)).isoformat(), n
+
+
+def visit_series(days=30, since=None):
+    """-> [{day, views, visitors, counted}], oldest first.
+
+    `counted` says whether the app was recording visits that day. A day
+    before instrumentation existed has views 0 like a genuinely quiet
+    day, and the two mean completely different things - so the flag
+    travels with the row rather than being inferred later from a zero.
+    """
+    import datetime as _dt
+    start, n = _span(days, since)
     conn = _connect()
     views = dict(conn.execute(
         "SELECT day, SUM(views) FROM site_visits WHERE day >= ? "
@@ -942,13 +1011,15 @@ def visit_series(days=30):
     people = dict(conn.execute(
         "SELECT day, COUNT(*) FROM site_visitors WHERE day >= ? "
         "GROUP BY day", (start,)).fetchall())
+    began = first_visit_day()
     out = []
-    for offset in range(days):
+    for offset in range(n):
         key = (_dt.date.fromisoformat(start)
                + _dt.timedelta(days=offset)).isoformat()
         out.append({"day": key,
                     "views": views.get(key, 0),
-                    "visitors": people.get(key, 0)})
+                    "visitors": people.get(key, 0),
+                    "counted": bool(began and key >= began)})
     return out
 
 
@@ -968,10 +1039,8 @@ def visit_totals():
             "visitors_today": today_people}
 
 
-def top_pages(days=30, limit=8):
-    import datetime as _dt
-    start = (_dt.datetime.now(_dt.timezone.utc).date()
-             - _dt.timedelta(days=days - 1)).isoformat()
+def top_pages(days=30, limit=8, since=None):
+    start, _n = _span(days, since)
     return [{"path": r[0], "views": r[1]} for r in _connect().execute(
         "SELECT path, SUM(views) FROM site_visits WHERE day >= ? "
         "GROUP BY path ORDER BY 2 DESC LIMIT ?", (start, limit)).fetchall()]
@@ -1018,15 +1087,14 @@ def payment_totals():
             "count": sum(v["count"] for v in by_currency.values())}
 
 
-def payment_series(days=30):
+def payment_series(days=30, since=None):
     import datetime as _dt
-    today = _dt.datetime.now(_dt.timezone.utc).date()
-    start = (today - _dt.timedelta(days=days - 1)).isoformat()
+    start, n = _span(days, since)
     have = {r[0]: (r[1], r[2]) for r in _connect().execute(
         "SELECT day, COUNT(*), COALESCE(SUM(earnings), 0) FROM payments "
         "WHERE day >= ? GROUP BY day", (start,)).fetchall()}
     out = []
-    for offset in range(days):
+    for offset in range(n):
         key = (_dt.date.fromisoformat(start)
                + _dt.timedelta(days=offset)).isoformat()
         count, earnings = have.get(key, (0, 0))
@@ -1051,18 +1119,17 @@ def request_totals():
             "messages_today": today}
 
 
-def request_series(days=30):
+def request_series(days=30, since=None):
     """Site-wide AI requests per day - usage_series() without the owner
     filter, which is the shape the dashboard needs and the per-account
     settings panel does not."""
     import datetime as _dt
-    today = _dt.datetime.now(_dt.timezone.utc).date()
-    start = (today - _dt.timedelta(days=days - 1)).isoformat()
+    start, n = _span(days, since)
     have = {r[0]: (r[1], r[2]) for r in _connect().execute(
         "SELECT day, COALESCE(SUM(messages), 0), COALESCE(SUM(credits), 0) "
         "FROM usage_log WHERE day >= ? GROUP BY day", (start,)).fetchall()}
     out = []
-    for offset in range(days):
+    for offset in range(n):
         key = (_dt.date.fromisoformat(start)
                + _dt.timedelta(days=offset)).isoformat()
         messages, credits = have.get(key, (0, 0))

@@ -78,8 +78,53 @@ def _billing_health():
             "detail": "Configured for real payments."}
 
 
-def collect(days=30):
-    """Everything the dashboard shows, as one plain dict."""
+# Past this many days a bar per day stops being a chart and starts being
+# a texture. Weeks keep the same shape readable for years.
+BUCKET_AFTER_DAYS = 120
+
+
+def _bucket(rows, keys):
+    """Group daily rows into weeks, summing `keys`. -> the same shape.
+
+    Only used once a range outgrows a bar per day. The label is the
+    week's first day, so the axis still reads as dates rather than
+    "week 34".
+    """
+    import datetime as _dt
+    out = []
+    current = None
+    for row in rows:
+        d = _dt.date.fromisoformat(row["day"])
+        # Monday of that week, so buckets line up across every series.
+        start = (d - _dt.timedelta(days=d.weekday())).isoformat()
+        if current is None or current["day"] != start:
+            current = {"day": start}
+            for k in keys:
+                current[k] = 0
+            # Any day in the week having been counted makes the week
+            # counted - a partial week is still real data.
+            current["counted"] = False
+            out.append(current)
+        for k in keys:
+            current[k] += row.get(k, 0)
+        if row.get("counted"):
+            current["counted"] = True
+    return out
+
+
+def collect(days=None, since=None):
+    """Everything the dashboard shows, as one plain dict.
+
+    Defaults to EVERYTHING SINCE LAUNCH rather than a rolling window.
+    "How is it going" is a question about the whole life of the thing,
+    and a 30-day window silently drops the beginning of it - which on a
+    product this age was most of it.
+    """
+    launch = db.launch_day()
+    visits_began = db.first_visit_day()
+    if since is None and days is None:
+        since = launch
+
     visits = db.visit_totals()
     requests_ = db.request_totals()
     payments = db.payment_totals()
@@ -110,9 +155,18 @@ def collect(days=30):
     else:
         headline = "%d currencies" % len(money)
 
-    visit_days = db.visit_series(days)
-    request_days = db.request_series(days)
-    payment_days = db.payment_series(days)
+    visit_days = db.visit_series(days, since=since)
+    request_days = db.request_series(days, since=since)
+    payment_days = db.payment_series(days, since=since)
+
+    # The real span, after db._span() resolved whichever of days/since
+    # was given. Everything below reports this rather than the argument.
+    span_days = len(visit_days)
+    bucketed = span_days > BUCKET_AFTER_DAYS
+    if bucketed:
+        visit_days = _bucket(visit_days, ("views", "visitors"))
+        request_days = _bucket(request_days, ("messages", "credits"))
+        payment_days = _bucket(payment_days, ("payments", "earnings"))
 
     # Peak values, so the template can scale bars without doing
     # arithmetic in Jinja. A zero max would divide by zero in the
@@ -128,7 +182,14 @@ def collect(days=30):
     return {
         "generated": datetime.datetime.now(
             datetime.timezone.utc).replace(microsecond=0).isoformat(),
-        "days": days,
+        "days": span_days,
+        # The day the product started, and the day it started counting
+        # visitors - which are not the same day, and the gap between
+        # them is a period no visitor figure can describe.
+        "launch": launch,
+        "since": since or (visit_days[0]["day"] if visit_days else None),
+        "visits_began": visits_began,
+        "bucket": "week" if bucketed else "day",
         "visitors": {
             "today": visits["visitors_today"],
             "views_today": visits["views_today"],
@@ -137,7 +198,12 @@ def collect(days=30):
             "peak_views": peak(visit_days, "views"),
             "peak_visitors": peak(visit_days, "visitors"),
             "window_views": sum(r["views"] for r in visit_days),
-            "top_pages": db.top_pages(days),
+            "top_pages": db.top_pages(days, since=since),
+            # How much of the reported span actually has visitor data
+            # behind it. The template needs this to caption the chart
+            # honestly rather than drawing a flat line for the days
+            # before counting existed.
+            "counted_days": sum(1 for r in visit_days if r.get("counted")),
         },
         "money": {
             "headline": headline,
