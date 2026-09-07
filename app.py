@@ -348,6 +348,12 @@ def _count_visit():
         if not agent or any(hint in agent for hint in _BOT_HINTS):
             return
         db.record_visit(path[:120], _client_ip(), agent)
+        # All-time distinct visitors, which the daily hash cannot answer
+        # because its salt is destroyed nightly. This uses the session's
+        # own id - already minted to scope credits and threads - so it
+        # counts an identifier the app was setting anyway rather than
+        # introducing one. See the visitors_seen table in db.py.
+        db.note_visitor(current_owner_id())
     except Exception:                            # noqa: BLE001 - a
         pass                                     # counter must never
                                                  # cost somebody a page
@@ -1536,7 +1542,15 @@ def privacy_page():
              "destroyed every night, and only the resulting hash is "
              "stored. It cannot be turned back into your address, and "
              "because the secret changes daily it cannot be used to "
-             "recognise you tomorrow."],
+             "recognise you tomorrow.",
+             "<strong>A first-visit marker</strong> - so we can tell how "
+             "many people have used the service in total rather than "
+             "only today, we record that the identifier already in your "
+             "session cookie has been seen, once, with the date. That "
+             "identifier is the same one used to keep your "
+             "conversations and credits yours; no additional cookie is "
+             "set for this, and nothing about what you did is attached "
+             "to it."],
         ]},
         {"heading": "Where prompts actually go", "body": [
             "This matters more than the rest of the page, so it is stated "

@@ -194,6 +194,9 @@ def collect(days=None, since=None):
             "today": visits["visitors_today"],
             "views_today": visits["views_today"],
             "views_total": visits["views_total"],
+            # Distinct browsers ever, counted from the session id rather
+            # than the nightly hash - see the visitors_seen table.
+            "all_time": db.visitors_all_time(),
             "series": visit_days,
             "peak_views": peak(visit_days, "views"),
             "peak_visitors": peak(visit_days, "visitors"),

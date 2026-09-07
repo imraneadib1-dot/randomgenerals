@@ -193,6 +193,17 @@
           </div>
         </div>
         <div class="stat">
+          <div class="stat-label">Visitors, all time</div>
+          <div class="stat-value">
+            {{ '{:,}'.format(d.visitors.all_time.total) }}
+          </div>
+          <div class="stat-note">
+            distinct browsers ·
+            {{ '{:,}'.format(d.visitors.all_time.registered) }} signed up,
+            {{ '{:,}'.format(d.visitors.all_time.guests) }} never did
+          </div>
+        </div>
+        <div class="stat">
           <div class="stat-label">Page views, all time</div>
           <div class="stat-value">
             {{ '{:,}'.format(d.visitors.views_total) }}

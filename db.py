@@ -291,6 +291,33 @@ CREATE TABLE IF NOT EXISTS site_visitors (
     PRIMARY KEY (day, visitor)
 );
 
+CREATE TABLE IF NOT EXISTS visitors_seen (
+    -- ALL-TIME distinct visitors, which site_visitors cannot answer.
+    --
+    -- That table keys on a hash whose salt is destroyed nightly, so the
+    -- same person is a different row tomorrow: summing its days counts
+    -- one regular reader as thirty people. That is a deliberate
+    -- property, not a defect - it is what stops anybody, including this
+    -- dashboard, following a visitor from one day to the next - so the
+    -- answer has to come from somewhere else rather than by weakening
+    -- it.
+    --
+    -- It comes from the session cookie's own id: the user id for
+    -- somebody signed in, or the per-browser guest id the app already
+    -- mints to scope credits and threads. Nothing new is stored about
+    -- anybody, and no new cookie exists - this counts an identifier the
+    -- app was already setting for its own bookkeeping.
+    --
+    -- WHAT THIS NUMBER IS: distinct browsers that have loaded a page.
+    -- A person on a phone and a laptop is two. Someone who clears their
+    -- cookies is two. A crawler that presents a browser user agent and
+    -- keeps cookies is one, and one that discards them is counted anew
+    -- each visit - which is why the bot filter in app.py matters to
+    -- this figure and not only to the daily one.
+    visitor_key TEXT PRIMARY KEY,
+    first_seen  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS visit_salt (
     -- Today's salt, kept only so a restart does not double-count
     -- everybody. Yesterday's is deleted the first time a new day is
@@ -1021,6 +1048,49 @@ def visit_series(days=30, since=None):
                     "visitors": people.get(key, 0),
                     "counted": bool(began and key >= began)})
     return out
+
+
+def note_visitor(visitor_key):
+    """Record that this browser has been seen, ever. Never raises.
+
+    INSERT OR IGNORE, so the row keeps the FIRST time rather than the
+    latest - which is what makes the table a count of visitors rather
+    than a log of visits.
+    """
+    if not visitor_key:
+        return
+    try:
+        conn = _connect()
+        with conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO visitors_seen (visitor_key, first_seen)"
+                " VALUES (?, ?)",
+                (str(visitor_key)[:200],
+                 _dt_now().isoformat()))
+    except Exception:                          # noqa: BLE001
+        pass
+
+
+def _dt_now():
+    import datetime as _dt
+    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0)
+
+
+def visitors_all_time():
+    """-> {total, registered, guests, first_seen}.
+
+    Split because the two halves mean different things: a registered
+    count is people who chose to make an account, and the guest count is
+    browsers that never did.
+    """
+    conn = _connect()
+    total = conn.execute("SELECT COUNT(*) FROM visitors_seen").fetchone()[0]
+    guests = conn.execute("SELECT COUNT(*) FROM visitors_seen "
+                          "WHERE visitor_key LIKE 'guest:%'").fetchone()[0]
+    first = conn.execute("SELECT MIN(first_seen) "
+                         "FROM visitors_seen").fetchone()[0]
+    return {"total": total, "guests": guests,
+            "registered": total - guests, "first_seen": first}
 
 
 def visit_totals():

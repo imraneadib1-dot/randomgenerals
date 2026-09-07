@@ -213,6 +213,49 @@ check("and honours the days it was given",
 json.dumps(d3)
 print("  %-52s ok" % "still JSON-serialisable when bucketed")
 
+
+print("")
+print("== all-time visitors: browsers, not page loads ==")
+# A fresh client is a fresh browser: no cookie, so the app mints a new
+# session id for it. Reusing one client is the same browser returning.
+_b1 = appmod.app.test_client()
+_UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0) Chrome/131"}
+_before = db.visitors_all_time()["total"]
+for _ in range(4):
+    _b1.get("/", headers=_UA)
+_b1.get("/privacy", headers=_UA)
+check("four page loads from one browser count once",
+      db.visitors_all_time()["total"] - _before, 1)
+
+_b2 = appmod.app.test_client()
+_b2.get("/", headers=_UA)
+check("a second browser counts again",
+      db.visitors_all_time()["total"] - _before, 2)
+
+_after_two = db.visitors_all_time()["total"]
+appmod.app.test_client().get("/", headers={"User-Agent": "Googlebot/2.1"})
+check("a crawler does not count", db.visitors_all_time()["total"], _after_two)
+
+_assets = appmod.app.test_client()
+_assets.get("/static/style.css", headers=_UA)
+_assets.get("/api/plans", headers=_UA)
+check("assets and API polling do not count",
+      db.visitors_all_time()["total"], _after_two)
+
+# The whole reason this table exists: summing site_visitors would count
+# one returning reader once per day, because that hash is re-salted
+# nightly and cannot be summed.
+check("it is a count of browsers, not of visitor-days",
+      db.visitors_all_time()["total"]
+      <= db._connect().execute(
+          "SELECT COUNT(*) FROM site_visitors").fetchone()[0] + 2, True)
+check("registered and guests add up to the total",
+      db.visitors_all_time()["registered"] + db.visitors_all_time()["guests"],
+      db.visitors_all_time()["total"])
+check("the dashboard carries it",
+      dashboard.collect()["visitors"]["all_time"]["total"],
+      db.visitors_all_time()["total"])
+
 print("\n== the gate ==")
 check("/dashboard 404s for a stranger", client.get("/dashboard").status_code,
       404)
