@@ -160,6 +160,15 @@ const mobileToggle = document.getElementById("mobileToggle");
 const clockEl = document.getElementById("clock");
 const composerHintText = document.getElementById("composerHintText");
 
+// Declared HERE, not next to the settings code that fills it in.
+// `let` hoists but stays in the temporal dead zone until its own line
+// runs, and renderGreeting() reads this from the top-level
+// updateEmptyState() call - which happens hundreds of lines earlier.
+// Declaring it further down threw "Cannot access 'accountNickname'
+// before initialization", which killed the statement immediately before
+// boot() and left the splash screen up for good.
+let accountNickname = "";
+
 // The puck is one bay wide, and CSS cannot count its siblings. Set the
 // count once here so adding a bay to BAY_ORDER is the only change
 // needed - the sizing follows.
@@ -2733,24 +2742,44 @@ function updateGenBayLabel(kind) {
   }
 }
 
-async function boot() {
-  const minHold = new Promise((resolve) => setTimeout(resolve, 650));
-  bootLabel.textContent = "reaching the local model…";
-  initAppearance();
-  handleCheckoutReturn();
-  handleAuthReturn();
-
-  await Promise.all([
-    loadProviders(),
-    loadThreadList(),
-    loadCredits(),
-    loadAuthState(),
-    loadPlansMeta(),
-    minHold,
-  ]);
-
+/** Take the splash down. Safe to call twice; the second call is a no-op. */
+function dismissBoot() {
+  if (!bootScreen || bootScreen.hidden) return;
   bootScreen.classList.add("boot-done");
   setTimeout(() => (bootScreen.hidden = true), 500);
+}
+
+async function boot() {
+  // A splash screen that can outlive its own script is a locked door.
+  // Whatever happens below - a loader rejecting, a network that never
+  // answers, an exception in code that has not been written yet - this
+  // timer takes the screen down and lets the person use the app.
+  const deadLetter = setTimeout(dismissBoot, 12000);
+
+  try {
+    const minHold = new Promise((resolve) => setTimeout(resolve, 650));
+    if (bootLabel) bootLabel.textContent = "reaching the local model…";
+    initAppearance();
+    handleCheckoutReturn();
+    handleAuthReturn();
+
+    // allSettled, not all: one endpoint being down degrades the app,
+    // it does not justify refusing to show it. Promise.all rejects on
+    // the first failure and skipped the two lines that hide the splash.
+    await Promise.allSettled([
+      loadProviders(),
+      loadThreadList(),
+      loadCredits(),
+      loadAuthState(),
+      loadPlansMeta(),
+      minHold,
+    ]);
+  } catch (e) {
+    console.error("boot failed", e);
+  } finally {
+    clearTimeout(deadLetter);
+    dismissBoot();
+  }
 }
 
 /* ----------------------------------------------------------------
@@ -2943,7 +2972,14 @@ function renderGreeting() {
 }
 
 /* ---------------------------------------------------------------- */
-updateEmptyState();
+// Guarded because it runs on the line before boot(). An exception here
+// used to mean boot() was never reached at all - the app sat on its
+// splash screen and nothing said why.
+try {
+  updateEmptyState();
+} catch (e) {
+  console.error("initial empty state failed", e);
+}
 boot();
 
 /* ----------------------------------------------------------------
@@ -4743,8 +4779,6 @@ function initProfileControls() {
 }
 
 /** Put the chosen font on <html>; the stylesheet does the rest. */
-let accountNickname = "";
-
 function applyChatFont(value) {
   const allowed = ["sans", "serif", "mono"];
   document.documentElement.dataset.chatFont =
