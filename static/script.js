@@ -4769,9 +4769,18 @@ async function loadTemplates() {
     for (const template of templates) {
       const row = document.createElement("div");
       row.className = "memory-item";
-      row.innerHTML =
-        `<div><strong>${template.name}</strong>` +
-        `<div class="memory-hint">${template.body.slice(0, 70)}${template.body.length > 70 ? "…" : ""}</div></div>`;
+      // Built by hand rather than innerHTML: the name is whatever the
+      // account typed, and it was going straight into markup.
+      const meta = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = template.name;
+      const hint = document.createElement("div");
+      hint.className = "memory-hint";
+      hint.textContent = template.body.slice(0, 70) +
+        (template.body.length > 70 ? "…" : "");
+      meta.appendChild(title);
+      meta.appendChild(hint);
+      row.appendChild(meta);
       const use = document.createElement("button");
       use.type = "button";
       use.className = "btn-secondary";
@@ -4782,18 +4791,22 @@ async function loadTemplates() {
         await patchSettings({ system_prompt: template.body });
         S("templateStatus").textContent = `Applied "${template.name}".`;
       });
-      const drop = document.createElement("button");
-      drop.type = "button";
-      drop.className = "btn-danger";
-      drop.textContent = "Delete";
-      drop.addEventListener("click", async () => {
-        drop.disabled = true;
-        const r = await fetch("/api/settings/templates/" + template.id,
-                              { method: "DELETE" });
-        if (r.ok) loadTemplates(); else drop.disabled = false;
-      });
       row.appendChild(use);
-      row.appendChild(drop);
+      // A built-in has no row in the table to delete, so offering the
+      // button would only ever produce an error.
+      if (!template.builtin) {
+        const drop = document.createElement("button");
+        drop.type = "button";
+        drop.className = "btn-danger";
+        drop.textContent = "Delete";
+        drop.addEventListener("click", async () => {
+          drop.disabled = true;
+          const r = await fetch("/api/settings/templates/" + template.id,
+                                { method: "DELETE" });
+          if (r.ok) loadTemplates(); else drop.disabled = false;
+        });
+        row.appendChild(drop);
+      }
       list.appendChild(row);
     }
   } catch (_) { /* leave it */ }

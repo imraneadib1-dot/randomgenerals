@@ -3411,9 +3411,26 @@ def patch_notification_prefs():
                     "prefs": db.load_notification_prefs(current_owner_id())})
 
 
+# Templates every account has without having written them. The list
+# users see is these plus their own; the ids are namespaced so a
+# built-in can never collide with a uuid from create_template().
+BUILTIN_TEMPLATES = [
+    {
+        "id": "builtin:tutor",
+        "name": "Academic tutor (Morocco / CPGE / international)",
+        "body": "You are an academic tutor for students in Morocco - Baccalaureat (SM, SVT, PC), CPGE, and international tracks (Cambridge, SAT, AP).\n\nExplaining\n- Give the reasoning, not only the result. Show why a formula holds and where it comes from, one step at a time.\n- Concrete example first, then the general case, then the edge cases.\n- Pair an intuitive analogy with the rigorous statement. Neither on its own is enough.\n- Do not trade away precision for simplicity unless asked for a quick answer.\n\nNotation\n- Match the notation of the student's curriculum. For the Moroccan and French systems: intervals as ]a, b[, sequences as (u_n), limits and proofs written out with every step justified.\n- Use English and international terminology when the student writes in English or names an international exam.\n\nMathematics and diagrams\n- Write mathematics in LaTeX: $...$ inline, $$...$$ for display. It is rendered.\n- Draw anything with structure: tables of signs and variations, geometric setups, cycles in biology or chemistry, decision trees. A ```mermaid block is rendered; plain ASCII is fine for variation tables.\n\nLength\n- Finish what you start. If a proof is long, number the sections and complete every one of them.\n- No preamble and no filler. Begin with the content.",
+        "created": "",
+        "builtin": True,
+    },
+]
+
+
 @app.route("/api/settings/templates", methods=["GET"])
 def get_templates():
-    return jsonify({"templates": db.list_templates(current_owner_id())})
+    mine = db.list_templates(current_owner_id())
+    for t in mine:
+        t["builtin"] = False
+    return jsonify({"templates": BUILTIN_TEMPLATES + mine})
 
 
 @app.route("/api/settings/templates", methods=["POST"])
@@ -3433,6 +3450,8 @@ def create_template():
 
 @app.route("/api/settings/templates/<tid>", methods=["DELETE"])
 def remove_template(tid):
+    if tid.startswith("builtin:"):
+        return jsonify({"error": "Built-in templates cannot be deleted."}), 400
     if not db.delete_template(current_owner_id(), tid):
         return jsonify({"error": "No such template."}), 404
     return jsonify({"ok": True,
@@ -5823,9 +5842,20 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     if memories or custom_instructions:
         system_prompt = system_prompt + "\n\n" + _memory_context_block(
             memories, custom_instructions) + "\n\n" + MEMORY_ACK_NUDGE
-    profile_block = _profile_context_block(db.load_settings(owner_id))
+    owner_settings = db.load_settings(owner_id)
+    profile_block = _profile_context_block(owner_settings)
     if profile_block:
         system_prompt = system_prompt + "\n\n" + profile_block
+    # settings["system_prompt"] existed in the validator and in the
+    # defaults and NOWHERE ELSE. Settings > Templates wrote to it, the
+    # "Use" button said "Applied", and not one character of it ever
+    # reached the model. The templates feature was decorative.
+    own_prompt = (owner_settings.get("system_prompt") or "").strip()
+    if own_prompt:
+        system_prompt = system_prompt + "\n\n" + (
+            "Standing instructions from the person you are talking "
+            "to. Follow them unless they conflict with the rules "
+            "above.\n\n" + own_prompt[:4000])
     if web_results:
         system_prompt = system_prompt + "\n\n" + \
             _web_context_block(web_results)
