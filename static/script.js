@@ -747,17 +747,36 @@ function isPreviewable(lang, content) {
   return /<html[\s>]|<!doctype html/i.test(content);
 }
 
-function downloadHtml(content) {
-  const blob = new Blob([content], { type: "text/html" });
+function downloadBlob(content, filename, mime) {
+  const blob = new Blob([content], { type: mime });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "page.html";
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
   // Revoked on a timer rather than immediately: Chrome cancels an
   // in-flight download if the blob URL is released too early.
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+
+function downloadHtml(content) {
+  downloadBlob(content, "page.html", "text/html");
+}
+
+/** A filename from the note's own first heading, so a folder of these
+ *  is readable without opening them. */
+function noteFilename(md) {
+  const heading = (md.match(/^\s*#{1,3}\s+(.+)$/m) || [])[1];
+  const firstLine = (md.trim().split("\n")[0] || "").replace(/[#*_`>]/g, "");
+  const base = (heading || firstLine || "note")
+    .replace(/\$+[^$]*\$+/g, "")
+    .replace(/[\\/:*?"<>|]/g, "")
+    .trim()
+    .slice(0, 60)
+    .replace(/\s+/g, "-")
+    .toLowerCase();
+  return (base || "note") + ".md";
 }
 
 function openPreview(content) {
@@ -1154,6 +1173,23 @@ function addMessageActions(msg, bubble, { allowRegenerate }) {
   });
   row.appendChild(copyBtn);
 
+  // Notes are the point of a tutor answer, and a note you cannot keep
+  // is a note you have to screenshot. Saves the markdown source, so the
+  // headings, the tables and the LaTeX survive into the file.
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "msg-action-btn";
+  saveBtn.textContent = "Save";
+  saveBtn.title = "Download this reply as a Markdown file";
+  saveBtn.addEventListener("click", () => {
+    const md = bubble.dataset.md || bubble.textContent || "";
+    if (!md.trim()) return;
+    downloadBlob(md, noteFilename(md), "text/markdown;charset=utf-8");
+    saveBtn.textContent = "Saved!";
+    setTimeout(() => (saveBtn.textContent = "Save"), 1500);
+  });
+  row.appendChild(saveBtn);
+
   if (allowRegenerate) {
     const regenBtn = document.createElement("button");
     regenBtn.type = "button";
@@ -1249,6 +1285,12 @@ function escapeHtml(str) {
 }
 
 function renderContent(bubble, text) {
+  // Keep the source. Save-as-Markdown wants the markdown, not the
+  // rendered text - textContent has already lost the headings, the
+  // fences and the LaTeX delimiters KaTeX consumed.
+  try {
+    bubble.dataset.md = text;
+  } catch (_) { /* a bubble without a dataset still renders */ }
   const parts = [];
   const fenceRegex = /```(\w*)\n([\s\S]*?)```/g;
   let lastIndex = 0;
