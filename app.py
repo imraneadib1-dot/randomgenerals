@@ -1415,6 +1415,22 @@ def _owner_only():
         abort(404)
 
 
+@app.route("/favicon.ico")
+def favicon_ico():
+    """Every browser asks for this path whether or not the page links an
+    icon, and this returned 404 - so the tab was blank anywhere the
+    <link rel=icon> was not read, which includes a lot of feed readers,
+    link previews and the address bar of our own browser build.
+
+    static/favicon.svg is the real icon; the PNG is here because .ico
+    consumers are the ones least likely to accept SVG.
+    """
+    return send_from_directory(
+        os.path.join(app.root_path, "static", "icons"),
+        "icon-180.png", mimetype="image/png",
+        max_age=60 * 60 * 24 * 7)
+
+
 RESULTS_PER_PAGE = 10
 
 
