@@ -2,26 +2,60 @@
 # follow links WITHIN, and no other - so this file is the whole
 # definition of what the index is about. Add a line, widen the subject.
 #
-# Each of these was checked before being written down: it answers on
-# HTTPS and its robots.txt does not forbid crawling. Sites that were
-# unreachable (9alami.info, men.gov.ma, taalimtice.ma, adrar.info,
-# physique-chimie.ma), that refused us (moutamadris.ma, 403), or that
-# disallow everything in robots.txt (devoirat.net) are deliberately
-# absent. The crawler would skip the last one anyway; leaving it out
-# means not wasting a request finding that out.
+# Nothing goes in here unverified. Each entry was fetched, its
+# robots.txt parsed with the crawler's own User-Agent, and its homepage
+# title read to confirm it is what its domain name suggests.
 
 # ---- Moroccan curriculum: cours, exercices, examens nationaux ----
 https://www.alloschool.com/
+https://taalimpress.info/
 
-# ---- French maths, at Bac and CPGE level ----
+# ---- French secondary: cours, annales, corrigés ----
+https://www.mathovore.fr/
+https://www.maths-cours.fr/
+https://annales2maths.com/
+https://www.lelivrescolaire.fr/
+https://www.apmep.fr/
+
+# ---- Physics and chemistry ----
+https://www.physagreg.fr/
+https://labolycee.org/
+
+# ---- CPGE and university level ----
 https://www.bibmath.net/
 https://www.maths-france.fr/
+https://www.mathprepa.fr/
+https://prepas.org/
+https://www.unisciel.fr/
 
-# ---- General secondary curriculum ----
-https://www.lelivrescolaire.fr/
-
-# Khan Academy renders its lessons with JavaScript, so a fetch returns
-# the shell and almost no prose. Left commented until the crawler can
-# handle that; enabling it now would fill the frontier with pages that
-# get skipped for "too little text".
-# https://fr.khanacademy.org/
+# ------------------------------------------------------------------
+# CHECKED AND DELIBERATELY LEFT OUT
+#
+# Leaving these written down means nobody re-adds them next month and
+# waits for the crawler to rediscover the same problem.
+#
+#   dimaschool.com          the name suggests a school; the homepage is
+#                           titled "Recettes" and it is a recipe site
+#   devoirat.net            robots.txt disallows everything
+#   moutamadris.ma          403 to any request from us
+#   ency-education.com      403
+#   9alami.info             unreachable
+#   men.gov.ma              unreachable
+#   taalimtice.ma           unreachable
+#   adrar.info              unreachable
+#   physique-chimie.ma      unreachable
+#   exercices-corriges.com  unreachable
+#   sciencesphysiques.info  unreachable
+#   chimix.com              TLS handshake fails
+#   bacweb.tn               TLS handshake fails
+#
+#   fr.wikipedia.org        reachable and allowed, but scope here is
+#                           per-host: seeding it lets the crawler roam
+#                           all of Wikipedia, and breadth-first from the
+#                           main page spends the 4,000-page host budget
+#                           on whatever is in the news rather than on
+#                           mathematics.
+#
+#   fr.khanacademy.org      renders lessons with JavaScript, so a fetch
+#                           returns the shell and no prose. Every page
+#                           would be skipped for "too little text".
