@@ -31,6 +31,7 @@ load_dotenv()
 import db  # noqa: E402  SQLite persistence - see db.py for the schema and why
 import websearch  # noqa: E402  keyless web search - see websearch.py
 import searchdb  # noqa: E402  our own crawled index - see searchdb.py
+from markupsafe import escape  # noqa: E402
 import attachments  # noqa: E402  upload handling/text extraction
 import imagegen  # noqa: E402  local text-to-image generation
 import codeexec  # noqa: E402  sandboxed Python execution - see codeexec.py
@@ -1457,6 +1458,29 @@ def search_page():
         results = searchdb.search(
             query, limit=RESULTS_PER_PAGE,
             offset=(page - 1) * RESULTS_PER_PAGE)
+        for r in results:
+            r["source"] = "index"
+
+        # The index covers fourteen sites. Answering "rien pour X" for
+        # everything else would make this unusable as anyone's search
+        # engine, so the open web fills the rest of the first page -
+        # labelled, so nobody is misled about which is which.
+        if page == 1 and len(results) < RESULTS_PER_PAGE:
+            seen = {r["url"].rstrip("/") for r in results}
+            for r in websearch._duckduckgo(query, RESULTS_PER_PAGE * 2):
+                if r["url"].rstrip("/") in seen:
+                    continue
+                results.append({
+                    "title": r["title"], "url": r["url"],
+                    "host": urllib.parse.urlparse(r["url"]).netloc,
+                    "snippet": r["snippet"],
+                    # Escaped here: this text came from someone else's
+                    # results page and the template renders it as HTML.
+                    "snippet_html": escape(r["snippet"]),
+                    "links_in": 0, "source": "web"})
+                if len(results) >= RESULTS_PER_PAGE:
+                    break
+
     return render_template("search.html", q=query, results=results,
                            page=page, stats=searchdb.stats())
 

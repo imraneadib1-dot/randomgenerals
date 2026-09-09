@@ -73,6 +73,11 @@
       ol { list-style: none; padding: 0; margin: 0; }
       li { padding: 18px 0; border-bottom: 1px solid rgba(223,226,220,.09); }
       .host { color: var(--ink-faint); font-size: 12px; letter-spacing: .01em; }
+      .src { font-size: 9.5px; letter-spacing: .09em; text-transform: uppercase;
+             padding: 1px 6px; border-radius: 5px; margin-left: 8px;
+             vertical-align: 1px; }
+      .src.index { color: #182a3a; background: var(--tan); }
+      .src.web { color: var(--ink-faint); border: 1px solid var(--border); }
       .t { display: block; font-size: 17px; color: var(--smoke);
            text-decoration: none; margin: 3px 0 5px; line-height: 1.35; }
       .t:hover { color: var(--tan); }
@@ -121,7 +126,8 @@
           <ol>
             {% for r in results %}
               <li>
-                <div class="host">{{ r.host }}</div>
+                <div class="host">{{ r.host }}<span
+                  class="src {{ r.source }}">{{ 'index' if r.source == 'index' else 'web' }}</span></div>
                 <a class="t" href="{{ r.url }}" rel="noopener nofollow">{{ r.title }}</a>
                 <p class="sn">{{ r.snippet_html|safe }}</p>
               </li>
@@ -137,9 +143,8 @@
           </nav>
         {% else %}
           <p class="none">
-            Rien pour <b>{{ q }}</b>.<br />
-            Cet index ne couvre que {{ stats.hosts }} sites — il connaît le
-            programme, pas le web entier.
+            Rien pour <b>{{ q }}</b>, ni dans notre index ni sur le web.<br />
+            Vérifiez l'orthographe, ou essayez moins de mots.
           </p>
         {% endif %}
       {% endif %}
@@ -147,6 +152,8 @@
       <footer>
         Index propre : <b>{{ '{:,}'.format(stats.pages).replace(',', ' ') }}</b>
         pages sur {{ stats.hosts }} sites, explorées par notre propre robot.
+        Les résultats marqués <span class="src web">web</span> viennent
+        d'ailleurs — l'index ne couvre que le programme.
         <div class="scope">
           Aucun suivi, aucune publicité, aucun résultat sponsorisé.
           <a href="/">RandomGenerals</a>
