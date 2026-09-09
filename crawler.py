@@ -59,10 +59,15 @@ SKIP_EXT = re.compile(
     r"\.(png|jpe?g|gif|svg|webp|ico|css|js|mp[34]|avi|mov|wmv|zip|rar|7z|"
     r"gz|tar|exe|dmg|apk|woff2?|ttf|eot)(\?|$)", re.I)
 
-# PDFs are where a lot of past papers actually live, but extracting them
-# needs pypdf and a different code path. Recorded, not fetched, so the
-# frontier remembers them for when that is written.
+# Past papers live in PDFs. Skipping them meant the index had the page
+# that lists "Examen National 2023" and not the exam.
 PDF_EXT = re.compile(r"\.pdf(\?|$)", re.I)
+
+# A scanned 200-page textbook is not worth the minute of CPU it takes to
+# get nothing out of - scans have no text layer at all. Read the first
+# pages, and if there is no prose by then, give up.
+PDF_MAX_PAGES = 40
+PDF_MAX_BYTES = 12_000_000
 
 # Pages that exist on every site and teach nothing. The first crawl
 # spent a third of its budget on AlloSchool's login, register, cgu, cgv,
@@ -202,6 +207,78 @@ def wait_for_host(host):
         time.sleep(DELAY - gap)
 
 
+def _first_heading(text):
+    """The first line that reads like a title rather than a paragraph or
+    a page number."""
+    for line in text.split("\n")[:12]:
+        line = line.strip()
+        if 8 <= len(line) <= 120 and not line.isdigit():
+            # A line ending in a full stop is prose, not a heading -
+            # except numbered headings like "Chapitre 1." which end in
+            # one legitimately.
+            if line.endswith(".") and not re.search(r"\d\.$", line):
+                continue
+            return line
+    return ""
+
+
+def pdf_text(raw, url):
+    """-> (title, text). Empty text means there was nothing to index."""
+    try:
+        import pypdf
+    except ImportError:
+        return "", ""
+
+    try:
+        reader = pypdf.PdfReader(io.BytesIO(raw))
+        if reader.is_encrypted:
+            try:
+                reader.decrypt("")
+            except Exception:                    # noqa: BLE001
+                return "", ""
+
+        chunks = []
+        for page in reader.pages[:PDF_MAX_PAGES]:
+            try:
+                chunks.append(page.extract_text() or "")
+            except Exception:                    # noqa: BLE001
+                continue                         # one bad page, not a bad file
+
+        text = re.sub(r"[ \t]{2,}", " ",
+                      re.sub(r"\n{3,}", "\n\n", "\n".join(chunks))).strip()
+
+        title = ""
+        try:
+            title = (reader.metadata or {}).get("/Title") or ""
+        except Exception:                        # noqa: BLE001
+            title = ""
+        title = str(title).strip()
+
+        # A LaTeX-produced PDF usually carries its .dvi or .tex filename
+        # as the metadata title - "01_complements_algebre_chapitre.dvi"
+        # is worse than useless as a search result heading, when the
+        # document's own first line reads "Chapitre 1. Compléments
+        # d'algèbre".
+        looks_like_filename = bool(re.search(
+            r"\.(dvi|tex|pdf|docx?|odt|ps)$", title, re.I)) or (
+            " " not in title and "_" in title)
+        if not title or looks_like_filename:
+            heading = _first_heading(text)
+            if heading:
+                title = heading
+            elif not title:
+                name = urllib.parse.unquote(
+                    urllib.parse.urlsplit(url).path.rsplit("/", 1)[-1])
+                title = re.sub(r"[_-]+", " ",
+                               name[:-4] if name.lower().endswith(".pdf")
+                               else name).strip()
+        return title[:300], text
+    except Exception:                            # noqa: BLE001
+        # A truncated or malformed PDF is a page we skip, not a crawl
+        # that stops.
+        return "", ""
+
+
 def fetch(session, url):
     """-> (ok, title, text, lang, links, note)"""
     try:
@@ -211,17 +288,28 @@ def fetch(session, url):
                 return False, "", "", "", [], "http %d" % r.status_code
 
             ctype = (r.headers.get("content-type") or "").lower()
-            if "html" not in ctype:
+            is_pdf = "pdf" in ctype or PDF_EXT.search(url) is not None
+            if not is_pdf and "html" not in ctype:
                 return False, "", "", "", [], "not html (%s)" % ctype[:40]
+
+            ceiling = PDF_MAX_BYTES if is_pdf else MAX_BYTES
 
             # Read with a ceiling rather than trusting content-length,
             # which plenty of servers get wrong or omit.
             buf = io.BytesIO()
             for chunk in r.iter_content(16384):
                 buf.write(chunk)
-                if buf.tell() > MAX_BYTES:
+                if buf.tell() > ceiling:
                     return False, "", "", "", [], "too big"
             raw = buf.getvalue()
+
+        if is_pdf:
+            title, text = pdf_text(raw, url)
+            if not text:
+                # Almost always a scan: an image of a page, with no text
+                # layer for anyone to read.
+                return False, "", "", "", [], "pdf with no text layer"
+            return True, title, text, "", [], ""
 
         encoding = r.encoding or "utf-8"
         body = raw.decode(encoding, errors="replace")
@@ -307,10 +395,6 @@ def crawl(allow, max_pages, max_depth, verbose=True):
                     continue
                 seen.add(link)
                 if SKIP_EXT.search(link):
-                    continue
-                if PDF_EXT.search(link):
-                    searchdb.enqueue(link, depth + 1)
-                    searchdb.mark(link, searchdb.SKIPPED, "pdf, not yet handled")
                     continue
                 if not in_scope(link, allow):
                     continue
