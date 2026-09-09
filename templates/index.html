@@ -182,6 +182,15 @@
 
         <div class="thread-list" id="threadList"></div>
 
+        <!-- Clearing your history belonged in Settings > Data and
+             nowhere else, which is three clicks away from the list of
+             the very things you want gone. It stays in Settings too;
+             this is just where people actually look. Hidden by
+             script.js whenever there is nothing to clear. -->
+        <button type="button" class="thread-clear" id="clearThreads" hidden>
+          Clear all conversations
+        </button>
+
         <div class="sidebar-bottom" id="sidebarBottom">
           <div id="chatModeControls">
             <div class="patch-bay-label" id="patchBayLabel">Channel</div>

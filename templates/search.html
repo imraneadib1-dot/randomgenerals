@@ -218,7 +218,9 @@
         {% if results %}
           <p class="meta">
             {{ meta.total }} résultat{{ 's' if meta.total > 1 }} dans l'index
-            · {{ meta.took_ms }} ms
+            · {{ meta.took_ms }} ms{% if meta.relaxed %}
+            · recherche élargie, tous les mots n'étaient pas trouvés
+            ensemble{% endif %}
           </p>
           <ol id="results">
             {% for r in results %}

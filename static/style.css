@@ -710,6 +710,28 @@ html.time-night .night-moon {
   padding-top: 10px;
 }
 
+/* Sits under the list rather than beside "+ New chat": a destructive
+   control next to the one people press constantly is a control they
+   will eventually press by accident. */
+.thread-clear {
+  margin: 8px 0 2px;
+  padding: 7px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--ink-faint);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.thread-clear:hover {
+  color: var(--danger);
+  border-color: var(--danger-edge);
+  background: var(--surface);
+}
+
 .thread-item {
   display: flex;
   align-items: center;

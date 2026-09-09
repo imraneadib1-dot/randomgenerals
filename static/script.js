@@ -998,10 +998,44 @@ async function loadCredits() {
 /* ----------------------------------------------------------------
    Thread list — scoped to the active bay
    ---------------------------------------------------------------- */
+/**
+ * Delete every conversation, in every bay.
+ *
+ * One function for both buttons - the sidebar and Settings > Data - so
+ * the two cannot drift into deleting different things. It goes through
+ * the per-thread endpoint that already checks ownership rather than a
+ * bulk route, which would need its own authorisation logic to get
+ * wrong.
+ *
+ * `/api/threads` with no mode returns every bay, so this really does
+ * clear chat, code and image history and not just whichever tab
+ * happens to be open.
+ */
+async function deleteAllConversations(say) {
+  const report = say || (() => {});
+  report("Deleting…");
+  const list = await (await fetch("/api/threads")).json();
+  let n = 0;
+  for (const t of list.threads || []) {
+    const r = await fetch("/api/threads/" + t.id, { method: "DELETE" });
+    if (r.ok) n += 1;
+  }
+  report(`Deleted ${n} conversation${n === 1 ? "" : "s"}.`);
+  currentThreadId = null;
+  await loadThreadList();
+  showEmptyState();
+  return n;
+}
+
 async function loadThreadList() {
   const res = await fetch(`/api/threads?mode=${currentBay}`);
   const data = await res.json();
   threadList.innerHTML = "";
+
+  // Nothing to clear, nothing to offer. A destructive button that does
+  // nothing is still a button people have to think about.
+  const clearBtn = document.getElementById("clearThreads");
+  if (clearBtn) clearBtn.hidden = !data.threads.length;
 
   data.threads.forEach((t) => {
     const item = document.createElement("div");
@@ -1097,6 +1131,29 @@ newChatBtn.addEventListener("click", () => {
   showEmptyState();
   loadThreadList();
 });
+
+const clearThreadsBtn = document.getElementById("clearThreads");
+if (clearThreadsBtn) {
+  clearThreadsBtn.addEventListener("click", async () => {
+    // The count is in the question. "Delete every conversation?" reads
+    // the same whether it is going to remove one or forty.
+    const list = await (await fetch("/api/threads")).json();
+    const n = (list.threads || []).length;
+    if (!n) return;
+    if (!confirm(
+      `Delete ${n} conversation${n === 1 ? "" : "s"}, in every channel? `
+      + "This cannot be undone.")) return;
+
+    clearThreadsBtn.disabled = true;
+    try {
+      await deleteAllConversations();
+    } catch (_) {
+      // Nothing to say here that the empty list will not say better.
+    } finally {
+      clearThreadsBtn.disabled = false;
+    }
+  });
+}
 
 deleteBtn.addEventListener("click", async () => {
   if (!currentThreadId) return;
@@ -3699,17 +3756,8 @@ function initDataControls() {
     deleteBtn.addEventListener("click", async () => {
       if (!confirm(
         "Delete every conversation? This cannot be undone.")) return;
-      status.textContent = "Deleting…";
       try {
-        const list = await (await fetch("/api/threads")).json();
-        let n = 0;
-        for (const t of list.threads || []) {
-          const r = await fetch("/api/threads/" + t.id, { method: "DELETE" });
-          if (r.ok) n += 1;
-        }
-        status.textContent = `Deleted ${n} conversations.`;
-        if (typeof loadThreadList === "function") loadThreadList();
-        showEmptyState();
+        await deleteAllConversations((t) => (status.textContent = t));
       } catch (_) {
         status.textContent = "Could not delete just now.";
       }

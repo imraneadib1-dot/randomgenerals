@@ -351,18 +351,71 @@ def parse_query(raw):
     return text.strip(), filters, negatives
 
 
-def _fts_query(raw, negatives=()):
+# Words that appear on nearly every page in this corpus, so requiring
+# them finds nothing and ranking on them means nothing.
+#
+# "loi de Newton" used to return "Biographie de Abraham de Moivre",
+# because every term was required and "de" is on every French page in
+# the index. French, Arabic and English together, because the corpus is.
+STOPWORDS = frozenset("""
+a au aux avec ce ces dans de des du elle en et eux il je la le les leur
+lui ma mais me meme mes moi mon ne nos notre nous on ou par pas pour qu
+que qui sa se ses son sur ta te tes toi ton tu un une vos votre vous y
+est sont etre avoir cette comment quoi quel quelle quels quelles
+the of and or to in is are was were be been a an for on at by with from
+this that these those what which how why when where
+من في على الى عن مع هذا هذه ذلك التي الذي ما هل كيف
+""".split())
+
+
+def _terms_of(raw):
+    """Split a query into phrases and words.
+
+    Anything in double quotes stays together as a phrase, the way it
+    does everywhere else, so "theoreme de Thales" can be asked for
+    exactly.
+    """
+    phrases = re.findall(r'"([^"]+)"', raw or "")
+    rest = re.sub(r'"[^"]*"', " ", raw or "")
+    words = [w for w in rest.split() if w.strip()]
+    return phrases[:4], words[:12]
+
+
+def _fts_query(raw, negatives=(), mode="and"):
     """Turn what someone typed into an FTS5 query.
 
     Every term is quoted. FTS5 treats - : * ( ) as operators, so an
     apostrophe or a hyphen out of a real question ("qu'est-ce que") is a
     syntax error rather than a search, and the reader gets a crash where
     they expected results.
+
+    mode="and" requires every word; mode="or" requires one. The caller
+    tries the strict one first - see search().
     """
-    terms = [t for t in raw.replace('"', " ").split() if t.strip()]
-    if not terms:
+    phrases, words = _terms_of(raw)
+
+    kept = [w for w in words if _fold(w) not in STOPWORDS]
+    # ...unless the whole query is stopwords ("comment ça marche"), in
+    # which case searching for them beats searching for nothing.
+    if not kept and not phrases:
+        kept = words
+
+    parts = ['"%s"' % p.replace("'", "''") for p in phrases]
+    joiner = " OR " if mode == "or" else " "
+    body = joiner.join('"%s"' % w.replace("'", "''") for w in kept)
+
+    if parts and body:
+        # Phrases are always required, whatever the mode: someone who
+        # typed quotation marks meant them.
+        q = " ".join(parts) + " AND (%s)" % body if mode == "or" \
+            else " ".join(parts) + " " + body
+    elif parts:
+        q = " ".join(parts)
+    elif body:
+        q = "(%s)" % body if mode == "or" else body
+    else:
         return ""
-    q = " ".join('"%s"' % t.replace("'", "''") for t in terms[:12])
+
     if negatives:
         q += " NOT (%s)" % " OR ".join(
             '"%s"' % n.replace("'", "''") for n in negatives)
@@ -417,59 +470,109 @@ def search(query, limit=20, offset=0, kind=None):
              "filters": {}, "negatives": [], "counts": {}}
 
     text, filters, negatives = parse_query(query or "")
-    match = _fts_query(text, negatives)
-    if not match:
-        return empty
-
     where, params = _where(filters, kind)
     conn = _connect()
 
-    try:
-        rows = conn.execute(
-            """
-            SELECT p.url, p.title, p.host, p.links_in, p.lang, p.kind,
-                   snippet(pages_fts, 1, char(2), char(3), ' … ', 14) AS snip,
-                   bm25(pages_fts, 8.0, 1.0) AS score
-            FROM pages_fts
-            JOIN pages p ON p.id = pages_fts.rowid
-            WHERE pages_fts MATCH ?""" + where + """
-            ORDER BY score
-            LIMIT ? OFFSET ?
-            """, [match] + params + [limit * 4, offset]).fetchall()
-
-        total = conn.execute(
-            "SELECT COUNT(*) AS n FROM pages_fts JOIN pages p "
-            "ON p.id = pages_fts.rowid WHERE pages_fts MATCH ?" + where,
-            [match] + params).fetchone()["n"]
-
-        # How many results each tab would show, so a tab can be labelled
-        # with its count instead of leading somewhere empty.
-        counts = {}
-        base_where, base_params = _where(filters, None)
-        for row in conn.execute(
-                "SELECT p.kind, COUNT(*) AS n FROM pages_fts JOIN pages p "
-                "ON p.id = pages_fts.rowid WHERE pages_fts MATCH ?"
-                + base_where + " GROUP BY p.kind",
-                [match] + base_params):
-            counts[row["kind"] or "autre"] = row["n"]
-    except sqlite3.OperationalError:
-        return empty
-
-    # bm25() is negative and smaller is better.
+    # Strict first, then relax.
     #
-    # The link nudge used to be 0.35 per log-link, which was enough to
-    # push AlloSchool's "Primaire" and "Collège" pages above the page
-    # actually titled "Classes Préparatoires (CPGE)" for the query
-    # "cpge" - those pages are linked from everywhere on the site, so
-    # popularity beat relevance. It is the weakest signal in an index
-    # this size and now scores like it.
-    terms = [_fold(t) for t in text.split() if t.strip()]
+    # "examen national maths 2023" returned two results while every word
+    # was required - on an index this size a four-word query matches
+    # almost nothing. So: ask for all the words, and if that finds
+    # almost nothing, ask for any of them and let bm25 sort it out. Its
+    # IDF already discounts words that are everywhere, which is exactly
+    # the judgement needed once the AND is gone.
+    rows, total, counts, relaxed = [], 0, {}, False
+    for mode in ("and", "or"):
+        match = _fts_query(text, negatives, mode)
+        if not match:
+            return empty
+        relaxed = mode == "or"
+        try:
+            rows, total, counts = _run(conn, match, where, params,
+                                       limit, offset, filters)
+        except sqlite3.OperationalError:
+            return empty
+        if total >= RELAX_BELOW:
+            break
+
+    return _rank(rows, total, counts, text, filters, negatives,
+                 relaxed, started, limit)
+
+
+# Below this many hits, the strict query is not earning its strictness.
+RELAX_BELOW = 6
+
+
+def _run(conn, match, where, params, limit, offset, filters):
+    """One pass of the query. -> (rows, total, counts)"""
+    rows = conn.execute(
+        """
+        SELECT p.url, p.title, p.host, p.links_in, p.lang, p.kind,
+               snippet(pages_fts, 1, char(2), char(3), ' … ', 14) AS snip,
+               bm25(pages_fts, 8.0, 1.0) AS score
+        FROM pages_fts
+        JOIN pages p ON p.id = pages_fts.rowid
+        WHERE pages_fts MATCH ?""" + where + """
+        ORDER BY score
+        LIMIT ? OFFSET ?
+        """, [match] + params + [limit * 5, offset]).fetchall()
+
+    total = conn.execute(
+        "SELECT COUNT(*) AS n FROM pages_fts JOIN pages p "
+        "ON p.id = pages_fts.rowid WHERE pages_fts MATCH ?" + where,
+        [match] + params).fetchone()["n"]
+
+    # How many results each tab would show, so a tab can be labelled
+    # with its count instead of leading somewhere empty.
+    counts = {}
+    base_where, base_params = _where(filters, None)
+    for row in conn.execute(
+            "SELECT p.kind, COUNT(*) AS n FROM pages_fts JOIN pages p "
+            "ON p.id = pages_fts.rowid WHERE pages_fts MATCH ?"
+            + base_where + " GROUP BY p.kind",
+            [match] + base_params):
+        counts[row["kind"] or "autre"] = row["n"]
+
+    return rows, total, counts
+
+
+def _rank(rows, total, counts, text, filters, negatives, relaxed,
+          started, limit):
+    """Order the candidates and shape them for the page.
+
+    bm25() is negative and smaller is better; every bonus below is
+    subtracted from it.
+    """
+    _, words = _terms_of(text)
+    terms = [_fold(w) for w in words if _fold(w) not in STOPWORDS]
+    if not terms:
+        terms = [_fold(w) for w in words]
+
     scored = []
     for r in rows:
         row = dict(r)
+        title = _fold(row["title"] or "")
+        snippet = _fold(row["snip"] or "")
+
+        # Popularity is the weakest signal here.
+        #
+        # This was 0.35 per log-link, enough to push AlloSchool's
+        # "Primaire" and "Collège" pages above the page actually titled
+        # "Classes Préparatoires (CPGE)" for the query "cpge" - those
+        # are linked from every page on the site.
         boost = math.log1p(min(row["links_in"], 40)) * 0.12
 
-        title = _fold(row["title"] or "")
+        # How much of the question this document answers. Once the
+        # strict AND is relaxed, a page matching four of five words has
+        # to beat one matching a single word, and bm25 alone does not
+        # say that clearly enough.
+        if terms:
+            hit = sum(1 for t in terms if t in title or t in snippet)
+            boost += 2.6 * (hit / len(terms))
+            if hit == len(terms):
+                boost += 1.2
+
+        # Someone searching "cpge" wants the page called that.
         if terms and all(t in title for t in terms):
             boost += 4.0
             if title.strip() == " ".join(terms):
@@ -499,7 +602,8 @@ def search(query, limit=20, offset=0, kind=None):
 
     return {"results": out, "total": total,
             "took_ms": round((time.time() - started) * 1000, 1),
-            "filters": filters, "negatives": negatives, "counts": counts}
+            "filters": filters, "negatives": negatives,
+            "relaxed": relaxed, "counts": counts}
 
 
 def suggest(prefix, limit=8):
