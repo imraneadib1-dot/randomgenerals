@@ -6278,6 +6278,45 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                 for piece in streamer(model, history, **local_kwargs):
                     full_reply += piece
                     yield piece
+
+            # AN EMPTY STREAM IS A FAILURE, NOT AN ANSWER.
+            #
+            # "anisse international school" came back as "Searched the
+            # web" and then nothing: POST /api/chat logged 200 with 117
+            # bytes, no exception, no traceback. The model had used its
+            # tool call and then produced no prose, so the loop above
+            # yielded zero pieces and the browser fell back to "[No
+            # response received. Check the channel setup.]" - which
+            # blames the setup for a model that simply said nothing.
+            #
+            # One retry, with an instruction rather than the same
+            # request again. The streamer is never handed `tools` - the
+            # tool loop runs before this and leaves its results in the
+            # history - so repeating the call unchanged would just ask
+            # the same question that already produced silence. Telling
+            # it to answer from what it has is the part that differs.
+            if not full_reply.strip():
+                nudged = list(history) + [{
+                    "role": "system",
+                    "content": "Answer now, in plain prose, using the "
+                               "information already gathered above. Do "
+                               "not request any more tools. If the "
+                               "information is not enough, say what is "
+                               "missing.",
+                }]
+                try:
+                    for piece in streamer(model, nudged, **stream_kwargs):
+                        full_reply += piece
+                        yield piece
+                except Exception as e:                      # noqa: BLE001
+                    app.logger.warning("empty-stream retry failed: %s", e)
+
+            if not full_reply.strip():
+                full_reply = (
+                    "[The model returned nothing for that. It usually "
+                    "means the question needs rewording - try asking it "
+                    "differently, or more specifically.]")
+                yield full_reply
         except GeneratorExit:
             raise
         except Exception as e:
