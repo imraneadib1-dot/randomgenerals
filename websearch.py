@@ -29,6 +29,7 @@ A backend that throws is a backend that contributed nothing.
 import html
 import os
 import re
+import time
 import urllib.parse
 
 import requests
@@ -228,6 +229,39 @@ def _key(url):
     return (url or "").rstrip("/").lower()
 
 
+# A short memory of what was just asked.
+#
+# The free backends rate-limit by address, and this app runs from one.
+# Marginalia answered a 57KB results page and then, after a handful of
+# requests in a row, a 1KB refusal - so the way to keep a backend
+# working is to ask it less. Two people searching the same thing, or one
+# person reloading, now costs one request rather than several.
+_CACHE = {}
+_CACHE_TTL = 300
+_CACHE_MAX = 200
+
+
+def _cached(query, limit):
+    hit = _CACHE.get((query.lower(), limit))
+    if not hit:
+        return None
+    when, value = hit
+    if time.time() - when > _CACHE_TTL:
+        _CACHE.pop((query.lower(), limit), None)
+        return None
+    return value
+
+
+def _remember(query, limit, value):
+    if len(_CACHE) >= _CACHE_MAX:
+        # Oldest first. A dict keeps insertion order, so this is the
+        # least recently added rather than the least recently used -
+        # close enough for a cache that lives five minutes.
+        for key in list(_CACHE)[:_CACHE_MAX // 4]:
+            _CACHE.pop(key, None)
+    _CACHE[(query.lower(), limit)] = (time.time(), value)
+
+
 def search(query, max_results=5):
     """-> [{"title", "url", "snippet", "source"}, ...]
 
@@ -237,6 +271,10 @@ def search(query, max_results=5):
     query = (query or "").strip()
     if not query:
         return []
+
+    remembered = _cached(query, max_results)
+    if remembered is not None:
+        return [dict(r) for r in remembered]
 
     results, seen = [], set()
     wanted = [w for w in re.findall(r"\w+", query.lower())
@@ -287,18 +325,24 @@ def search(query, max_results=5):
         except Exception:                        # noqa: BLE001
             continue
 
+    _remember(query, max_results, results)
     return results
 
 
 def which_backends():
-    """Which sources are answering right now. For check scripts and for
-    saying "search is degraded" out loud instead of returning silence."""
+    """Which sources are answering right now.
+
+    The probe is a real query, not "test". "test" returned nothing from
+    Marginalia and made a working backend look dead - a diagnostic that
+    reports a false failure is worse than no diagnostic.
+    """
     state = {}
-    for name, fn in (("marginalia", _marginalia),
+    for name, fn in (("brave", _brave),
+                     ("marginalia", _marginalia),
                      ("wikipedia", _wikipedia),
                      ("duckduckgo", _duckduckgo)):
         try:
-            state[name] = len(fn("test", 3))
+            state[name] = len(fn("morocco school", 3))
         except Exception:                        # noqa: BLE001
             state[name] = 0
     return state
