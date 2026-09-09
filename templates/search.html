@@ -1,0 +1,157 @@
+<!doctype html>
+{# The search page.
+
+   Its own index, not a wrapper round somebody else's - so the page says
+   plainly how many documents it has and what it covers. A search engine
+   that hides its size is hoping you will assume it is large. #}
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% if q %}{{ q }} — {% endif %}Recherche — RandomGenerals</title>
+    <meta name="description"
+          content="Recherche dans les cours, exercices et examens du programme marocain et français." />
+    <link rel="icon" href="{{ asset('favicon.svg') }}" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=Inter:wght@300;400;500;600&display=swap"
+      rel="stylesheet" />
+    <style>
+      :root {
+        --sky-top: #182a3a; --sky-mid: #1e3346; --sky-bottom: #2a4155;
+        --tan: #a08348; --smoke: #dfe2dc;
+        --ink: #dfe2dc; --ink-soft: #a9ada5; --ink-faint: #7a7e74;
+        --surface: rgba(223, 226, 220, 0.075);
+        --surface-raised: rgba(223, 226, 220, 0.115);
+        --border: rgba(223, 226, 220, 0.17);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; min-height: 100vh; color: var(--ink);
+        font: 400 15px/1.6 Inter, -apple-system, "Segoe UI", system-ui, sans-serif;
+        background:
+          radial-gradient(900px 460px at 50% -8%, rgba(160,131,72,.14), transparent 62%),
+          linear-gradient(var(--sky-top) 0%, var(--sky-mid) 55%, var(--sky-bottom) 100%);
+        background-attachment: fixed;
+      }
+      a { color: inherit; }
+      .wrap { max-width: 720px; margin: 0 auto; padding: 0 22px 80px; }
+
+      /* ---- masthead: big when empty, compact once you have searched ---- */
+      header { padding: {{ '16vh' if not q else '38px' }} 0 30px; text-align: {{ 'center' if not q else 'left' }}; }
+      .mark { width: {{ '46px' if not q else '30px' }}; height: {{ '46px' if not q else '30px' }};
+              position: relative; margin: {{ '0 auto 18px' if not q else '0 0 14px' }};
+              filter: drop-shadow(0 0 14px rgba(160,131,72,.38)); }
+      .mark i { position: absolute; border: 2px solid var(--tan);
+                border-radius: 50%; display: block; }
+      .mark i:first-child { inset: 0; }
+      .mark i:last-child { inset: 34%; }
+      h1 { font-family: "Cormorant Garamond", Georgia, serif;
+           font-size: {{ '34px' if not q else '21px' }}; font-weight: 600;
+           margin: 0 0 6px; letter-spacing: .01em; }
+      .sub { color: var(--ink-faint); font-size: 13px; margin: 0; }
+
+      form { margin: 26px 0 0; position: relative; }
+      input[type=search] {
+        width: 100%; padding: 14px 20px 14px 46px; border-radius: 26px;
+        font: inherit; font-size: 15px; color: var(--ink);
+        background: var(--surface); border: 1px solid var(--border);
+        outline: none; transition: border-color .18s, background .18s, box-shadow .18s;
+      }
+      input[type=search]::placeholder { color: var(--ink-faint); }
+      input[type=search]:focus {
+        border-color: rgba(160,131,72,.65); background: var(--surface-raised);
+        box-shadow: 0 0 0 4px rgba(160,131,72,.10);
+      }
+      .si { position: absolute; left: 18px; top: 50%; transform: translateY(-50%);
+            width: 16px; height: 16px; opacity: .5; pointer-events: none; }
+
+      .count { color: var(--ink-faint); font-size: 12px; margin: 22px 0 6px; }
+
+      /* ---- results ---- */
+      ol { list-style: none; padding: 0; margin: 0; }
+      li { padding: 18px 0; border-bottom: 1px solid rgba(223,226,220,.09); }
+      .host { color: var(--ink-faint); font-size: 12px; letter-spacing: .01em; }
+      .t { display: block; font-size: 17px; color: var(--smoke);
+           text-decoration: none; margin: 3px 0 5px; line-height: 1.35; }
+      .t:hover { color: var(--tan); }
+      .sn { color: var(--ink-soft); font-size: 13.5px; margin: 0; }
+      mark { background: rgba(160,131,72,.28); color: var(--smoke);
+             border-radius: 2px; padding: 0 1px; }
+
+      .none { color: var(--ink-soft); padding: 34px 0; }
+      .none b { color: var(--smoke); font-weight: 600; }
+
+      nav.pages { display: flex; gap: 10px; margin-top: 30px; }
+      nav.pages a { font-size: 13px; color: var(--ink-soft); text-decoration: none;
+                    padding: 7px 14px; border-radius: 9px;
+                    background: var(--surface); border: 1px solid var(--border); }
+      nav.pages a:hover { color: var(--smoke); background: var(--surface-raised); }
+
+      footer { margin-top: 44px; color: var(--ink-faint); font-size: 11.5px;
+               line-height: 1.7; }
+      footer a { color: var(--ink-soft); }
+      .scope { margin-top: 4px; }
+    </style>
+  </head>
+
+  <body>
+    <div class="wrap">
+      <header>
+        <div class="mark"><i></i><i></i></div>
+        <h1>{% if q %}<a href="/search" style="text-decoration:none">Recherche</a>{% else %}Recherche{% endif %}</h1>
+        {% if not q %}
+          <p class="sub">Cours, exercices et examens — programme marocain et français.</p>
+        {% endif %}
+
+        <form action="/search" method="get" role="search">
+          <svg class="si" viewBox="0 0 24 24" fill="none" stroke="#dfe2dc" stroke-width="2">
+            <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" />
+          </svg>
+          <input type="search" name="q" value="{{ q }}" autofocus
+                 placeholder="limites de suites, concours CPGE, bac SM…"
+                 autocomplete="off" />
+        </form>
+      </header>
+
+      {% if q %}
+        {% if results %}
+          <p class="count">{{ results|length }} résultat{{ 's' if results|length > 1 }} sur cette page</p>
+          <ol>
+            {% for r in results %}
+              <li>
+                <div class="host">{{ r.host }}</div>
+                <a class="t" href="{{ r.url }}" rel="noopener nofollow">{{ r.title }}</a>
+                <p class="sn">{{ r.snippet_html|safe }}</p>
+              </li>
+            {% endfor %}
+          </ol>
+          <nav class="pages">
+            {% if page > 1 %}
+              <a href="/search?q={{ q|urlencode }}&p={{ page - 1 }}">← Précédent</a>
+            {% endif %}
+            {% if results|length >= 10 %}
+              <a href="/search?q={{ q|urlencode }}&p={{ page + 1 }}">Suivant →</a>
+            {% endif %}
+          </nav>
+        {% else %}
+          <p class="none">
+            Rien pour <b>{{ q }}</b>.<br />
+            Cet index ne couvre que {{ stats.hosts }} sites — il connaît le
+            programme, pas le web entier.
+          </p>
+        {% endif %}
+      {% endif %}
+
+      <footer>
+        Index propre : <b>{{ '{:,}'.format(stats.pages).replace(',', ' ') }}</b>
+        pages sur {{ stats.hosts }} sites, explorées par notre propre robot.
+        <div class="scope">
+          Aucun suivi, aucune publicité, aucun résultat sponsorisé.
+          <a href="/">RandomGenerals</a>
+        </div>
+      </footer>
+    </div>
+  </body>
+</html>

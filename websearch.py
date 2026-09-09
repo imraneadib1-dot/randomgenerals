@@ -46,12 +46,52 @@ def _real_url(ddg_href):
 
 
 def search(query, max_results=5):
-    """-> [{"title", "url", "snippet"}, ...]. Never raises - any failure
-    (network, timeout, markup change) just means an empty list, so a
-    caller can always fall back to answering without web results."""
+    """-> [{"title", "url", "snippet", "source"}, ...]
+
+    Our own index first, DuckDuckGo for whatever it cannot answer.
+
+    The index is small and narrow - a few sites of Moroccan and French
+    curriculum material - but on those subjects it is better than a
+    scrape of somebody else's results page: the crawler read the whole
+    document, so the snippet comes from the text rather than from a
+    search engine's summary of it. Off that subject it knows nothing,
+    which is what the fallback is for.
+
+    Never raises. Any failure means fewer results, not an exception.
+    """
     query = (query or "").strip()
     if not query:
         return []
+
+    results = []
+    seen = set()
+    try:
+        import searchdb
+        for r in searchdb.search(query, limit=max_results):
+            results.append({"title": r["title"], "url": r["url"],
+                            "snippet": r["snippet"], "source": "index"})
+            seen.add(r["url"].rstrip("/"))
+    except Exception:                            # noqa: BLE001
+        # No index file yet, or a locked database. Neither is a reason
+        # to refuse to search.
+        pass
+
+    if len(results) >= max_results:
+        return results
+
+    for r in _duckduckgo(query, max_results * 2):
+        if r["url"].rstrip("/") in seen:
+            continue
+        r["source"] = "web"
+        results.append(r)
+        if len(results) >= max_results:
+            break
+    return results
+
+
+def _duckduckgo(query, max_results=5):
+    """The keyless fallback. Same contract: never raises, empty on any
+    failure."""
     try:
         r = requests.get(
             "https://html.duckduckgo.com/html/",

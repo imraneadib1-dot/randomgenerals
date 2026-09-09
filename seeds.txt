@@ -1,0 +1,27 @@
+# The crawl scope. Every host listed here is a host the crawler may
+# follow links WITHIN, and no other - so this file is the whole
+# definition of what the index is about. Add a line, widen the subject.
+#
+# Each of these was checked before being written down: it answers on
+# HTTPS and its robots.txt does not forbid crawling. Sites that were
+# unreachable (9alami.info, men.gov.ma, taalimtice.ma, adrar.info,
+# physique-chimie.ma), that refused us (moutamadris.ma, 403), or that
+# disallow everything in robots.txt (devoirat.net) are deliberately
+# absent. The crawler would skip the last one anyway; leaving it out
+# means not wasting a request finding that out.
+
+# ---- Moroccan curriculum: cours, exercices, examens nationaux ----
+https://www.alloschool.com/
+
+# ---- French maths, at Bac and CPGE level ----
+https://www.bibmath.net/
+https://www.maths-france.fr/
+
+# ---- General secondary curriculum ----
+https://www.lelivrescolaire.fr/
+
+# Khan Academy renders its lessons with JavaScript, so a fetch returns
+# the shell and almost no prose. Left commented until the crawler can
+# handle that; enabling it now would fill the frontier with pages that
+# get skipped for "too little text".
+# https://fr.khanacademy.org/

@@ -9,6 +9,12 @@ app.db
 app.db-shm
 app.db-wal
 
+# The crawled index. Data, not source - it is rebuilt by running the
+# crawler, it grows to gigabytes, and it holds other people's page text.
+search.db
+search.db-shm
+search.db-wal
+
 # Pre-SQLite legacy snapshots (see db.py) - stale, but still real data.
 chat_data.json
 credits.json

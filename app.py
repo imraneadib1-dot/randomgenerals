@@ -30,6 +30,7 @@ load_dotenv()
 
 import db  # noqa: E402  SQLite persistence - see db.py for the schema and why
 import websearch  # noqa: E402  keyless web search - see websearch.py
+import searchdb  # noqa: E402  our own crawled index - see searchdb.py
 import attachments  # noqa: E402  upload handling/text extraction
 import imagegen  # noqa: E402  local text-to-image generation
 import codeexec  # noqa: E402  sandboxed Python execution - see codeexec.py
@@ -1412,6 +1413,50 @@ def _owner_only():
     user = USERS.get(uid) if uid else None
     if not user or (user.get("email") or "").strip().lower() != ADMIN_EMAIL:
         abort(404)
+
+
+RESULTS_PER_PAGE = 10
+
+
+def _page_number(raw):
+    """A page number from a query string, which is whatever someone
+    typed. ?p=abc and ?p=-4 are not errors worth a 500."""
+    try:
+        return max(1, min(int(raw or 1), 50))
+    except (TypeError, ValueError):
+        return 1
+
+
+@app.route("/search")
+def search_page():
+    """Our own index. Public, unauthenticated, no tracking.
+
+    Deliberately not behind a login: a search engine nobody can use
+    without an account is not a search engine.
+    """
+    query = (request.args.get("q") or "").strip()[:200]
+    page = _page_number(request.args.get("p"))
+    results = []
+    if query:
+        results = searchdb.search(
+            query, limit=RESULTS_PER_PAGE,
+            offset=(page - 1) * RESULTS_PER_PAGE)
+    return render_template("search.html", q=query, results=results,
+                           page=page, stats=searchdb.stats())
+
+
+@app.route("/api/search")
+def api_search():
+    query = (request.args.get("q") or "").strip()[:200]
+    if not query:
+        return jsonify({"query": "", "results": [], "index": searchdb.stats()})
+    limit = _page_number(request.args.get("limit")) if request.args.get(
+        "limit") else RESULTS_PER_PAGE
+    return jsonify({
+        "query": query,
+        "results": searchdb.search(query, limit=min(limit, 25)),
+        "index": searchdb.stats(),
+    })
 
 
 @app.route("/stats")
