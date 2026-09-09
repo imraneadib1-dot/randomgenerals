@@ -2725,6 +2725,39 @@ const AUTH_ERROR_MESSAGES = {
   not_configured: "Google sign-in isn't configured on this server yet.",
 };
 
+/**
+ * Arriving from /search with a question already typed.
+ *
+ * The search page offers "Demander à l'assistant" under its results,
+ * which is a promise that the question comes with you. Put it in the
+ * composer and leave it there - sending it automatically would answer
+ * something the person may still want to reword.
+ */
+function handleSearchHandoff() {
+  const params = new URLSearchParams(window.location.search);
+  const q = (params.get("q") || "").trim();
+  if (!q) return;
+
+  // messageInput, not S("messageInput"): S is a `const` declared eight
+  // hundred lines below boot(), so calling it here throws "Cannot
+  // access 'S' before initialization" - the same temporal dead zone
+  // that once stopped boot() running at all and left the splash screen
+  // up for every visitor. The try/catch around boot() meant this one
+  // only failed silently instead.
+  if (messageInput) {
+    messageInput.value = q.slice(0, 2000);
+    messageInput.dispatchEvent(new Event("input", { bubbles: true }));
+    messageInput.focus();
+  }
+
+  // Taken out of the address bar, so a reload does not silently refill
+  // the box with a question that was already asked.
+  params.delete("q");
+  const rest = params.toString();
+  history.replaceState(
+    {}, "", window.location.pathname + (rest ? "?" + rest : ""));
+}
+
 function handleAuthReturn() {
   const params = new URLSearchParams(window.location.search);
   const err = params.get("auth_error");
@@ -2804,6 +2837,7 @@ async function boot() {
     initAppearance();
     handleCheckoutReturn();
     handleAuthReturn();
+    handleSearchHandoff();
 
     // allSettled, not all: one endpoint being down degrades the app,
     // it does not justify refusing to show it. Promise.all rejects on

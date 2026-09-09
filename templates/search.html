@@ -1,8 +1,8 @@
 <!doctype html>
 {# The search page.
 
-   Its own index, not a wrapper round somebody else's - so the page says
-   plainly how many documents it has and what it covers. A search engine
+   Its own index, so the page says plainly how big it is, how long the
+   query took, and which results came from elsewhere. A search engine
    that hides its size is hoping you will assume it is large. #}
 <html lang="fr">
   <head>
@@ -15,150 +15,365 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=Inter:wght@300;400;500;600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@300;400;500;600&display=swap"
       rel="stylesheet" />
     <style>
       :root {
-        --sky-top: #182a3a; --sky-mid: #1e3346; --sky-bottom: #2a4155;
-        --tan: #a08348; --smoke: #dfe2dc;
-        --ink: #dfe2dc; --ink-soft: #a9ada5; --ink-faint: #7a7e74;
-        --surface: rgba(223, 226, 220, 0.075);
-        --surface-raised: rgba(223, 226, 220, 0.115);
-        --border: rgba(223, 226, 220, 0.17);
+        --sky-top:#182a3a; --sky-mid:#1e3346; --sky-bottom:#2a4155;
+        --tan:#a08348; --tan-lit:#c9a86a; --smoke:#dfe2dc;
+        --ink:#dfe2dc; --ink-soft:#a9ada5; --ink-faint:#7a7e74;
+        --surface:rgba(223,226,220,.075); --raised:rgba(223,226,220,.115);
+        --border:rgba(223,226,220,.17); --edge:rgba(160,131,72,.38);
       }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0; min-height: 100vh; color: var(--ink);
-        font: 400 15px/1.6 Inter, -apple-system, "Segoe UI", system-ui, sans-serif;
+      *{box-sizing:border-box}
+      html{scroll-behavior:smooth}
+      body{
+        margin:0;min-height:100vh;color:var(--ink);
+        font:400 15px/1.6 Inter,-apple-system,"Segoe UI",system-ui,sans-serif;
         background:
-          radial-gradient(900px 460px at 50% -8%, rgba(160,131,72,.14), transparent 62%),
-          linear-gradient(var(--sky-top) 0%, var(--sky-mid) 55%, var(--sky-bottom) 100%);
-        background-attachment: fixed;
+          radial-gradient(1000px 500px at 50% -8%,rgba(160,131,72,.14),transparent 62%),
+          linear-gradient(var(--sky-top) 0%,var(--sky-mid) 55%,var(--sky-bottom) 100%);
+        background-attachment:fixed;
       }
-      a { color: inherit; }
-      .wrap { max-width: 720px; margin: 0 auto; padding: 0 22px 80px; }
+      a{color:inherit}
+      .wrap{max-width:{{ '640px' if not q else '1000px' }};margin:0 auto;padding:0 24px 90px}
 
-      /* ---- masthead: big when empty, compact once you have searched ---- */
-      header { padding: {{ '16vh' if not q else '38px' }} 0 30px; text-align: {{ 'center' if not q else 'left' }}; }
-      .mark { width: {{ '46px' if not q else '30px' }}; height: {{ '46px' if not q else '30px' }};
-              position: relative; margin: {{ '0 auto 18px' if not q else '0 0 14px' }};
-              filter: drop-shadow(0 0 14px rgba(160,131,72,.38)); }
-      .mark i { position: absolute; border: 2px solid var(--tan);
-                border-radius: 50%; display: block; }
-      .mark i:first-child { inset: 0; }
-      .mark i:last-child { inset: 34%; }
-      h1 { font-family: "Cormorant Garamond", Georgia, serif;
-           font-size: {{ '34px' if not q else '21px' }}; font-weight: 600;
-           margin: 0 0 6px; letter-spacing: .01em; }
-      .sub { color: var(--ink-faint); font-size: 13px; margin: 0; }
+      /* ---------- masthead ---------- */
+      header{padding:{{ '17vh' if not q else '26px' }} 0 {{ '0' if not q else '18px' }};
+             text-align:{{ 'center' if not q else 'left' }}}
+      .brand{display:flex;align-items:center;gap:12px;
+             justify-content:{{ 'center' if not q else 'flex-start' }};
+             flex-direction:{{ 'column' if not q else 'row' }}}
+      .mark{width:{{ '48px' if not q else '30px' }};height:{{ '48px' if not q else '30px' }};
+            position:relative;flex:none;
+            filter:drop-shadow(0 0 15px rgba(160,131,72,.4))}
+      .mark i{position:absolute;border:2px solid var(--tan);border-radius:50%;display:block}
+      .mark i:first-child{inset:0}
+      .mark i:last-child{inset:34%}
+      h1{font-family:"Cormorant Garamond",Georgia,serif;font-weight:600;
+         font-size:{{ '38px' if not q else '20px' }};margin:0;letter-spacing:.01em}
+      h1 a{text-decoration:none}
+      .tagline{color:var(--ink-faint);font-size:13px;margin:10px 0 0}
 
-      form { margin: 26px 0 0; position: relative; }
-      input[type=search] {
-        width: 100%; padding: 14px 20px 14px 46px; border-radius: 26px;
-        font: inherit; font-size: 15px; color: var(--ink);
-        background: var(--surface); border: 1px solid var(--border);
-        outline: none; transition: border-color .18s, background .18s, box-shadow .18s;
+      /* ---------- search box ---------- */
+      .box{position:relative;margin:{{ '30px auto 0' if not q else '16px 0 0' }};
+           max-width:{{ '100%' if not q else '620px' }}}
+      input[type=search]{
+        width:100%;padding:14px 96px 14px 48px;border-radius:26px;font:inherit;
+        font-size:15px;color:var(--ink);background:var(--surface);
+        border:1px solid var(--border);outline:none;-webkit-appearance:none;
+        transition:border-color .18s,background .18s,box-shadow .18s}
+      input[type=search]::placeholder{color:var(--ink-faint)}
+      input[type=search]:focus{border-color:rgba(160,131,72,.65);
+        background:var(--raised);box-shadow:0 0 0 4px rgba(160,131,72,.10)}
+      .si{position:absolute;left:18px;top:24px;transform:translateY(-50%);
+          width:16px;height:16px;opacity:.5;pointer-events:none}
+      .go{position:absolute;right:7px;top:7px;height:34px;padding:0 16px;
+          border:0;border-radius:19px;cursor:pointer;font:inherit;font-size:13px;
+          color:#182a3a;background:var(--tan)}
+      .go:hover{background:var(--tan-lit)}
+
+      /* ---------- suggestions ---------- */
+      .sugg{position:absolute;left:0;right:0;top:calc(100% + 7px);z-index:30;
+            background:#16283a;border:1px solid var(--border);border-radius:14px;
+            overflow:hidden;box-shadow:0 18px 44px rgba(0,0,0,.45);display:none}
+      .sugg.on{display:block}
+      .sugg b{display:block;padding:10px 18px;font-weight:400;font-size:13.5px;
+              color:var(--ink-soft);cursor:pointer;
+              overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .sugg b:hover,.sugg b.sel{background:var(--surface);color:var(--smoke)}
+
+      /* ---------- tabs ---------- */
+      .tabs{display:flex;gap:6px;margin:22px 0 4px;flex-wrap:wrap}
+      .tabs a{font-size:12.5px;text-decoration:none;color:var(--ink-soft);
+              padding:6px 13px;border-radius:9px;border:1px solid transparent}
+      .tabs a:hover{background:var(--surface);color:var(--smoke)}
+      .tabs a.on{background:var(--surface);border-color:var(--edge);color:var(--smoke)}
+      .tabs a span{color:var(--ink-faint);font-size:11px;margin-left:5px}
+
+      .meta{color:var(--ink-faint);font-size:12px;margin:14px 0 2px}
+      .chips{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 0}
+      .chip{font-size:11.5px;padding:3px 10px;border-radius:7px;
+            background:var(--surface);border:1px solid var(--border);
+            color:var(--ink-soft)}
+      .chip a{color:var(--ink-faint);text-decoration:none;margin-left:6px}
+
+      /* ---------- results ---------- */
+      ol{list-style:none;padding:0;margin:14px 0 0}
+      li{padding:19px 0;border-bottom:1px solid rgba(223,226,220,.09)}
+      li:focus-within{outline:none}
+      .top{display:flex;align-items:center;gap:9px;margin-bottom:4px}
+      .fav{width:15px;height:15px;border-radius:4px;flex:none;background:var(--surface)}
+      .host{color:var(--ink-faint);font-size:12px;overflow:hidden;
+            text-overflow:ellipsis;white-space:nowrap}
+      .tag{font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;
+           padding:2px 7px;border-radius:5px;flex:none}
+      .tag.index{color:#182a3a;background:var(--tan)}
+      .tag.web{color:var(--ink-faint);border:1px solid var(--border)}
+      .tag.kind{color:var(--tan-lit);border:1px solid var(--edge)}
+      .tag.pdf{color:#182a3a;background:#c98a6a}
+      .t{display:block;font-size:17.5px;color:var(--smoke);text-decoration:none;
+         margin:0 0 5px;line-height:1.35}
+      .t:hover,li.sel .t{color:var(--tan-lit);text-decoration:underline}
+      li.sel{background:rgba(223,226,220,.04);border-radius:10px;
+             box-shadow:-14px 0 0 rgba(223,226,220,.04),14px 0 0 rgba(223,226,220,.04)}
+      .sn{color:var(--ink-soft);font-size:13.5px;margin:0}
+      mark{background:rgba(160,131,72,.30);color:var(--smoke);
+           border-radius:2px;padding:0 1px}
+
+      .none{color:var(--ink-soft);padding:36px 0;max-width:520px}
+      .none p{margin:0}
+      .none b{color:var(--smoke)}
+      .none ul{color:var(--ink-faint);font-size:13px;margin:14px 0 0;padding-left:18px}
+      .none code,footer code{background:var(--surface);border-radius:4px;
+        padding:1px 5px;font-size:12px}
+      footer .row{margin-top:5px}
+
+      /* ---------- ask the assistant ---------- */
+      .ask{display:flex;align-items:center;gap:13px;margin:22px 0 0;padding:15px 18px;
+           border-radius:14px;background:var(--surface);
+           border:1px solid var(--edge);text-decoration:none}
+      .ask:hover{background:var(--raised)}
+      .ask .mk{width:19px;height:19px;position:relative;flex:none}
+      .ask .mk i{position:absolute;border:1.6px solid var(--tan);
+                 border-radius:50%;display:block}
+      .ask .mk i:first-child{inset:0}
+      .ask .mk i:last-child{inset:34%}
+      .ask div{font-size:13.5px;color:var(--smoke)}
+      .ask small{display:block;color:var(--ink-faint);font-size:11.5px;margin-top:2px}
+
+      nav.pages{display:flex;gap:10px;margin-top:28px}
+      nav.pages a{font-size:13px;color:var(--ink-soft);text-decoration:none;
+                  padding:8px 15px;border-radius:9px;background:var(--surface);
+                  border:1px solid var(--border)}
+      nav.pages a:hover{color:var(--smoke);background:var(--raised)}
+
+      footer{margin-top:46px;color:var(--ink-faint);font-size:11.5px;line-height:1.75}
+      footer a{color:var(--ink-soft)}
+      kbd{font:inherit;font-size:10.5px;background:var(--surface);
+          border:1px solid var(--border);border-radius:4px;padding:1px 5px}
+
+      @media(max-width:640px){
+        .wrap{padding:0 16px 60px}
+        input[type=search]{padding-right:20px}
+        .go{display:none}
       }
-      input[type=search]::placeholder { color: var(--ink-faint); }
-      input[type=search]:focus {
-        border-color: rgba(160,131,72,.65); background: var(--surface-raised);
-        box-shadow: 0 0 0 4px rgba(160,131,72,.10);
-      }
-      .si { position: absolute; left: 18px; top: 50%; transform: translateY(-50%);
-            width: 16px; height: 16px; opacity: .5; pointer-events: none; }
-
-      .count { color: var(--ink-faint); font-size: 12px; margin: 22px 0 6px; }
-
-      /* ---- results ---- */
-      ol { list-style: none; padding: 0; margin: 0; }
-      li { padding: 18px 0; border-bottom: 1px solid rgba(223,226,220,.09); }
-      .host { color: var(--ink-faint); font-size: 12px; letter-spacing: .01em; }
-      .src { font-size: 9.5px; letter-spacing: .09em; text-transform: uppercase;
-             padding: 1px 6px; border-radius: 5px; margin-left: 8px;
-             vertical-align: 1px; }
-      .src.index { color: #182a3a; background: var(--tan); }
-      .src.web { color: var(--ink-faint); border: 1px solid var(--border); }
-      .t { display: block; font-size: 17px; color: var(--smoke);
-           text-decoration: none; margin: 3px 0 5px; line-height: 1.35; }
-      .t:hover { color: var(--tan); }
-      .sn { color: var(--ink-soft); font-size: 13.5px; margin: 0; }
-      mark { background: rgba(160,131,72,.28); color: var(--smoke);
-             border-radius: 2px; padding: 0 1px; }
-
-      .none { color: var(--ink-soft); padding: 34px 0; }
-      .none b { color: var(--smoke); font-weight: 600; }
-
-      nav.pages { display: flex; gap: 10px; margin-top: 30px; }
-      nav.pages a { font-size: 13px; color: var(--ink-soft); text-decoration: none;
-                    padding: 7px 14px; border-radius: 9px;
-                    background: var(--surface); border: 1px solid var(--border); }
-      nav.pages a:hover { color: var(--smoke); background: var(--surface-raised); }
-
-      footer { margin-top: 44px; color: var(--ink-faint); font-size: 11.5px;
-               line-height: 1.7; }
-      footer a { color: var(--ink-soft); }
-      .scope { margin-top: 4px; }
     </style>
   </head>
 
   <body>
     <div class="wrap">
       <header>
-        <div class="mark"><i></i><i></i></div>
-        <h1>{% if q %}<a href="/search" style="text-decoration:none">Recherche</a>{% else %}Recherche{% endif %}</h1>
+        <div class="brand">
+          <div class="mark"><i></i><i></i></div>
+          <h1><a href="/search">Recherche</a></h1>
+        </div>
         {% if not q %}
-          <p class="sub">Cours, exercices et examens — programme marocain et français.</p>
+          <p class="tagline">
+            Cours, exercices et examens — programme marocain et français.
+          </p>
         {% endif %}
 
-        <form action="/search" method="get" role="search">
-          <svg class="si" viewBox="0 0 24 24" fill="none" stroke="#dfe2dc" stroke-width="2">
+        <form class="box" action="/search" method="get" role="search"
+              autocomplete="off">
+          <svg class="si" viewBox="0 0 24 24" fill="none" stroke="#dfe2dc"
+               stroke-width="2">
             <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" />
           </svg>
-          <input type="search" name="q" value="{{ q }}" autofocus
-                 placeholder="limites de suites, concours CPGE, bac SM…"
-                 autocomplete="off" />
+          <input type="search" name="q" id="q" value="{{ q }}"
+                 placeholder="limites de suites, examen national, site:alloschool.com"
+                 {% if not q %}autofocus{% endif %} />
+          <button class="go" type="submit">Chercher</button>
+          <div class="sugg" id="sugg"></div>
         </form>
       </header>
 
       {% if q %}
+        {% set counts = meta.counts or {} %}
+        <div class="tabs">
+          <a href="/search?q={{ q|urlencode }}" class="{{ 'on' if not kind }}">
+            Tout <span>{{ meta.total }}</span></a>
+          {% for k in kinds %}
+            {% if counts.get(k) %}
+              <a href="/search?q={{ q|urlencode }}&kind={{ k }}"
+                 class="{{ 'on' if kind == k }}">
+                {{ {'cours':'Cours','exercice':'Exercices',
+                    'examen':'Examens','corrige':'Corrigés'}[k] }}
+                <span>{{ counts.get(k) }}</span></a>
+            {% endif %}
+          {% endfor %}
+        </div>
+
+        {% if meta.filters or meta.negatives %}
+          <div class="chips">
+            {% for key, values in meta.filters.items() %}
+              {% for v in values %}
+                <span class="chip">{{ key }}:{{ v }}</span>
+              {% endfor %}
+            {% endfor %}
+            {% for n in meta.negatives %}<span class="chip">sans « {{ n }} »</span>{% endfor %}
+          </div>
+        {% endif %}
+
         {% if results %}
-          <p class="count">{{ results|length }} résultat{{ 's' if results|length > 1 }} sur cette page</p>
-          <ol>
+          <p class="meta">
+            {{ meta.total }} résultat{{ 's' if meta.total > 1 }} dans l'index
+            · {{ meta.took_ms }} ms
+          </p>
+          <ol id="results">
             {% for r in results %}
               <li>
-                <div class="host">{{ r.host }}<span
-                  class="src {{ r.source }}">{{ 'index' if r.source == 'index' else 'web' }}</span></div>
+                <div class="top">
+                  {% if r.source == 'index' %}
+                    <img class="fav" alt="" loading="lazy"
+                         src="https://{{ r.host }}/favicon.ico"
+                         onerror="this.remove()" />
+                  {% endif %}
+                  <span class="host">{{ r.host }}</span>
+                  <span class="tag {{ r.source }}">{{ r.source }}</span>
+                  {% if r.kind %}<span class="tag kind">{{ r.kind }}</span>{% endif %}
+                  {% if r.is_pdf %}<span class="tag pdf">pdf</span>{% endif %}
+                </div>
                 <a class="t" href="{{ r.url }}" rel="noopener nofollow">{{ r.title }}</a>
                 <p class="sn">{{ r.snippet_html|safe }}</p>
               </li>
             {% endfor %}
           </ol>
+
+          <a class="ask" href="/app?q={{ q|urlencode }}">
+            <span class="mk"><i></i><i></i></span>
+            <div>Demander à l'assistant
+              <small>« {{ q }} » — expliqué, avec les étapes</small></div>
+          </a>
+
           <nav class="pages">
             {% if page > 1 %}
-              <a href="/search?q={{ q|urlencode }}&p={{ page - 1 }}">← Précédent</a>
+              <a href="/search?q={{ q|urlencode }}{% if kind %}&kind={{ kind }}{% endif %}&p={{ page - 1 }}">← Précédent</a>
             {% endif %}
             {% if results|length >= 10 %}
-              <a href="/search?q={{ q|urlencode }}&p={{ page + 1 }}">Suivant →</a>
+              <a href="/search?q={{ q|urlencode }}{% if kind %}&kind={{ kind }}{% endif %}&p={{ page + 1 }}">Suivant →</a>
             {% endif %}
           </nav>
         {% else %}
-          <p class="none">
-            Rien pour <b>{{ q }}</b>, ni dans notre index ni sur le web.<br />
-            Vérifiez l'orthographe, ou essayez moins de mots.
-          </p>
+          <div class="none">
+            <p>Rien pour <b>{{ q }}</b>.</p>
+            <ul>
+              <li>Vérifiez l'orthographe, ou essayez moins de mots.</li>
+              <li><code>site:alloschool.com</code> limite à un site,
+                  <code>filetype:pdf</code> aux PDF,
+                  <code>-forum</code> exclut un mot.</li>
+            </ul>
+          </div>
+          <a class="ask" href="/app?q={{ q|urlencode }}">
+            <span class="mk"><i></i><i></i></span>
+            <div>Demander à l'assistant
+              <small>il répond même quand l'index ne trouve rien</small></div>
+          </a>
         {% endif %}
       {% endif %}
 
       <footer>
-        Index propre : <b>{{ '{:,}'.format(stats.pages).replace(',', ' ') }}</b>
-        pages sur {{ stats.hosts }} sites, explorées par notre propre robot.
-        Les résultats marqués <span class="src web">web</span> viennent
-        d'ailleurs — l'index ne couvre que le programme.
-        <div class="scope">
+        Index propre :
+        <b>{{ '{:,}'.format(stats.pages).replace(',', ' ') }}</b> pages sur
+        {{ stats.hosts }} sites, explorées par notre propre robot.
+        Les résultats <span class="tag web">web</span> viennent d'ailleurs —
+        l'index ne couvre que le programme.
+        <div class="row">
+          Opérateurs : <code>site:</code> <code>filetype:</code>
+          <code>lang:</code> <code>kind:</code> <code>-mot</code> ·
+          <kbd>/</kbd> pour chercher, <kbd>j</kbd> <kbd>k</kbd> pour naviguer,
+          <kbd>Entrée</kbd> pour ouvrir.
+        </div>
+        <div class="row">
           Aucun suivi, aucune publicité, aucun résultat sponsorisé.
           <a href="/">RandomGenerals</a>
         </div>
       </footer>
     </div>
+
+    <script>
+      (function () {
+        var input = document.getElementById("q");
+        var box = document.getElementById("sugg");
+        var timer = null, items = [], sel = -1;
+
+        function hide() { box.classList.remove("on"); box.innerHTML = ""; sel = -1; }
+
+        function show(list) {
+          if (!list.length) { hide(); return; }
+          box.innerHTML = "";
+          list.forEach(function (s, i) {
+            var b = document.createElement("b");
+            // textContent, not innerHTML: these titles came off crawled
+            // pages and this is the one place they are not escaped by
+            // the template.
+            b.textContent = s.title;
+            b.addEventListener("mousedown", function (e) {
+              e.preventDefault();
+              input.value = s.title;
+              input.form.submit();
+            });
+            box.appendChild(b);
+          });
+          items = [].slice.call(box.children);
+          sel = -1;
+          box.classList.add("on");
+        }
+
+        input.addEventListener("input", function () {
+          clearTimeout(timer);
+          var v = input.value.trim();
+          if (v.length < 2) { hide(); return; }
+          // Debounced: one request per pause, not one per keystroke.
+          timer = setTimeout(function () {
+            fetch("/api/suggest?q=" + encodeURIComponent(v))
+              .then(function (r) { return r.json(); })
+              .then(function (d) { show((d && d.suggestions) || []); })
+              .catch(hide);
+          }, 160);
+        });
+
+        input.addEventListener("blur", function () { setTimeout(hide, 120); });
+
+        input.addEventListener("keydown", function (e) {
+          if (!box.classList.contains("on")) return;
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            if (sel >= 0) items[sel].classList.remove("sel");
+            sel += e.key === "ArrowDown" ? 1 : -1;
+            if (sel < 0) sel = items.length - 1;
+            if (sel >= items.length) sel = 0;
+            items[sel].classList.add("sel");
+            input.value = items[sel].textContent;
+          } else if (e.key === "Escape") {
+            hide();
+          }
+        });
+
+        /* Keyboard navigation over results. Cheap to add, and the
+           people who search the same thing every evening are exactly
+           the ones who stop reaching for the mouse. */
+        var rows = [].slice.call(document.querySelectorAll("#results li"));
+        var cur = -1;
+        document.addEventListener("keydown", function (e) {
+          var typing = document.activeElement === input;
+          if (e.key === "/" && !typing) {
+            e.preventDefault(); input.focus(); input.select(); return;
+          }
+          if (typing || !rows.length) return;
+          if (e.key === "j" || e.key === "k") {
+            if (cur >= 0) rows[cur].classList.remove("sel");
+            cur += e.key === "j" ? 1 : -1;
+            if (cur < 0) cur = 0;
+            if (cur >= rows.length) cur = rows.length - 1;
+            rows[cur].classList.add("sel");
+            rows[cur].scrollIntoView({ block: "center" });
+          } else if (e.key === "Enter" && cur >= 0) {
+            var a = rows[cur].querySelector("a.t");
+            if (a) a.click();
+          }
+        });
+      })();
+    </script>
   </body>
 </html>

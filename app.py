@@ -1453,11 +1453,18 @@ def search_page():
     """
     query = (request.args.get("q") or "").strip()[:200]
     page = _page_number(request.args.get("p"))
-    results = []
+    kind = request.args.get("kind") or ""
+    if kind not in searchdb.KINDS:
+        kind = ""
+
+    results, meta = [], {"total": 0, "took_ms": 0.0, "counts": {},
+                         "filters": {}, "negatives": []}
+
     if query:
-        results = searchdb.search(
-            query, limit=RESULTS_PER_PAGE,
-            offset=(page - 1) * RESULTS_PER_PAGE)
+        meta = searchdb.search(query, limit=RESULTS_PER_PAGE,
+                               offset=(page - 1) * RESULTS_PER_PAGE,
+                               kind=kind or None)
+        results = meta["results"]
         for r in results:
             r["source"] = "index"
 
@@ -1465,7 +1472,12 @@ def search_page():
         # everything else would make this unusable as anyone's search
         # engine, so the open web fills the rest of the first page -
         # labelled, so nobody is misled about which is which.
-        if page == 1 and len(results) < RESULTS_PER_PAGE:
+        #
+        # Not done when a tab or an operator is active: someone who
+        # asked for kind:examen or site:x does not want the web's
+        # opinion mixed in.
+        narrowed = bool(kind or meta["filters"])
+        if page == 1 and not narrowed and len(results) < RESULTS_PER_PAGE:
             seen = {r["url"].rstrip("/") for r in results}
             for r in websearch._duckduckgo(query, RESULTS_PER_PAGE * 2):
                 if r["url"].rstrip("/") in seen:
@@ -1473,6 +1485,8 @@ def search_page():
                 results.append({
                     "title": r["title"], "url": r["url"],
                     "host": urllib.parse.urlparse(r["url"]).netloc,
+                    "kind": "", "lang": "", "is_pdf":
+                        r["url"].lower().endswith(".pdf"),
                     "snippet": r["snippet"],
                     # Escaped here: this text came from someone else's
                     # results page and the template renders it as HTML.
@@ -1482,7 +1496,20 @@ def search_page():
                     break
 
     return render_template("search.html", q=query, results=results,
-                           page=page, stats=searchdb.stats())
+                           page=page, kind=kind, meta=meta,
+                           kinds=searchdb.KINDS, stats=searchdb.stats())
+
+
+@app.route("/api/suggest")
+def api_suggest():
+    """Autocomplete from our own index.
+
+    A suggestion service would mean forwarding every keystroke somebody
+    types to a third party; this reads titles we crawled ourselves.
+    """
+    return jsonify({
+        "suggestions": searchdb.suggest(
+            (request.args.get("q") or "")[:120])})
 
 
 @app.route("/api/search")
@@ -1492,9 +1519,16 @@ def api_search():
         return jsonify({"query": "", "results": [], "index": searchdb.stats()})
     limit = _page_number(request.args.get("limit")) if request.args.get(
         "limit") else RESULTS_PER_PAGE
+    kind = request.args.get("kind") or ""
+    found = searchdb.search(query, limit=min(limit, 25),
+                            kind=kind if kind in searchdb.KINDS else None)
     return jsonify({
         "query": query,
-        "results": searchdb.search(query, limit=min(limit, 25)),
+        "results": found["results"],
+        "total": found["total"],
+        "took_ms": found["took_ms"],
+        "counts": found["counts"],
+        "filters": found["filters"],
         "index": searchdb.stats(),
     })
 

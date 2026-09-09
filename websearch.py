@@ -67,7 +67,9 @@ def search(query, max_results=5):
     seen = set()
     try:
         import searchdb
-        for r in searchdb.search(query, limit=max_results):
+        # search() returns a dict of results plus timing and counts, not
+        # a bare list - the page needs those, this does not.
+        for r in searchdb.search(query, limit=max_results)["results"]:
             results.append({"title": r["title"], "url": r["url"],
                             "snippet": r["snippet"], "source": "index"})
             seen.add(r["url"].rstrip("/"))
