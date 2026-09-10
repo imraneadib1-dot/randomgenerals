@@ -10,6 +10,10 @@ Not a smoke test. It checks the things that would otherwise be found by
 the owner looking at a wrong number and believing it:
 
   - visits are counted, and counted ONCE per person per day
+  - daily users are people rather than page loads: one browser is one
+    user however many pages it opens, a cookie-less crawler is not one
+    person per page, and a week is distinct people rather than its own
+    days added together
   - bots and assets are not counted
   - a Paddle webhook writes a payment, and a redelivery does not
     write it twice
@@ -229,10 +233,19 @@ check("four page loads from one browser count once",
 
 _b2 = appmod.app.test_client()
 _b2.get("/", headers=_UA)
+_b2.get("/", headers=_UA)
 check("a second browser counts again",
       db.visitors_all_time()["total"] - _before, 2)
 
+# The reason the count above needs two requests, and the reason it is
+# not simply "every request with a session id". A scraper that keeps no
+# cookies is handed a brand new guest id every single time, so counting
+# the first request would file one crawler as a fresh person per page.
 _after_two = db.visitors_all_time()["total"]
+for _path in ("/", "/privacy", "/", "/privacy", "/"):
+    appmod.app.test_client().get(_path, headers=_UA)
+check("a cookie-less crawler is not five browsers",
+      db.visitors_all_time()["total"], _after_two)
 appmod.app.test_client().get("/", headers={"User-Agent": "Googlebot/2.1"})
 check("a crawler does not count", db.visitors_all_time()["total"], _after_two)
 
@@ -256,6 +269,114 @@ check("the dashboard carries it",
       dashboard.collect()["visitors"]["all_time"]["total"],
       db.visitors_all_time()["total"])
 
+print("")
+print("== daily users: how many real people, today ==")
+_TODAY = _dt.date.fromisoformat(db._today())
+
+
+def _users_today():
+    return db.daily_user_totals()["today"]
+
+
+_users_before = _users_today()
+
+# One browser, five page loads. One person.
+_p1 = appmod.app.test_client()
+for _ in range(5):
+    _p1.get("/", headers=_UA)
+check("five page loads from one browser are one user",
+      _users_today() - _users_before, 1)
+
+_p2 = appmod.app.test_client()
+_p2.get("/", headers=_UA)
+_p2.get("/privacy", headers=_UA)
+check("a second browser is a second user",
+      _users_today() - _users_before, 2)
+
+# The same trap as the all-time count, and worse here: a per-day figure
+# is the one the owner reads every morning.
+for _path in ("/", "/privacy", "/", "/privacy", "/"):
+    appmod.app.test_client().get(_path, headers=_UA)
+check("a cookie-less crawler is not five people",
+      _users_today() - _users_before, 2)
+
+appmod.app.test_client().get("/", headers={"User-Agent": "SemrushBot/7"})
+check("a declared bot is not a person",
+      _users_today() - _users_before, 2)
+
+# Somebody the site met before, back today. Backdating first_seen is
+# exactly what the real table holds for anyone returning.
+_key = db._connect().execute(
+    "SELECT visitor_key FROM visitor_days WHERE day = ? LIMIT 1",
+    (db._today(),)).fetchone()[0]
+db._connect().execute("UPDATE visitors_seen SET first_seen = ? "
+                      "WHERE visitor_key = ?",
+                      ((_TODAY - _dt.timedelta(days=3)).isoformat()
+                       + "T09:00:00", _key))
+db._connect().commit()
+_t = db.daily_user_totals()
+check("someone first seen days ago counts as returning", _t["returning"], 1)
+check("and the rest are new", _t["new"], _t["today"] - 1)
+check("new and returning account for everybody",
+      _t["new"] + _t["returning"], _t["today"])
+
+# A signed-in person is not a guest id, and the split says so.
+db.note_visitor("owner-account-id")
+_t = db.daily_user_totals()
+check("signed-in people are counted apart from guests", _t["signed_in"], 1)
+check("guests and accounts add up",
+      _t["guests"] + _t["signed_in"], _t["today"])
+
+# THE POINT OF THE WHOLE TABLE: one person on three days is one active
+# user. Summing daily figures would call them three.
+_reader = "guest:regular-reader"
+for _back in (0, 1, 2):
+    db._connect().execute(
+        "INSERT OR IGNORE INTO visitor_days (day, visitor_key) VALUES (?, ?)",
+        ((_TODAY - _dt.timedelta(days=_back)).isoformat(), _reader))
+db._connect().commit()
+_others = db._connect().execute(
+    "SELECT COUNT(DISTINCT visitor_key) FROM visitor_days "
+    "WHERE day >= ? AND visitor_key <> ?",
+    ((_TODAY - _dt.timedelta(days=6)).isoformat(), _reader)).fetchone()[0]
+check("three days from one reader is one weekly active",
+      db.daily_user_totals()["active_7"] - _others, 1)
+check("a rolling window is never bigger than all time",
+      db.daily_user_totals()["active_30"]
+      <= db.visitors_all_time()["total"] + 3, True)
+
+print("")
+print("== weeks count people, not visits ==")
+# A quiet stretch far enough back that nothing else here touches it.
+_quiet = _TODAY - _dt.timedelta(days=140)
+_quiet -= _dt.timedelta(days=_quiet.weekday())          # back to its Monday
+for _off in (0, 3):
+    db._connect().execute(
+        "INSERT OR IGNORE INTO visitor_days (day, visitor_key) VALUES (?, ?)",
+        ((_quiet + _dt.timedelta(days=_off)).isoformat(),
+         "guest:twice-that-week"))
+db._connect().commit()
+
+_weekly = db.daily_user_series(since=_quiet.isoformat(), bucket="week")
+check("a week bucket is labelled with its Monday",
+      _weekly[0]["day"], _quiet.isoformat())
+check("two visits in one week are ONE weekly user", _weekly[0]["users"], 1)
+_daily = db.daily_user_series(since=_quiet.isoformat(), bucket="day")
+check("the same person is two daily users",
+      sum(r["users"] for r in _daily[:4]), 2)
+check("which is the sum a weekly bucket must not report",
+      sum(r["users"] for r in _daily[:7]) != _weekly[0]["users"], True)
+
+_du = dashboard.collect()
+check("the dashboard carries daily users",
+      _du["users"]["today"], db.daily_user_totals()["today"])
+check("its series buckets with the rest of the page",
+      len(_du["users"]["series"]), len(_du["visitors"]["series"]))
+check("peak is never zero", _du["users"]["peak"] >= 1, True)
+json.dumps(_du)
+print("  %-52s ok" % "still JSON-serialisable with users")
+
+
 print("\n== the gate ==")
 check("/dashboard 404s for a stranger", client.get("/dashboard").status_code,
       404)
@@ -270,6 +391,8 @@ r = client.get("/dashboard")
 check("/dashboard renders for the owner", r.status_code, 200)
 html = r.get_data(as_text=True)
 check("page shows the visitor count", "Visitors today" in html, True)
+check("page shows daily users", "Users today" in html, True)
+check("page shows the weekly actives", "Active this week" in html, True)
 check("page shows money", "You earned" in html, True)
 check("no unrendered Jinja left", "{{" in html, False)
 r = client.get("/api/dashboard")
@@ -288,7 +411,23 @@ print("\n== the empty case ==")
 # zero.
 db._connect().executescript(
     "DELETE FROM site_visits; DELETE FROM site_visitors; "
+    "DELETE FROM visitor_days; DELETE FROM visitors_seen; "
     "DELETE FROM payments; DELETE FROM usage_log;")
+
+# Checked before the request rather than in its HTML, because asking
+# for /dashboard is itself a page view: by the time the page renders,
+# the owner loading it is today's first user and the empty state is
+# already gone. The template is rendered directly instead.
+_empty = dashboard.collect()
+check("no daily users on an empty database", _empty["users"]["today"], 0)
+check("nothing to average", _empty["users"]["average"], 0)
+check("and counting has not begun", _empty["users"]["began"], None)
+with appmod.app.test_request_context("/"):
+    _blank = appmod.render_template("dashboard.html", d=_empty)
+check("the empty page says so instead of drawing zeroes",
+      "Nothing counted yet" in _blank, True)
+check("and renders without dividing by zero", "{{" in _blank, False)
+
 with client.session_transaction() as s:
     s["user_id"] = owner
 r = client.get("/dashboard")

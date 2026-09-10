@@ -328,6 +328,35 @@ CREATE TABLE IF NOT EXISTS visitors_seen (
     first_seen  TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS visitor_days (
+    -- DAILY USERS: one row per person per day, keyed on the same
+    -- identity as visitors_seen.
+    --
+    -- The table above answers "how many people, ever" and site_visitors
+    -- answers "how many arrivals today", and neither one answers "how
+    -- many people used the site today and were they the same ones as
+    -- yesterday". That question needs an identity that survives
+    -- midnight, which the nightly hash deliberately does not have, and a
+    -- row per day, which visitors_seen deliberately does not keep.
+    --
+    -- So this is the one table here that CAN follow somebody from one
+    -- day to the next, and the reason it is allowed to is that it
+    -- follows the id the app was already setting to hold their credits
+    -- and their threads. Nothing new is stored about anyone: if this
+    -- table did not exist, the same identifier would still be in the
+    -- same cookie doing the same job.
+    --
+    -- Rows are written only for a browser that SENT BACK the session
+    -- cookie it was given - see _count_visit in app.py. Without that
+    -- test, every cookie-less request mints a fresh guest id, and one
+    -- crawler walking 500 pages arrives here as 500 daily users.
+    day         TEXT NOT NULL,
+    visitor_key TEXT NOT NULL,
+    PRIMARY KEY (day, visitor_key)
+);
+CREATE INDEX IF NOT EXISTS idx_visitor_days_key
+    ON visitor_days(visitor_key);
+
 CREATE TABLE IF NOT EXISTS visit_salt (
     -- Today's salt, kept only so a restart does not double-count
     -- everybody. Yesterday's is deleted the first time a new day is
@@ -1067,22 +1096,47 @@ def visit_series(days=30, since=None):
 
 
 def note_visitor(visitor_key):
-    """Record that this browser has been seen, ever. Never raises.
+    """Record that this browser has been seen - ever, and today.
 
     INSERT OR IGNORE, so the row keeps the FIRST time rather than the
-    latest - which is what makes the table a count of visitors rather
-    than a log of visits.
+    latest - which is what makes visitors_seen a count of visitors
+    rather than a log of visits. Today's row goes to visitor_days,
+    where the repetition is the point: two tables because "how many
+    people ever" and "how many people today" are different questions,
+    and only the second one needs a row per day.
+
+    Never raises.
     """
     if not visitor_key:
         return
+    key = str(visitor_key)[:200]
+    day = _today()
     try:
         conn = _connect()
+        # The read is the whole point of doing it this way. This runs on
+        # every page load, and after somebody's first one of the day
+        # both rows already exist - so the common case is a primary-key
+        # lookup that takes no write lock at all, rather than an INSERT
+        # OR IGNORE that takes one to decide it has nothing to do.
+        if conn.execute("SELECT 1 FROM visitor_days WHERE day = ? "
+                        "AND visitor_key = ?", (day, key)).fetchone():
+            return
+        # Both rows in one transaction: they are only ever true
+        # together, and a browser present in one table and missing from
+        # the other would make "new today" wrong in a way nothing would
+        # catch. Writing visitor_days LAST is what makes the read above
+        # a safe shortcut for both.
         with conn:
             conn.execute(
                 "INSERT OR IGNORE INTO visitors_seen (visitor_key, first_seen)"
-                " VALUES (?, ?)",
-                (str(visitor_key)[:200],
-                 _dt_now().isoformat()))
+                " VALUES (?, ?)", (key, _dt_now().isoformat()))
+            conn.execute("INSERT OR IGNORE INTO visitor_days "
+                         "(day, visitor_key) VALUES (?, ?)", (day, key))
+    except sqlite3.OperationalError:
+        # A database from before one of these tables existed. Reads can
+        # survive that by showing nothing; a write cannot, because
+        # nothing is what they would then keep showing.
+        _repair_schema()
     except Exception:                          # noqa: BLE001
         pass
 
@@ -1099,14 +1153,202 @@ def visitors_all_time():
     count is people who chose to make an account, and the guest count is
     browsers that never did.
     """
-    conn = _connect()
-    total = conn.execute("SELECT COUNT(*) FROM visitors_seen").fetchone()[0]
-    guests = conn.execute("SELECT COUNT(*) FROM visitors_seen "
-                          "WHERE visitor_key LIKE 'guest:%'").fetchone()[0]
-    first = conn.execute("SELECT MIN(first_seen) "
-                         "FROM visitors_seen").fetchone()[0]
+    rows = _read("SELECT COUNT(*), "
+                 "  SUM(CASE WHEN visitor_key LIKE 'guest:%' THEN 1 ELSE 0 END), "
+                 "  MIN(first_seen) FROM visitors_seen")
+    total, guests, first = rows[0] if rows else (0, 0, None)
+    total, guests = total or 0, guests or 0
     return {"total": total, "guests": guests,
             "registered": total - guests, "first_seen": first}
+
+
+_repaired = False
+
+
+def _repair_schema():
+    """Re-apply SCHEMA to a database that is missing a table. -> bool.
+
+    Normally dead code: _connect() runs SCHEMA at process start and every
+    statement in it is IF NOT EXISTS, so a table added in a new version
+    appears the moment the app restarts.
+
+    It is here for the case where that did not happen - a worker still
+    holding a connection from before a deploy, a database file swapped
+    underneath a running process - because the symptom is otherwise a
+    500 on the whole dashboard from one missing counter, and a page that
+    reports visitors and money should not fall over because the newest
+    chart has nowhere to read from.
+
+    Runs at most once per process. If the schema is not the problem,
+    running it again on every page load would turn a broken query into a
+    broken query that also writes.
+    """
+    global _repaired
+    if _repaired:
+        return False
+    _repaired = True
+    try:
+        conn = _connect()
+        conn.executescript(SCHEMA)
+        conn.commit()
+        return True
+    except Exception:                          # noqa: BLE001
+        return False
+
+
+def _read(sql, params=()):
+    """A dashboard read that must never cost the page. -> rows.
+
+    Same reasoning as launch_day(), which already tolerates a table it
+    cannot find: this is a read-only view of counters, so a counter that
+    is not there yet is an empty chart and not an error page. The schema
+    gets one chance to fix itself first, which is what turns "no such
+    table: visitor_days" from permanent into a single blank page load.
+    """
+    try:
+        return _connect().execute(sql, params).fetchall()
+    except sqlite3.OperationalError:
+        if _repair_schema():
+            try:
+                return _connect().execute(sql, params).fetchall()
+            except sqlite3.OperationalError:
+                pass
+        return []
+
+
+def daily_users_began():
+    """The first day daily users were counted at all. -> day or None.
+
+    The counterpart of first_visit_day() for the newer table: days
+    before this one have no rows, and drawing them as zero would say
+    nobody used the site rather than nobody was counting.
+    """
+    rows = _read("SELECT MIN(day) FROM visitor_days")
+    return rows[0][0] if rows and rows[0][0] else None
+
+
+def _bucket_sql(column, bucket):
+    """SQL that maps a day column to the day its bucket starts on.
+
+    Weeks are grouped in SQL rather than by summing days afterwards,
+    because distinct people do not add up: somebody who came Monday and
+    Thursday is one weekly user and two daily ones, and summing the days
+    would report them twice.
+    """
+    if bucket != "week":
+        return column
+    # strftime('%w') is 0 for Sunday, so adding 6 and taking mod 7
+    # rotates the week onto Monday - the same Monday that
+    # dashboard._bucket labels its rows with, so the charts line up.
+    return ("date({c}, '-' || ((CAST(strftime('%w', {c}) AS INTEGER) + 6) "
+            "% 7) || ' days')").format(c=column)
+
+
+def daily_user_series(days=None, since=None, bucket="day"):
+    """-> [{day, users, new, returning, signed_in, guests, counted}].
+
+    `users` is a DISTINCT count inside each bucket, never a sum, so a
+    weekly row is people-that-week and not visits-that-week.
+
+    `new` is somebody whose first_seen falls inside the bucket. It comes
+    from visitors_seen rather than from this table's own earliest row,
+    which matters at the boundary: visitors_seen has history from before
+    daily counting existed, so a regular reader on the first day of this
+    chart is correctly returning rather than being greeted as new.
+    """
+    import datetime as _dt
+    start, n = _span(days, since)
+    rows = _read(
+        "SELECT b.bucket, COUNT(DISTINCT b.visitor_key), "
+        "  COUNT(DISTINCT CASE WHEN substr(vs.first_seen, 1, 10) >= b.bucket "
+        "                      THEN b.visitor_key END), "
+        "  COUNT(DISTINCT CASE WHEN b.visitor_key NOT LIKE 'guest:%' "
+        "                      THEN b.visitor_key END) "
+        "FROM (SELECT visitor_key, " + _bucket_sql("day", bucket) + " AS bucket"
+        "      FROM visitor_days WHERE day >= ?) b "
+        "LEFT JOIN visitors_seen vs ON vs.visitor_key = b.visitor_key "
+        "GROUP BY b.bucket", (start,))
+    found = {r[0]: r for r in rows}
+    began = daily_users_began()
+
+    out = []
+    seen = set()
+    for offset in range(n):
+        d = _dt.date.fromisoformat(start) + _dt.timedelta(days=offset)
+        if bucket == "week":
+            first = d - _dt.timedelta(days=d.weekday())
+            last = first + _dt.timedelta(days=6)
+        else:
+            first = last = d
+        key = first.isoformat()
+        if key in seen:
+            continue
+        seen.add(key)
+        row = found.get(key)
+        users = row[1] if row else 0
+        new = row[2] if row else 0
+        signed = row[3] if row else 0
+        out.append({
+            "day": key,
+            "users": users,
+            "new": new,
+            "returning": users - new,
+            "signed_in": signed,
+            "guests": users - signed,
+            # A week counts as counted if ANY day in it was - the same
+            # rule the other charts use, so the hatching lines up.
+            "counted": bool(began and last.isoformat() >= began),
+        })
+    return out
+
+
+def daily_user_totals():
+    """Today at a glance, plus the rolling actives. -> dict.
+
+    active_7 and active_30 are distinct people across the whole window,
+    not an average of daily figures. One person who visits every day is
+    one active user, which is the entire point of the number.
+    """
+    import datetime as _dt
+    today = _today()
+
+    def since_days(back):
+        start = (_dt.date.fromisoformat(today)
+                 - _dt.timedelta(days=back)).isoformat()
+        rows = _read("SELECT COUNT(DISTINCT visitor_key) FROM "
+                     "visitor_days WHERE day >= ?", (start,))
+        return rows[0][0] if rows else 0
+
+    rows = _read(
+        "SELECT COUNT(*), "
+        "  SUM(CASE WHEN substr(vs.first_seen, 1, 10) >= vd.day "
+        "           THEN 1 ELSE 0 END), "
+        "  SUM(CASE WHEN vd.visitor_key NOT LIKE 'guest:%' "
+        "           THEN 1 ELSE 0 END) "
+        "FROM visitor_days vd "
+        "LEFT JOIN visitors_seen vs ON vs.visitor_key = vd.visitor_key "
+        "WHERE vd.day = ?", (today,))
+    # COUNT(*) is already distinct: (day, visitor_key) is the key.
+    row = rows[0] if rows else (0, 0, 0)
+    total, new, signed = row[0] or 0, row[1] or 0, row[2] or 0
+
+    yesterday = (_dt.date.fromisoformat(today)
+                 - _dt.timedelta(days=1)).isoformat()
+    seen_yesterday = _read("SELECT COUNT(*) FROM visitor_days WHERE day = ?",
+                           (yesterday,))
+    counted_days = _read("SELECT COUNT(DISTINCT day) FROM visitor_days")
+    return {
+        "today": total,
+        "new": new,
+        "returning": total - new,
+        "signed_in": signed,
+        "guests": total - signed,
+        "yesterday": seen_yesterday[0][0] if seen_yesterday else 0,
+        "active_7": since_days(6),
+        "active_30": since_days(29),
+        "began": daily_users_began(),
+        "days_counted": counted_days[0][0] if counted_days else 0,
+    }
 
 
 def visit_totals():

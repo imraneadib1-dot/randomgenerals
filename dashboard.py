@@ -12,11 +12,30 @@ type. Someone who opened the site, read the landing page and left was
 invisible.
 
 That blind spot is exactly what was asked for here, so this module is
-backed by two things stats.py did not have: a visit counter
-(db.record_visit, called from app.py on every page load) and a payments
-table (written by the Paddle webhook). Both are counters. Neither
-stores a person - see the site_visitors comment in db.py for what a
-visitor hash is and why it expires nightly.
+backed by three things stats.py did not have: a visit counter
+(db.record_visit, called from app.py on every page load), a per-day
+user counter (db.visitor_days), and a payments table (written by the
+Paddle webhook).
+
+VISITORS AND USERS ARE NOT THE SAME NUMBER
+
+They are counted from different identifiers on purpose, and the page
+shows both because each one is wrong in the way the other is right:
+
+    visitors   a salted hash of address and browser, and the salt is
+               destroyed nightly. Counts everybody who arrived, cannot
+               follow anyone past midnight, and cannot tell a first
+               visit from a hundredth. One office is one visitor.
+    users      the session id the app already mints for credits and
+               threads. Survives midnight, so this is the only figure
+               here that can say new or returning - and it starts
+               counting a person on their SECOND page load, because the
+               first is where a cookie-less crawler and a real arrival
+               look identical.
+
+Neither stores anything about a person that the app was not already
+storing to do its job - see the site_visitors and visitor_days comments
+in db.py.
 
 WHY MONEY IS NOT ONE NUMBER
 
@@ -168,6 +187,20 @@ def collect(days=None, since=None):
         request_days = _bucket(request_days, ("messages", "credits"))
         payment_days = _bucket(payment_days, ("payments", "earnings"))
 
+    # Asked for at the right granularity rather than passed through
+    # _bucket() like the rest, because people are not a quantity that
+    # adds up. Somebody who came Monday and Thursday is two daily users
+    # and ONE weekly one, so a week has to be counted as a week in SQL -
+    # summing its days would report that person twice.
+    user_days = db.daily_user_series(days, since=since,
+                                     bucket="week" if bucketed else "day")
+    users_now = db.daily_user_totals()
+    # Averaged over the buckets that have data behind them, not over the
+    # whole span: dividing by days that were never counted would drag
+    # the figure toward zero and call it a quiet week.
+    live = [r for r in user_days if r["counted"]]
+    average = round(sum(r["users"] for r in live) / len(live), 1) if live else 0
+
     # Peak values, so the template can scale bars without doing
     # arithmetic in Jinja. A zero max would divide by zero in the
     # template, so it floors at 1 - a flat empty chart, which is the
@@ -207,6 +240,30 @@ def collect(days=None, since=None):
             # honestly rather than drawing a flat line for the days
             # before counting existed.
             "counted_days": sum(1 for r in visit_days if r.get("counted")),
+        },
+        # REAL PEOPLE PER DAY, which the block above cannot give: its
+        # daily hash is a different value for the same person tomorrow,
+        # so it can count today and can never say whether today's crowd
+        # is the same one as yesterday's. This counts the session
+        # identity instead - stable across days, and only recorded for a
+        # browser that proved it keeps the cookie. See visitor_days.
+        "users": {
+            "today": users_now["today"],
+            "yesterday": users_now["yesterday"],
+            "new_today": users_now["new"],
+            "returning_today": users_now["returning"],
+            "signed_in_today": users_now["signed_in"],
+            "guests_today": users_now["guests"],
+            # Distinct people across the whole window, not a sum of
+            # days: somebody here every day is one active user.
+            "active_7": users_now["active_7"],
+            "active_30": users_now["active_30"],
+            "began": users_now["began"],
+            "days_counted": users_now["days_counted"],
+            "series": user_days,
+            "peak": peak(user_days, "users"),
+            "average": average,
+            "counted_days": sum(1 for r in user_days if r.get("counted")),
         },
         "money": {
             "headline": headline,

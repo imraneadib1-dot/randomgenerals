@@ -92,6 +92,28 @@
         opacity: .5;
         min-height: 100%;
       }
+      /* A column split in two: returning people at the bottom, new
+         ones stacked on top. The column's HEIGHT is still the day's
+         total, so the chart reads as "how many" first and "who" second
+         - two separate charts would have made the comparison a memory
+         test. Only bars with data get this class; a quiet day and an
+         uncounted one keep the flat and hatched treatments above,
+         because those distinctions matter more than the split does. */
+      .spark span.col {
+        background: none; opacity: 1; display: flex;
+        flex-direction: column; overflow: hidden;
+      }
+      .spark span.col i { display: block; width: 100%; }
+      .spark span.col i.new { background: var(--accent-ink); }
+      .spark span.col i.ret { background: var(--accent); }
+      .key {
+        display: inline-block; width: 9px; height: 9px; border-radius: 2px;
+        margin: 0 5px 0 12px; vertical-align: baseline;
+      }
+      .key.new { background: var(--accent-ink); }
+      .key.ret { background: var(--accent); }
+      .spark-axis .legend .key:first-child { margin-left: 0; }
+
       .note {
         font-size: 12px; color: var(--text-faint); margin: 8px 0 0;
         line-height: 1.6;
@@ -193,6 +215,27 @@
           </div>
         </div>
         <div class="stat">
+          <div class="stat-label">Users today</div>
+          <div class="stat-value">{{ d.users.today }}</div>
+          <div class="stat-note">
+            {% if d.users.today %}
+              {{ d.users.new_today }} new,
+              {{ d.users.returning_today }} back again ·
+              {{ d.users.signed_in_today }} signed in
+            {% else %}
+              nobody has come back with a cookie today
+            {% endif %}
+          </div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Active this week</div>
+          <div class="stat-value">{{ '{:,}'.format(d.users.active_7) }}</div>
+          <div class="stat-note">
+            people, not visits ·
+            {{ '{:,}'.format(d.users.active_30) }} in the last 30 days
+          </div>
+        </div>
+        <div class="stat">
           <div class="stat-label">Visitors, all time</div>
           <div class="stat-value">
             {{ '{:,}'.format(d.visitors.all_time.total) }}
@@ -283,6 +326,66 @@
         <span>{{ d.visitors.series[-1].day }}</span>
       </div>
 
+      <h2>Daily users
+        <span>· real people, new and returning</span></h2>
+      <div class="spark">
+        {% for row in d.users.series %}
+          {% if not row.counted %}
+            <span class="blank" style="height: 100%"
+              title="{{ row.day }} — not counted yet"></span>
+          {% elif not row.users %}
+            <span class="zero" style="height: 0%"
+              title="{{ row.day }} — nobody"></span>
+          {% else %}
+            <span class="col"
+              style="height: {{ (100 * row.users / d.users.peak)|round(1) }}%"
+              title="{{ row.day }} — {{ row.users }} user{{ '' if row.users == 1 else 's' }}: {{ row.new }} new, {{ row.returning }} returning · {{ row.signed_in }} signed in"
+            ><i class="new" style="flex: {{ row.new }} 0 0"></i
+            ><i class="ret" style="flex: {{ row.returning }} 0 0"></i
+            ></span>
+          {% endif %}
+        {% endfor %}
+      </div>
+      <div class="spark-axis">
+        <span>{{ d.users.series[0].day }}</span>
+        <span class="legend">
+          <i class="key new"></i>new<i class="key ret"></i>returning ·
+          peak {{ d.users.peak }}{% if d.users.average %} · average
+          {{ d.users.average }} a {{ 'week' if d.bucket == 'week' else 'day'
+          }}{% endif %}
+        </span>
+        <span>{{ d.users.series[-1].day }}</span>
+      </div>
+      {% if d.users.began %}
+        <p class="note">
+          A <strong>user</strong> here is one person, counted once a
+          {{ 'week' if d.bucket == 'week' else 'day' }} however many
+          pages they open — the same identity the app already keeps in
+          the session cookie to hold your credits and your threads, so
+          somebody who came yesterday and comes again today is one
+          person twice and not two people. That is the difference
+          between this chart and the visitor chart above it, whose hash
+          is thrown away every night and cannot tell those two apart.
+          {% if d.bucket == 'week' %}
+            Weeks count distinct people per week, so they are smaller
+            than their days added up — a regular reader is one user a
+            week, not seven.
+          {% endif %}
+          Counting started {{ d.users.began }}, and someone's very first
+          page load lands as a visitor rather than a user: they are
+          counted from the moment they come back with the cookie they
+          were given, which is what keeps cookie-less crawlers from
+          arriving here as a new person per page.
+        </p>
+      {% else %}
+        <p class="note">
+          Nothing counted yet. Daily users start being recorded the
+          first time a browser comes back with the session cookie it was
+          given — the numbers above this line are still live in the
+          meantime.
+        </p>
+      {% endif %}
+
       <h2>Most visited pages <span>· since launch</span></h2>
       {% if d.visitors.top_pages %}
         <div class="bars">
@@ -367,10 +470,16 @@
         <strong>What these numbers are.</strong>
         Page views and visitors are counted here, on this server. No
         third-party analytics, no advertising script, no tracking cookie.
-        A visitor is a salted hash of an address and browser that is
-        thrown away every night — so today's visitor count is real, and
-        nobody can be followed from one day to the next, including by
-        this dashboard. Requests come from counters the app already kept.
+        A <em>visitor</em> is a salted hash of an address and browser
+        that is thrown away every night — so today's visitor count is
+        real, and nobody can be followed from one day to the next,
+        including by this dashboard. A <em>user</em> is the session id
+        the app already keeps for credits and threads, which is why that
+        one number can say new or returning: it is the single identifier
+        here that outlives midnight, and it is one the site was setting
+        anyway. Two people behind one office address are one visitor and
+        two users; one person on a phone and a laptop is two of both.
+        Requests come from counters the app already kept.
         Money comes from Paddle's own webhooks, and shows what reaches
         your balance after their fee, not what the customer was charged.
         Bots and crawlers are filtered out by user agent, which catches

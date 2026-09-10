@@ -350,12 +350,24 @@ def _count_visit():
         if not agent or any(hint in agent for hint in _BOT_HINTS):
             return
         db.record_visit(path[:120], _client_ip(), agent)
-        # All-time distinct visitors, which the daily hash cannot answer
-        # because its salt is destroyed nightly. This uses the session's
-        # own id - already minted to scope credits and threads - so it
-        # counts an identifier the app was setting anyway rather than
-        # introducing one. See the visitors_seen table in db.py.
-        db.note_visitor(current_owner_id())
+        # Distinct people - all time, and per day - which the daily hash
+        # cannot answer because its salt is destroyed nightly. This uses
+        # the session's own id, already minted to scope credits and
+        # threads, so it counts an identifier the app was setting anyway
+        # rather than introducing one. See visitors_seen and
+        # visitor_days in db.py.
+        #
+        # ONLY for a browser that sent the cookie back. current_owner_id
+        # mints a fresh guest id for any request without a session, so
+        # counting unconditionally counts one cookie-less crawler once
+        # per page it walks: the all-time figure was inflated by exactly
+        # the traffic the user-agent filter above fails to catch. The
+        # cost is that somebody's very first page load is not a "user"
+        # until their second one - they are still a visitor and still a
+        # page view, and the dashboard says so under the chart.
+        if request.cookies.get(app.config.get("SESSION_COOKIE_NAME")
+                               or "session"):
+            db.note_visitor(current_owner_id())
     except Exception:                            # noqa: BLE001 - a
         pass                                     # counter must never
                                                  # cost somebody a page
