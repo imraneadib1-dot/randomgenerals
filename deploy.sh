@@ -5,7 +5,7 @@
 #     bash /opt/randomgenerals/deploy.sh
 #
 # Or, the first time, straight from the checkout you already have:
-#     cd /opt/randomgenerals && git fetch && git checkout deploy/oracle-and-video-bay && bash deploy.sh
+#     cd /opt/randomgenerals && git fetch && git checkout main && bash deploy.sh
 #
 # WHY THIS EXISTS RATHER THAN "git pull && systemctl restart"
 #
@@ -24,7 +24,10 @@
 set -u
 
 APP_DIR="${APP_DIR:-/opt/randomgenerals}"
-BRANCH="${BRANCH:-deploy/oracle-and-video-bay}"
+# main, since 2026-09-12. The deploy/oracle-and-video-bay branch was
+# being fast-forwarded to main by hand after every change, which is
+# one more step that could be forgotten - and was.
+BRANCH="${BRANCH:-main}"
 SERVICE="${SERVICE:-randomgenerals}"
 # 5001, from PORT in deploy/oracle-setup.sh - gunicorn binds to
 # 127.0.0.1 and the Cloudflare tunnel is what faces the world.
@@ -104,24 +107,30 @@ fi
 
 echo ""
 echo "== is the new code actually serving? =="
-# Strings that exist only in the new build. Checking the running site
-# rather than the checkout is the point: it catches a service that
-# restarted from a stale copy, a wrong working directory, or a cached
-# template.
+# The page carries the commit it was built from (<meta name="rg-build">,
+# see build_id() in app.py). Checking the RUNNING site rather than the
+# checkout is the point: it catches a service that restarted from a
+# stale copy, a wrong working directory, or a cached template. This
+# used to grep for phrases that happened to be new in one build, which
+# meant every later change either updated the list or went unverified.
 BODY="$(curl -s "$URL")"
-ok=0
 fail=0
-for marker in "Connected apps" "connectorUrl" "accountManage" "2,000 credits"; do
-    if printf '%s' "$BODY" | grep -q "$marker"; then
-        echo "  found    : $marker"
-        ok=$((ok + 1))
-    else
-        echo "  MISSING  : $marker"
-        fail=$((fail + 1))
-    fi
-done
+WANT="$(git rev-parse --short HEAD)"
+GOT="$(printf '%s' "$BODY" \
+       | grep -o 'name="rg-build" content="[^"]*"' \
+       | sed 's/.*content="//; s/"$//')"
+if [ -z "$GOT" ]; then
+    echo "  MISSING  : no rg-build marker in the page - this is pre-marker code"
+    fail=$((fail + 1))
+elif [ "$GOT" != "$WANT" ]; then
+    echo "  STALE    : page says build $GOT, checkout is $WANT"
+    fail=$((fail + 1))
+else
+    echo "  serving  : build $GOT (matches HEAD)"
+fi
 
-# The moon was removed. If it is still being served, this is old code.
+# The moon was removed long ago. If it is still being served, this is
+# a very old process indeed.
 if printf '%s' "$BODY" | grep -q "moon-face"; then
     echo "  STILL OLD: moon-face is in the page, so this is pre-update code"
     fail=$((fail + 1))

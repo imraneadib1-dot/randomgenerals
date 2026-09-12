@@ -1105,6 +1105,11 @@ async function openThread(tid) {
   thread.messages.forEach((m, i) => {
     if (m.role === "user") {
       const bubble = addMessage("user", m.content);
+      // A question the filter blocked is kept so the person can see
+      // what they asked above the refusal - marked, so it can be
+      // styled as such, and never sent to the model (see
+      // _model_history in app.py).
+      markReplyKind(bubble.parentElement, m.kind);
       renderMsgAttachments(bubble.parentElement, m.attachments);
     } else if (m.type === "image") {
       const bubble = addMessage("assistant", "", m.provider, m.model);
@@ -1115,11 +1120,14 @@ async function openThread(tid) {
       addMessageActions(bubble.parentElement, bubble, { allowRegenerate: false });
     } else {
       const bubble = addMessage("assistant", "", m.provider, m.model);
+      markReplyKind(bubble.parentElement, m.kind);
       renderContent(bubble, m.content);
       renderSourceChips(bubble.parentElement, m.sources);
-      addMessageActions(bubble.parentElement, bubble, {
-        allowRegenerate: i === lastAssistantIdx,
-      });
+      if (replyKindOf(bubble.parentElement) === "text") {
+        addMessageActions(bubble.parentElement, bubble, {
+          allowRegenerate: i === lastAssistantIdx,
+        });
+      }
     }
   });
 
@@ -1513,6 +1521,53 @@ function handleToolEvent(msgEl, evt) {
   }
 }
 
+/* Everything that arrives between U+001E separators lands here. Three
+   shapes share the channel (see stream_event() in app.py): tool
+   progress, "this reply is an error/refusal, not an answer", and "the
+   fast channel is busy, retrying in N seconds". */
+function handleStreamEvent(msgEl, bubble, evt) {
+  if (evt.event === "reply") {
+    // Recorded on the element so the code that runs after the stream
+    // can withhold Copy / Save / Regenerate from a sentence the server
+    // wrote in place of an answer, and reloading shows it the same way.
+    markReplyKind(msgEl, evt.kind);
+    return;
+  }
+  if (evt.event === "wait") {
+    if (bubble.classList.contains("is-thinking")) {
+      const label = bubble.querySelector(".thinking-label");
+      if (label) {
+        label.textContent = `Fast channel busy — retrying in ${evt.seconds}s`;
+      }
+    }
+    return;
+  }
+  if (evt.tool) handleToolEvent(msgEl, evt);
+}
+
+function markReplyKind(msgEl, kind) {
+  if (!kind || kind === "text") return;
+  msgEl.dataset.kind = kind;
+  msgEl.classList.add("is-" + kind);
+}
+
+function replyKindOf(msgEl) {
+  return msgEl.dataset.kind || "text";
+}
+
+/* What happens once a reply has fully arrived: either the actions row,
+   or nothing - an error and a refusal are not things to copy, save or
+   regenerate. Shared by send, regenerate and the lost-thread retry so
+   the three cannot disagree about it. */
+function finishReply(msgEl, bubble, fullText, { allowRegenerate }) {
+  if (!fullText) {
+    renderContent(bubble, "[No response received. Check the channel setup.]");
+    return;
+  }
+  if (replyKindOf(msgEl) !== "text") return;
+  addMessageActions(msgEl, bubble, { allowRegenerate });
+}
+
 /* The waiting state. Built as real elements rather than a CSS pseudo so
    the three dots can carry independent animation delays, and so the
    label can say what is being waited for. Removed by clearThinking() the
@@ -1561,13 +1616,17 @@ async function consumeStream(res, bubble) {
       if (start === -1) break;
       const end = buf.indexOf(SEP, start + 1);
       if (end === -1) break;              // incomplete - wait for more
-      clearThinking(bubble);
       visible += buf.slice(0, start);
+      let evt = null;
       try {
-        handleToolEvent(msgEl, JSON.parse(buf.slice(start + 1, end)));
+        evt = JSON.parse(buf.slice(start + 1, end));
       } catch (_) {
         /* a malformed event is not worth breaking the reply over */
       }
+      // A "wait" event is the one kind that should leave the thinking
+      // indicator up - it is what the indicator is now reporting on.
+      if (evt && evt.event !== "wait") clearThinking(bubble);
+      if (evt) handleStreamEvent(msgEl, bubble, evt);
       buf = buf.slice(end + 1);
     }
 
@@ -1694,14 +1753,7 @@ async function sendChatMessage(text) {
         });
         if (retry.ok) {
           const retried = await consumeStream(retry, bubble);
-          if (!retried) {
-            renderContent(
-              bubble,
-              "[No response received. Check the channel setup.]",
-            );
-          } else {
-            addMessageActions(msgEl, bubble, { allowRegenerate: true });
-          }
+          finishReply(msgEl, bubble, retried, { allowRegenerate: true });
           return;
         }
       }
@@ -1712,17 +1764,13 @@ async function sendChatMessage(text) {
     }
 
     const fullText = await consumeStream(res, bubble);
-
-    if (!fullText) {
-      renderContent(bubble, "[No response received. Check the channel setup.]");
-    } else {
-      addMessageActions(msgEl, bubble, { allowRegenerate: true });
-    }
+    finishReply(msgEl, bubble, fullText, { allowRegenerate: true });
   } catch (err) {
     if (err.name === "AbortError") {
       if (!bubble.textContent) renderContent(bubble, "[Stopped]");
       else addMessageActions(msgEl, bubble, { allowRegenerate: true });
     } else {
+      markReplyKind(msgEl, "error");
       renderContent(bubble, "Something went wrong reaching the server.");
     }
   } finally {
@@ -1856,16 +1904,13 @@ async function regenerateLast(oldMsgEl) {
     }
 
     const fullText = await consumeStream(res, bubble);
-    if (!fullText) {
-      renderContent(bubble, "[No response received. Check the channel setup.]");
-    } else {
-      addMessageActions(msgEl, bubble, { allowRegenerate: true });
-    }
+    finishReply(msgEl, bubble, fullText, { allowRegenerate: true });
   } catch (err) {
     if (err.name === "AbortError") {
       if (!bubble.textContent) renderContent(bubble, "[Stopped]");
       else addMessageActions(msgEl, bubble, { allowRegenerate: true });
     } else {
+      markReplyKind(msgEl, "error");
       renderContent(bubble, "Something went wrong reaching the server.");
     }
   } finally {

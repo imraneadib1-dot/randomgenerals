@@ -11,6 +11,10 @@
          the root: a worker under /static could only ever control /static,
          so the app itself would never be covered by it. -->
     <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- Which build is serving this page. deploy.sh reads it back after
+         a restart and compares it to the checkout - see build_id() in
+         app.py for why a marker beats grepping for new phrases. -->
+    <meta name="rg-build" content="{{ build_id() }}" />
     <meta name="theme-color" content="#141a22" />
     <meta name="mobile-web-app-capable" content="yes" />
     <!-- iOS ignores the manifest's icons and reads this instead. Without

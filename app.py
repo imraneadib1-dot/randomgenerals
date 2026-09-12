@@ -4,6 +4,7 @@ from flask import (Flask, render_template, request, Response, jsonify,
 from dotenv import load_dotenv
 import hmac
 import secrets
+import subprocess
 import time
 import json
 import os
@@ -1005,6 +1006,39 @@ def now_iso():
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
+# WHAT KIND OF THING A MESSAGE IS
+#
+# Every assistant turn used to be saved the same way, whether the model
+# wrote it, the content filter wrote it, or a provider fell over and the
+# error text was recorded so it would not vanish. All three then went
+# back to the model as prior assistant turns on the next message - so a
+# conversation that had once hit a timeout carried
+# "[Error talking to ollama: HTTPConnectionPool ... Read timed out]"
+# in its context for ever after, and the model would sometimes
+# apologise for it.
+#
+# `kind` says which it is. Only "text" is something the model said and
+# only "text" is charged for; the rest are shown to the person and kept
+# out of the model's sight. A user turn the filter blocked is stored as
+# "blocked" for the same reason: visible on reload, never replayed.
+MESSAGE_KINDS = ("text", "error", "refusal", "notice", "blocked")
+
+# The prefixes fabricated replies had before `kind` existed. Used once,
+# at load, to label rows saved by earlier builds - see load_threads().
+_LEGACY_ERROR_RE = re.compile(
+    r"^\[(Error talking to|The fast channel|The model returned nothing|"
+    r"No model is answering|Groq error|OpenRouter error|Ollama error|"
+    r"Could not reach)")
+
+# The model never sees more than this much history from the app. The
+# providers trim further to their own budgets (fit_to_budget for Groq,
+# _trim_for_local for Ollama) - this is the ceiling on what is handed to
+# them, so a very long thread stops being re-serialised in full on every
+# turn. Oldest turns go first; the system prompt never does.
+HISTORY_MAX_MESSAGES = 40
+HISTORY_MAX_CHARS = 60_000
+
+
 def load_threads():
     data = db.load_threads()
     # Backfill "mode" on threads saved before workspaces existed. Old
@@ -1017,6 +1051,22 @@ def load_threads():
             t["mode"] = "image" if has_image else DEFAULT_MODE
         elif t["mode"] not in VALID_MODES:
             t["mode"] = "chat"
+        # Rows from before `kind` existed. The filter's replies carried
+        # provider "filter"; provider errors are recognisable by their
+        # opening words. Everything else was the model talking. A guess,
+        # made once per load rather than on every turn, and never
+        # written back in bulk - the row is corrected the next time its
+        # thread is saved for its own reasons.
+        for m in t.get("messages", []):
+            if "kind" in m:
+                continue
+            if m.get("role") == "assistant" and m.get("provider") == "filter":
+                m["kind"] = "refusal"
+            elif (m.get("role") == "assistant" and m.get("type") == "text"
+                    and _LEGACY_ERROR_RE.match(m.get("content") or "")):
+                m["kind"] = "error"
+            else:
+                m["kind"] = "text"
     return data
 
 
@@ -1369,6 +1419,44 @@ def asset(filename):
         # - fall back to an unversioned URL and let it 404 visibly.
         return url_for("static", filename=filename)
     return url_for("static", filename=filename, v=version)
+
+
+def _read_build_id() -> str:
+    """The short git commit this process was started from.
+
+    deploy.sh used to prove a deploy by grepping the running site for
+    four phrases that happened to be new in one particular build - so
+    every later change either updated the list or shipped unverified.
+    A build id in the page is the general answer: the script compares
+    what the site says it is running with what the checkout says it
+    should be, and the two either match or they do not.
+
+    Read once at import. A running process IS one build; re-reading it
+    per request would report the checkout's commit, which after a pull
+    without a restart is exactly the wrong one.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"], cwd=here,
+            stderr=subprocess.DEVNULL, timeout=5,
+        ).decode("ascii", "replace").strip() or "unknown"
+    except Exception:                          # noqa: BLE001 - not a git
+        pass                                   # checkout, or no git
+    try:
+        # A tarball deploy has no git. The file's own mtime still
+        # changes with every build, which is all a marker needs.
+        return "t%d" % int(os.path.getmtime(__file__))
+    except OSError:
+        return "unknown"
+
+
+BUILD_ID: str = _read_build_id()
+
+
+@app.template_global()
+def build_id() -> str:
+    return BUILD_ID
 
 
 # ----------------------------------------------------------------------
@@ -4984,7 +5072,7 @@ def stream_ollama(model, history, options=None, images=None, usage=None):
                 return
 
 
-def tool_event(payload):
+def stream_event(payload: dict) -> str:
     """A structured event smuggled through the plain-text reply stream.
 
     The reply is streamed as text and the browser appends whatever
@@ -4993,8 +5081,64 @@ def tool_event(payload):
     events in U+001E (RECORD SEPARATOR) gives the frontend something it
     can split on and pull out: the character has no visual form, no
     meaning in markdown, and a language model will never emit one.
+
+    Three shapes travel this way, told apart by their keys:
+
+        {"tool": name, "status": "start"|"done", "display": ...}
+        {"event": "reply", "kind": "error"|"refusal"|"notice"}
+        {"event": "wait", "seconds": n}
+
+    The second is what lets the browser style a fabricated sentence -
+    a provider error, a refusal - as something other than an answer,
+    and withhold Copy / Regenerate from it. Before it existed the only
+    signal was a leading "[", which a reply beginning with a markdown
+    link also has.
     """
     return "\x1e" + json.dumps(payload, separators=(",", ":")) + "\x1e"
+
+
+def tool_event(payload: dict) -> str:
+    """The original name, kept for the tool loop's call sites."""
+    return stream_event(payload)
+
+
+def _assistant_message(content: str, provider: str, model: str,
+                       kind: str = "text", **extra: Any) -> dict:
+    """The one place an assistant turn is built, so every site that
+    fabricates one - the filter, the fallback sentence, the backstop -
+    records what it is rather than passing as an answer."""
+    if kind not in MESSAGE_KINDS:
+        kind = "text"
+    msg: dict[str, Any] = {
+        "role": "assistant", "content": content, "type": "text",
+        "provider": provider, "model": model, "kind": kind,
+    }
+    for key, value in extra.items():
+        if value is not None and value is not False:
+            msg[key] = value
+    return msg
+
+
+def _model_history(thread: dict) -> list[dict]:
+    """The turns the model is allowed to see, oldest first.
+
+    Text only - image turns are pictures, not prose - and only turns
+    that were actually said: a blocked question, a refusal, a provider
+    error and a "your memory is full" notice are all things the PERSON
+    needed to see and the model has no use for. Replaying them taught it
+    to apologise for outages it never had.
+    """
+    turns = [
+        {"role": m["role"], "content": m["content"]}
+        for m in thread["messages"]
+        if m.get("type") == "text" and m.get("kind", "text") == "text"
+    ]
+    if len(turns) > HISTORY_MAX_MESSAGES:
+        turns = turns[-HISTORY_MAX_MESSAGES:]
+    total = sum(len(t["content"]) for t in turns)
+    while len(turns) > 2 and total > HISTORY_MAX_CHARS:
+        total -= len(turns.pop(0)["content"])
+    return turns
 
 
 PROVIDER_STREAMERS = {
@@ -5854,21 +5998,25 @@ def run_code_route():
     return jsonify(result)
 
 
-def _canned_reply(thread, text):
+def _canned_reply(thread: dict, text: str, kind: str = "refusal") -> Response:
     """Appends `text` as an assistant message and returns it through the
     same streaming Response shape /api/chat normally returns, just
     yielded in one piece instead of generated token by token - so the
     frontend's existing stream-reading code handles it with no special
     casing, and it persists/reloads like any other reply. Used for
-    content-filter blocks, which don't touch the model at all."""
-    thread["messages"].append({
-        "role": "assistant", "content": text, "type": "text",
-        "provider": "filter", "model": "content-filter",
-    })
+    content-filter blocks and "your memory is full" notices, neither of
+    which touches the model.
+
+    `kind` travels first as a stream event, so the browser knows before
+    the first character that this is not an answer - see stream_event.
+    """
+    thread["messages"].append(_assistant_message(
+        text, "filter", "content-filter", kind=kind))
     thread["updated"] = now_iso()
     save_threads()
 
     def generate():
+        yield stream_event({"event": "reply", "kind": kind})
         yield text
 
     return streaming_response(generate())
@@ -6032,10 +6180,8 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     if nudge:
         system_prompt = system_prompt + "\n\n" + nudge
 
-    history = [{"role": "system", "content": system_prompt}] + [
-        {"role": m["role"], "content": m["content"]}
-        for m in thread["messages"] if m["type"] == "text"
-    ]
+    history = ([{"role": "system", "content": system_prompt}]
+               + _model_history(thread))
 
     # THE FAST CHANNEL NO LONGER HAS TO BE RELIABLE ON ITS OWN
     #
@@ -6100,6 +6246,7 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                          groq_api.PREFERRED[0])
         else:
             def unavailable():
+                yield stream_event({"event": "reply", "kind": "error"})
                 yield ("[No model is answering. If this is running on your "
                        "own machine, start Ollama, or check OLLAMA_URL and "
                        "OLLAMA_API_KEY on the server.]")
@@ -6198,6 +6345,11 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     def generate():
         nonlocal provider, model, streamer, fell_back_to_cloud
         full_reply = ""
+        # What the saved turn will be. Flips to "error" at every site
+        # below that fabricates a sentence in place of an answer, and
+        # the browser is told in the same breath so it can show it as
+        # one. The finally block charges only when this is still "text".
+        reply_kind = "text"
         # Announce the tools that ran BEFORE the prose starts. They have
         # already finished by this point - the loop resolves them before
         # a stream is opened - so each is emitted as done rather than
@@ -6255,11 +6407,13 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                             # briefly spiky. Fall through and say so.
                             pass
                     _left, resets_in = groq_api.budget_state()
+                    reply_kind = "error"
                     full_reply = (
                         "[The fast channel has used its per-minute "
                         "allowance and there is no local model here to "
                         "take over. It refills in about %d seconds - "
                         "send that again then.]" % max(1, int(resets_in or 5)))
+                    yield stream_event({"event": "reply", "kind": reply_kind})
                     yield full_reply
                     return
                 provider, model = "ollama", local
@@ -6324,18 +6478,22 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                     app.logger.warning("empty-stream retry failed: %s", e)
 
             if not full_reply.strip():
+                reply_kind = "error"
                 full_reply = (
                     "[The model returned nothing for that. It usually "
                     "means the question needs rewording - try asking it "
                     "differently, or more specifically.]")
+                yield stream_event({"event": "reply", "kind": reply_kind})
                 yield full_reply
         except GeneratorExit:
             raise
         except Exception as e:
             # A backstop for anything unexpected from the streamer - a
-            # broken reply still gets recorded (as a bracketed error)
-            # instead of vanishing silently.
+            # broken reply still gets recorded (as an error, so it is
+            # shown as one and never replayed) instead of vanishing.
+            reply_kind = "error"
             full_reply = f"[Error talking to {provider}: {e}]"
+            yield stream_event({"event": "reply", "kind": reply_kind})
             yield full_reply
         finally:
             if full_reply:
@@ -6352,30 +6510,36 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                 flagged = moderation.check_reply(full_reply)
                 if flagged:
                     full_reply = moderation.REFUSAL_RESPONSE
-                msg = {
-                    "role": "assistant",
-                    "content": full_reply,
-                    "type": "text",
-                    "provider": provider,
-                    "model": model,
-                }
-                if fell_back_to_cloud:
-                    # Recorded on the message so reloading the thread
-                    # still shows it answered from the cloud - a reader
-                    # shouldn't have to guess why one reply differs.
-                    msg["fallback"] = True
-                if web_results:
-                    msg["sources"] = web_results
-                thread["messages"].append(msg)
+                    kind = "refusal"
+                else:
+                    kind = reply_kind
+                # Only an answer costs anything. A provider error, a
+                # refusal and an empty-reply sentence are recorded so
+                # the person can see what happened, and charged nothing
+                # because nothing was generated for them. This used to
+                # key on the reply starting with "[" - which a reply
+                # opening with a markdown link also does.
+                charged = 0
+                if kind == "text":
+                    cost = usage_based_cost(usage.get("eval_count"), mode)
+                    try:
+                        if spend_credits(cost):
+                            charged = cost
+                    except Exception as e:              # noqa: BLE001
+                        # Charging runs before the save below so the
+                        # amount can be recorded on the turn. A failure
+                        # here must not cost the person their answer.
+                        app.logger.warning("charge failed: %s", e)
+                # `fallback` is recorded on the message so reloading the
+                # thread still shows it answered from the cloud - a
+                # reader shouldn't have to guess why one reply differs.
+                thread["messages"].append(_assistant_message(
+                    full_reply, provider, model, kind=kind,
+                    fallback=fell_back_to_cloud,
+                    sources=web_results or None,
+                    charged=charged or None))
                 thread["updated"] = now_iso()
                 save_threads()
-                # Only charge for replies that actually came back - bracketed
-                # provider errors and flagged/blocked replies don't cost the
-                # user anything. Cost otherwise scales with what Ollama
-                # reports it actually generated, not a flat per-message fee.
-                if not flagged and not full_reply.startswith("["):
-                    spend_credits(
-                        usage_based_cost(usage.get("eval_count"), mode))
 
     # stream_with_context keeps the request context alive for as long as the
     # generator is running. Without it Flask tears the context down as soon
@@ -6428,22 +6592,35 @@ def chat():
         }), 402
 
     thread = THREADS[tid]
-    memory_stored = maybe_capture_memory(current_owner_id(), user_message)
 
-    user_msg = {"role": "user", "content": user_message, "type": "text"}
+    user_msg: dict[str, Any] = {
+        "role": "user", "content": user_message, "type": "text",
+        "kind": "text",
+    }
     if files:
         user_msg["attachments"] = files
+
+    # Content filter FIRST - before the turn is stored, before it can be
+    # captured as a memory. moderation.py's docstring always said the
+    # check ran before the message was added to the thread; for a while
+    # the order was the other way round, so a blocked question was kept
+    # as an ordinary turn and sent to the model on the very next
+    # message. It is still kept - the person should see what they
+    # asked, above the refusal, when they come back - but as "blocked",
+    # which _model_history leaves out. No credits: nothing was generated.
+    blocked = moderation.check_message(user_message)
+    if blocked is not None:
+        user_msg["kind"] = "blocked"
+        thread["messages"].append(user_msg)
+        if thread["title"] == "New chat":
+            thread["title"] = user_message[:40]
+        return _canned_reply(thread, blocked, kind="refusal")
+
+    memory_stored = maybe_capture_memory(current_owner_id(), user_message)
     thread["messages"].append(user_msg)
 
     if thread["title"] == "New chat":
         thread["title"] = user_message[:40]
-
-    # Content filter runs before the message ever reaches the model - see
-    # moderation.py for what it actually catches and why. No credits
-    # charged for a blocked request; nothing was generated.
-    blocked = moderation.check_message(user_message)
-    if blocked is not None:
-        return _canned_reply(thread, blocked)
 
     # Someone asked to remember something and their memory is full.
     # Saying so beats silently dropping it - they'd otherwise believe it
@@ -6456,6 +6633,7 @@ def chat():
             f"I couldn't save that - free accounts remember up to {limit} "
             "things and yours is full. Remove one in Settings > Memory, "
             "or upgrade to Pro for unlimited memory.",
+            kind="notice",
         )
 
     return _stream_reply(thread, provider, model, web_results, files, strength)
@@ -6481,6 +6659,13 @@ def regenerate(tid):
         return jsonify({"error": "No model selected"}), 400
     if not thread["messages"] or thread["messages"][-1]["role"] != "assistant":
         return jsonify({"error": "Nothing to regenerate yet."}), 400
+    # A refusal to a blocked question is not a reply to try again:
+    # the question itself is left out of what the model sees, so
+    # "regenerating" would ask it to answer nothing.
+    if (len(thread["messages"]) > 1
+            and thread["messages"][-2].get("kind") == "blocked"):
+        return jsonify({"error": "That message was blocked. Edit it and "
+                                 "send it again instead."}), 400
 
     account_credits, save_account = current_account()
     apply_refill(account_credits)
