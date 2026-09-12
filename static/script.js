@@ -168,6 +168,10 @@ const composerHintText = document.getElementById("composerHintText");
 // before initialization", which killed the statement immediately before
 // boot() and left the splash screen up for good.
 let accountNickname = "";
+// Same hazard, same fix: the settings document is read by
+// preferredModel() (the person's default model), which runs long before
+// the settings section of this file has executed.
+let settingsDoc = null;
 
 // The puck is one bay wide, and CSS cannot count its siblings. Set the
 // count once here so adding a bay to BAY_ORDER is the only change
@@ -577,6 +581,14 @@ function preferredModel(all, bay) {
   // ordinary general model, and being first in the list it was what a
   // free session landed on - then every message was refused as Pro.
   const models = unlockedModels(all);
+
+  // The person's own choice first. Settings > Model > "Default model"
+  // was stored and read by nothing - the picker landed on the server's
+  // recommendation every time regardless. It applies only when that
+  // model is actually offered on the channel in use; a name from
+  // another channel or a Pro model on a free account falls through.
+  const chosen = settingsDoc?.settings?.default_model;
+  if (chosen && models.includes(chosen)) return chosen;
 
   // The server's choice wins when it applies to the channel in use. It
   // is the only party that can rank across channels, because it is the
@@ -4336,7 +4348,9 @@ if ("serviceWorker" in navigator) {
    ================================================================ */
 const S = (id) => document.getElementById(id);
 
-let settingsDoc = null;
+// settingsDoc is declared at the top of the file, next to
+// accountNickname, for the same reason it is: preferredModel() reads it,
+// and `let` is in the temporal dead zone until its own line runs.
 let settingsSaveTimer = null;
 
 async function loadSettingsDoc() {

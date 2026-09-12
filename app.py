@@ -603,7 +603,15 @@ STRENGTH_LEVELS = {
     "deep": {
         # Deep is chosen when someone wants the thorough version, and
         # 2048 was barely above quick's old ceiling.
-        "options": {"num_predict": 4096, "temperature": 0.15},
+        #
+        # top_p was missing here while quick set 0.9, so the thorough
+        # mode ran at the provider default (1.0) - the one mode that
+        # asks the model to check its own reasoning was the one sampling
+        # from the whole tail. 0.95: a little wider than quick, since
+        # deep answers are longer and benefit from some variety, but
+        # not the whole distribution.
+        "options": {"num_predict": 4096, "temperature": 0.15,
+                    "top_p": 0.95},
         "nudge": "Work through this thoroughly - consider multiple "
                  "angles, check your own reasoning for mistakes, use any "
                  "search results provided - then give a complete, "
@@ -4472,7 +4480,11 @@ def _vision_route():
             if not (openrouter_api.configured()
                     and openrouter_api.budget_ok()):
                 continue
-            match = next((m for m in openrouter_api.models()
+            # Matched against the models that can SEE, not the picker
+            # list. models() is filtered to PREFERRED, which holds no
+            # vision model, so this branch could never match and every
+            # image on the hosted deployment was answered blind.
+            match = next((m for m in openrouter_api.vision_models()
                           if pattern in m.lower()), None)
             if match:
                 return "openrouter", match
@@ -5109,7 +5121,13 @@ def is_vision_model(model):
     name = (model or "").lower()
     if any(name.startswith(m) for m in _VISION_MODEL_EXACT):
         return True
-    return any(hint in name for hint in _VISION_MODEL_HINTS)
+    if any(hint in name for hint in _VISION_MODEL_HINTS):
+        return True
+    # Whatever OpenRouter's own catalogue says can see. The lists above
+    # are a snapshot; the catalogue is live, and a model the vision
+    # route picked from it must be recognised here or its images are
+    # never encoded (images_b64 is built only when this is True).
+    return name in {m.lower() for m in openrouter_api.vision_models()}
 
 
 def stream_ollama(model, history, options=None, images=None, usage=None):
@@ -5275,11 +5293,36 @@ def _model_history(thread: dict) -> list[dict]:
     needed to see and the model has no use for. Replaying them taught it
     to apologise for outages it never had.
     """
-    turns = [
-        {"role": m["role"], "content": m["content"]}
-        for m in thread["messages"]
-        if m.get("type") == "text" and m.get("kind", "text") == "text"
-    ]
+    said = [m for m in thread["messages"]
+            if m.get("type") == "text" and m.get("kind", "text") == "text"]
+
+    # WHAT WAS ATTACHED STAYS IN THE CONVERSATION. A file's text used
+    # to live only in the system prompt of the turn it arrived with, so
+    # two messages later "what did that file say?" had no file text in
+    # context and the model guessed. The newest user turn's files are
+    # still in the system prompt (see _attachment_context_block), so it
+    # is skipped here; the three before it carry theirs inline. Sources
+    # an answer used travel the same way, as one line, so a follow-up
+    # can refer back to them. Bounded by HISTORY_MAX_CHARS below.
+    user_turns = [i for i, m in enumerate(said) if m.get("role") == "user"]
+    carry_files = set(user_turns[-4:-1])
+
+    turns = []
+    for i, m in enumerate(said):
+        content = m["content"]
+        if i in carry_files:
+            for f in (m.get("attachments") or []):
+                if f.get("kind") == "text" and f.get("text"):
+                    content += "\n\n[Attached: %s]\n%s" % (
+                        f.get("filename") or "file", str(f["text"])[:6000])
+        if m.get("role") == "assistant" and m.get("sources"):
+            cited = "; ".join(
+                "%s - %s" % (s.get("title") or "", s.get("url") or "")
+                for s in m["sources"][:6] if isinstance(s, dict))
+            if cited:
+                content += "\n\n(Sources used: %s)" % cited
+        turns.append({"role": m["role"], "content": content})
+
     if len(turns) > HISTORY_MAX_MESSAGES:
         turns = turns[-HISTORY_MAX_MESSAGES:]
     total = sum(len(t["content"]) for t in turns)
@@ -6331,6 +6374,92 @@ def _profile_context_block(settings):
     return "\n".join(lines)
 
 
+def _default_model_for(owner_id: str) -> str | None:
+    """Settings > Model > "Default model", when the request names none.
+
+    A request without a model used to be refused outright; a person
+    who had chosen a default in Settings had chosen nothing, because
+    nothing read it. The browser still sends the model it shows in the
+    picker, so this is reached by API clients and by a picker that has
+    not loaded - and the plan gate in the caller still applies to what
+    comes back.
+    """
+    chosen = (db.load_settings(owner_id).get("default_model") or "").strip()
+    return chosen or None
+
+
+def _generation_options(mode: str, strength: str, plan: str,
+                        settings: dict) -> tuple[dict[str, Any], dict[str, bool]]:
+    """The sampling options for one reply, and what the person wants
+    switched on. -> (options, {"tools": bool, "web": bool}).
+
+    Layered in a fixed order, later layers winning:
+
+        bay defaults      CODE_MODEL_OPTIONS for code, num_ctx for all
+        strength          quick / deep: ceiling, temperature, top_p
+        reasoning effort  per bay and strength (Groq only reads it)
+        plan limits       code only - features.limits_for(plan)
+        the person        Settings > Model, bounded by the plan
+
+    THE LAST LAYER DID NOT EXIST. temperature, top_p, max_tokens and
+    default_model were validated on the way in (SETTING_FIELDS), stored
+    (db.SETTINGS_DEFAULTS), had sliders in Settings - and were read by
+    nothing. Every reply was generated at the strength's own values
+    however the sliders were set. Same class of bug as system_prompt
+    before it: a control that changes a stored number and nothing else.
+
+    Bounded, not obeyed: max_tokens cannot exceed what the plan allows
+    for the bay, because the plan limit is the plan limit. A person
+    asking for less than the ceiling gets less; asking for more gets
+    the ceiling.
+
+    num_ctx: 8192 keeps a local model inside this GPU's VRAM - without
+    it Ollama defaults to the model's advertised maximum (131,072 for
+    llama3.2, an ~18GB KV cache) and silently spills most of the model
+    to CPU, which was behind both the slow cold loads and sluggish
+    generation. Code gets the plan's larger window from limits_for,
+    because a long file plus its error output does not fit in 8192 and
+    what gets dropped is the top of the file - the imports and the
+    definitions being asked about.
+    """
+    options: dict[str, Any] = dict(CODE_MODEL_OPTIONS) if mode == "code" else {}
+    options["num_ctx"] = 8192
+    options.update(STRENGTH_LEVELS[strength]["options"])
+    # Only Groq reads this, and for it the setting is a budget decision
+    # as much as a quality one: the same maths question cost 297
+    # completion tokens at "low" effort and 683 at "high", for the same
+    # correct answer. Against an 8,000/minute ceiling that is the
+    # difference between roughly 25 replies a minute and 11.
+    options["reasoning_effort"] = groq_api.effort_for(mode, strength)
+    limits = features.limits_for(plan)
+    if mode == "code":
+        # Quick's and Deep's ceilings are both prose-sized - real code
+        # needs a much bigger generation budget, which is what was
+        # behind "it doesn't know how to write 1000 lines of code": it
+        # wasn't incapable, Quick mode was cutting it off at roughly a
+        # page. The per-tier numbers live in features.py so this isn't
+        # a second place where tier rules can drift.
+        options.update(limits)
+    ceiling = int(options.get("num_predict") or limits["num_predict"])
+
+    settings = settings or {}
+    if settings.get("temperature") is not None:
+        options["temperature"] = max(0.0, min(2.0, float(settings["temperature"])))
+    if settings.get("top_p") is not None:
+        options["top_p"] = max(0.0, min(1.0, float(settings["top_p"])))
+    if settings.get("max_tokens") is not None:
+        # At least 64: a ceiling below a sentence is a way to get
+        # nothing but truncation trailers, and nobody asks for that
+        # on purpose.
+        options["num_predict"] = max(64, min(ceiling, int(settings["max_tokens"])))
+
+    wants = {
+        "tools": bool(settings.get("tools_enabled", True)),
+        "web": bool(settings.get("web_search", True)),
+    }
+    return options, wants
+
+
 def _stream_reply(thread, provider, model, web_results, files, strength):
     """Builds the system prompt + history from thread["messages"] as it
     currently stands, streams a reply, and persists + charges for it once
@@ -6466,42 +6595,8 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                        "OLLAMA_API_KEY on the server.]")
             return streaming_response(unavailable())
 
-    # num_ctx matters more here than it looks. Without it, Ollama defaults
-    # to a model's advertised max context - 131,072 for llama3.2 - which
-    # alone needs an ~18GB KV cache. That doesn't fit in this machine's
-    # 8GB of VRAM, so Ollama silently spilled most of the model onto CPU
-    # (measured: 67% CPU / 33% GPU) to make room, which is what was
-    # actually behind both the slow cold-loads and sluggish generation -
-    # far more than the model-swap cost alone. 8192 tokens is generous for
-    # a chat conversation and keeps the whole model comfortably inside
-    # VRAM, so it runs on GPU only.
-    combined_options: dict[str, Any] = (
-        dict(CODE_MODEL_OPTIONS) if mode == "code" else {})
-    # 8192 for chat, 16384 for code. Measured on this GPU: 16384 stays
-    # entirely in VRAM, 32768 spills to CPU and collapses throughput.
-    # Code is where the extra context actually pays - a long file plus
-    # its error output does not fit in 8192, and what gets dropped is
-    # the top of the file, which is usually where the imports and the
-    # definitions being asked about live.
-    combined_options["num_ctx"] = 16384 if mode == "code" else 8192
-    combined_options.update(STRENGTH_LEVELS[strength]["options"])
-    # Only Groq reads this, and for it the setting is a budget decision
-    # as much as a quality one: the same maths question cost 297
-    # completion tokens at "low" effort and 683 at "high", for the same
-    # correct answer. Against an 8,000/minute ceiling that is the
-    # difference between roughly 25 replies a minute and 11.
-    combined_options["reasoning_effort"] = groq_api.effort_for(
-        mode, strength)
-    if mode == "code":
-        # Quick's 320-token cap and Deep's 2048 are both prose-sized -
-        # real code needs a much bigger generation budget, which is what
-        # was actually behind "it doesn't know how to write 1000 lines
-        # of code": it wasn't incapable, Quick mode was cutting it off
-        # at roughly a page. The per-tier numbers live in features.py so
-        # this isn't a second place where tier rules can drift.
-        account_credits, _ = current_account()
-        combined_options.update(
-            features.limits_for(account_credits.get("plan")))
+    combined_options, wants = _generation_options(
+        mode, strength, plan, owner_settings)
     stream_kwargs: dict[str, Any] = {"options": combined_options}
     if images_b64:
         stream_kwargs["images"] = images_b64
@@ -6534,11 +6629,15 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # OpenRouter's tools on Groq's headroom.)
     if (provider in PROVIDER_TURNS
             and features.FEATURES[plan]["builtin_tools"]
+            and wants["tools"]
             and (provider != "groq" or _groq_has_room(plan))):
         tool_specs = tools.available_specs(
             allow_images=(mode != "image"),
             allow_code=True,
-            allow_web=True,
+            # Settings > Model > "Web search" was a stored boolean and
+            # nothing else; it now decides whether the model is offered
+            # the search tool at all.
+            allow_web=wants["web"],
         )
         # Both plans have connected apps now; how MANY differs, and that
         # is enforced when one is added rather than here. This stays a
@@ -6817,6 +6916,8 @@ def chat():
     if provider not in PROVIDER_STREAMERS:
         return jsonify({"error": f"Unknown provider '{provider}'"}), 400
     if not model:
+        model = _default_model_for(current_owner_id())
+    if not model:
         return jsonify({"error": "No model selected"}), 400
     account_credits, save_account = current_account()
     # Premium models are enforced here, not in the browser. The frontend
@@ -6902,9 +7003,21 @@ def regenerate(tid):
     if provider not in PROVIDER_STREAMERS:
         return jsonify({"error": f"Unknown provider '{provider}'"}), 400
     if not model:
+        model = _default_model_for(current_owner_id())
+    if not model:
         return jsonify({"error": "No model selected"}), 400
     if not thread["messages"] or thread["messages"][-1]["role"] != "assistant":
         return jsonify({"error": "Nothing to regenerate yet."}), 400
+    # The same gate /api/chat applies. It was missing here, so a
+    # hand-made POST to /regenerate naming a Pro model ran it on a free
+    # account - the one route that skipped the check was the one that
+    # replays exactly the same request.
+    if not features.model_allowed(current_account()[0].get("plan"), model):
+        return jsonify({
+            "error": f"{model} is a Pro model. Upgrade in Settings, or "
+            "pick one of the free models.",
+            "upgrade_required": True,
+        }), 402
     # A refusal to a blocked question is not a reply to try again:
     # the question itself is left out of what the model sees, so
     # "regenerating" would ask it to answer nothing.

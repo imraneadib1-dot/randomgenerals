@@ -85,7 +85,13 @@ EXPOSED_MODELS = tuple(PREFERRED)
 
 FALLBACK_MODELS = list(PREFERRED[:2])
 
-_models_cache = {"at": 0.0, "models": None, "error": ""}
+_models_cache = {"at": 0.0, "models": None, "error": "",
+                 # Every id in the catalogue whose architecture lists
+                 # "image" among its input modalities. Kept apart from
+                 # `models` (the picker list, filtered to PREFERRED) so a
+                 # vision model can be routed to without being offered
+                 # in the dropdown.
+                 "vision": []}
 
 
 # ----------------------------------------------------------------------
@@ -226,18 +232,35 @@ def models():
             })
             return []
         r.raise_for_status()
-        found = {m.get("id", "") for m in r.json().get("data", [])}
+        entries = r.json().get("data", [])
+        found = {m.get("id", "") for m in entries}
         # Keep PREFERRED's order - it is a preference list, and sorting
         # it alphabetically would put k2 ahead of k2.7-code.
         out = [m for m in PREFERRED if m in found]
+        seeing = [
+            m.get("id", "") for m in entries
+            if "image" in ((m.get("architecture") or {})
+                           .get("input_modalities") or [])
+        ]
         _models_cache.update({"at": now, "models": out or FALLBACK_MODELS,
-                              "error": ""})
+                              "vision": seeing, "error": ""})
         return _models_cache["models"]
     except requests.exceptions.RequestException as e:
         out = cached["models"] or FALLBACK_MODELS
         _models_cache.update({"at": now, "models": out,
                               "error": "could not reach OpenRouter: %s" % e})
         return out
+
+
+def vision_models():
+    """Catalogue ids that accept an image, whether or not the picker
+    offers them. app.py's vision route matches its patterns against
+    this; matching them against models() - the PREFERRED-filtered
+    picker list - could never succeed, because no vision model is in
+    PREFERRED, and the route was dead.
+    """
+    models()                       # fills the cache when it is stale
+    return list(_models_cache.get("vision") or [])
 
 
 def _pick(model):
@@ -308,12 +331,38 @@ def chat_once(model, history, tools=None, options=None, timeout=120):
     return message, None
 
 
+def _with_images(messages, images):
+    """Attach base64 images to the last user turn, OpenAI-style.
+
+    The text becomes one part and each image another, which is the
+    shape every multimodal model on OpenRouter reads. Done here rather
+    than in _to_messages because only this channel does it - Groq's
+    models are text-only and Ollama takes images in its own field.
+    """
+    if not images:
+        return messages
+    out = list(messages)
+    for i in range(len(out) - 1, -1, -1):
+        if out[i].get("role") != "user":
+            continue
+        text = out[i].get("content") or ""
+        parts = [{"type": "text", "text": text}] if text else []
+        for b64 in images:
+            parts.append({"type": "image_url",
+                          "image_url": {"url": "data:image/png;base64," + b64}})
+        out[i] = {"role": "user", "content": parts}
+        break
+    return out
+
+
 def stream_chat(model, history, options=None, images=None, usage=None):
     """Stream a reply. Yields text pieces.
 
-    `images` is accepted and ignored, as on the Groq channel: the caller
-    has already decided vision is not on this route, and dropping the
-    attachment beats refusing the message.
+    `images` are sent when given. This channel used to accept and
+    IGNORE them, like Groq - but unlike Groq it serves models that can
+    see, and app.py routes image turns here for exactly that reason. A
+    caller that picked a vision model and sent the picture got a reply
+    about a picture the model never received.
     """
     if not configured():
         yield "[OpenRouter is not configured - set OPENROUTER_API_KEY.]"
@@ -328,7 +377,7 @@ def stream_chat(model, history, options=None, images=None, usage=None):
     opts = options or {}
     body = {
         "model": _pick(model),
-        "messages": _to_messages(history),
+        "messages": _with_images(_to_messages(history), images),
         "stream": True,
     }
     if opts.get("tools"):

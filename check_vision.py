@@ -72,10 +72,30 @@ print("\n== hosted vision outranks local, and ignores the guard ==")
 # says nothing about it.
 a.openrouter_api.configured = lambda: True
 a.openrouter_api.budget_ok = lambda *args, **kw: True
-a.openrouter_api.models = lambda: ["google/gemma-4-31b-it:free"]
+# The picker list holds no vision model - PREFERRED never did - and the
+# route used to look there, so it could never match. It reads the
+# catalogue's own "can see" list now, which is what this stubs.
+a.openrouter_api.models = lambda: ["poolside/laguna-s-2.1:free"]
+a.openrouter_api.vision_models = lambda: ["google/gemma-4-31b-it:free"]
 a._vision_speed["seconds"] = 98.0
 check("slow local box still gets hosted vision",
       a._vision_route(), ("openrouter", "google/gemma-4-31b-it:free"))
+check("a catalogue vision model is recognised as one, so its images "
+      "are encoded", a.is_vision_model("google/gemma-4-31b-it:free"), True)
+
+print("\n== the hosted channel actually sends the picture ==")
+import openrouter_api as orapi                             # noqa: E402
+msgs = orapi._with_images(
+    [{"role": "system", "content": "s"}, {"role": "user", "content": "what is this?"}],
+    ["QUJD"])
+check("the last user turn becomes text + image parts",
+      [p["type"] for p in msgs[-1]["content"]], ["text", "image_url"])
+check("as a data URL", msgs[-1]["content"][1]["image_url"]["url"]
+      .startswith("data:image/png;base64,QUJD"), True)
+check("the system turn is untouched", msgs[0], {"role": "system", "content": "s"})
+check("no images, no change",
+      orapi._with_images([{"role": "user", "content": "hi"}], []),
+      [{"role": "user", "content": "hi"}])
 
 print("\n== the model is told the truth when it cannot see ==")
 files = [{"kind": "image", "filename": "screenshot.png", "text": ""}]

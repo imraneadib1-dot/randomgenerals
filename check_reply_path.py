@@ -475,6 +475,85 @@ check("the cut-off draft was discarded", stored(tid)[-1]["content"],
       "the full answer")
 check("and the stream regenerated it", len(CALLS), 1)
 
+print("\n== settings reach the model ==")
+# Settings > Model had sliders for temperature, top_p and max_tokens, a
+# default model and two toggles, all validated and stored - and read by
+# nothing. Every reply used the strength's own numbers regardless.
+appmod.PROVIDER_STREAMERS["groq"] = fake_streamer(["ok"])
+appmod.PROVIDER_TURNS["groq"] = fake_turn(
+    {"content": "", "tool_calls": [{"id": "c9", "function": {
+        "name": "web_search", "arguments": '{"query": "x"}'}}]},
+    {"content": "with tools", "finish_reason": "stop"})
+r = client.patch("/api/settings", json={
+    "temperature": 0.7, "top_p": 0.5, "max_tokens": 100})
+check("settings accepted", r.status_code, 200)
+CALLS.clear()
+TURNS.clear()
+use(fake_streamer(["ok"]))
+tid = new_thread()
+send(tid, "hello")
+opts = CALLS[-1]["kw"]["options"]
+check("temperature reaches the streamer", opts.get("temperature"), 0.7)
+check("top_p too", opts.get("top_p"), 0.5)
+check("max_tokens becomes the ceiling", opts.get("num_predict"), 100)
+
+client.patch("/api/settings", json={"max_tokens": 32000})
+CALLS.clear()
+send(tid, "again")
+strength_cap = appmod.STRENGTH_LEVELS["quick"]["options"]["num_predict"]
+check("but never above what the strength allows",
+      CALLS[-1]["kw"]["options"]["num_predict"], strength_cap)
+
+client.patch("/api/settings", json={"tools_enabled": False,
+                                    "temperature": None, "top_p": None,
+                                    "max_tokens": None})
+TURNS.clear()
+r = send_groq(tid, "search for it")
+events, text = events_and_text(r.get_data(as_text=True))
+check("tools off means no tool turn at all", TURNS, [])
+check("and no tool events", [e for e in events if e.get("tool")], [])
+check("the reply came from the stream", text, "ok")
+
+client.patch("/api/settings", json={"tools_enabled": True, "web_search": False})
+TURNS.clear()
+send_groq(tid, "search again")
+offered = [t["function"]["name"] for t in (TURNS[0]["tools"] or [])]
+check("web search off leaves the other tools",
+      "web_search" not in offered and len(offered) > 0, True)
+client.patch("/api/settings", json={"web_search": True})
+
+client.patch("/api/settings", json={"default_model": "fake-model"})
+CALLS.clear()
+r = client.post("/api/chat", json={"thread_id": tid, "provider": "ollama",
+                                   "message": "no model named"})
+check("a request naming no model gets the person's default",
+      r.status_code, 200)
+check("and it was used", CALLS[-1]["model"], "fake-model")
+client.patch("/api/settings", json={"default_model": None})
+r = client.post("/api/chat", json={"thread_id": tid, "provider": "ollama",
+                                   "message": "no model at all"})
+check("with no default either, it is still refused", r.status_code, 400)
+
+print("\n== a Pro model cannot be replayed on a free account ==")
+r = client.post("/api/threads/%s/regenerate" % tid, json={
+    "provider": "ollama", "model": "gemma3:4b"})
+check("regenerate is gated like chat", r.status_code, 402)
+
+print("\n== files stay in the conversation ==")
+use(fake_streamer(["noted"]))
+tid = new_thread()
+client.post("/api/chat", json={
+    "thread_id": tid, "provider": "ollama", "model": "fake-model",
+    "message": "here is a file",
+    "attachments": [{"filename": "notes.txt", "kind": "text",
+                     "text": "THE SECRET WORD IS PELICAN"}]})
+CALLS.clear()
+send(tid, "what was the secret word?")
+seen = "\n".join(m["content"] for m in CALLS[-1]["history"])
+check("the earlier file's text is in the model's history",
+      "PELICAN" in seen, True)
+check("labelled with its name", "[Attached: notes.txt]" in seen, True)
+
 print("\n== the page names its build ==")
 html = client.get("/app").get_data(as_text=True)
 check("rg-build marker is in the page",
