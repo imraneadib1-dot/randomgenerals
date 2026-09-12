@@ -90,6 +90,18 @@ CREATE TABLE IF NOT EXISTS users (
     subscription_status    TEXT,
     current_period_end     TEXT,
     cancel_at_period_end   INTEGER NOT NULL DEFAULT 0,
+    -- The same mirror for Paddle, which is the processor that is
+    -- actually live. These were written to the in-memory user dict by
+    -- the webhook and to nowhere else, so every restart forgot who was
+    -- a customer: invoices came back empty and "manage plan" had
+    -- nothing to manage.
+    paddle_customer_id     TEXT,
+    paddle_subscription_id TEXT,
+    -- occurred_at of the last subscription event APPLIED. Paddle does
+    -- not guarantee delivery order and redelivers on failure; an event
+    -- older than this one is acknowledged and ignored, which is what
+    -- stops a replayed "active" from re-granting a cancelled plan.
+    subscription_updated_at TEXT,
     -- Who the account belongs to. Collected at signup and editable on
     -- the profile page.
     name TEXT NOT NULL DEFAULT '',
@@ -460,6 +472,9 @@ def _migrate_columns(conn):
         ("name", "TEXT NOT NULL DEFAULT ''"),
         ("birth_year", "INTEGER"),
         ("email_verified", "INTEGER NOT NULL DEFAULT 0"),
+        ("paddle_customer_id", "TEXT"),
+        ("paddle_subscription_id", "TEXT"),
+        ("subscription_updated_at", "TEXT"),
     ):
         if col not in user_cols:
             conn.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
@@ -715,7 +730,8 @@ def load_users():
         "       u.created, u.stripe_customer_id, u.stripe_subscription_id, "
         "       u.subscription_status, u.current_period_end, "
         "       u.cancel_at_period_end, u.name, u.birth_year, "
-        "       u.email_verified, "
+        "       u.email_verified, u.paddle_customer_id, "
+        "       u.paddle_subscription_id, u.subscription_updated_at, "
         "       c.balance, c.starting, c.plan AS credit_plan, c.last_refill "
         "FROM users u LEFT JOIN credits c ON c.owner_id = u.id"
     ).fetchall()
@@ -735,6 +751,9 @@ def load_users():
             "name": r["name"] or "",
             "birth_year": r["birth_year"],
             "email_verified": bool(r["email_verified"]),
+            "paddle_customer_id": r["paddle_customer_id"],
+            "paddle_subscription_id": r["paddle_subscription_id"],
+            "subscription_updated_at": r["subscription_updated_at"],
             "credits": {
                 "balance": r["balance"],
                 "starting": r["starting"],
@@ -789,15 +808,19 @@ def save_users(users):
                 "INSERT INTO users (id, email, password_hash, google_id, "
                 "plan, created, stripe_customer_id, stripe_subscription_id, "
                 "subscription_status, current_period_end, "
-                "cancel_at_period_end, name, birth_year, email_verified) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "cancel_at_period_end, name, birth_year, email_verified, "
+                "paddle_customer_id, paddle_subscription_id, "
+                "subscription_updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (uid, u["email"], u.get("password_hash", ""),
                  u.get("google_id"), u["plan"], u["created"],
                  u.get("stripe_customer_id"), u.get("stripe_subscription_id"),
                  u.get("subscription_status"), u.get("current_period_end"),
                  1 if u.get("cancel_at_period_end") else 0,
                  u.get("name") or "", u.get("birth_year"),
-                 1 if u.get("email_verified") else 0),
+                 1 if u.get("email_verified") else 0,
+                 u.get("paddle_customer_id"), u.get("paddle_subscription_id"),
+                 u.get("subscription_updated_at")),
             )
             c = u["credits"]
             conn.execute(

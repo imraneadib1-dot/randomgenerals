@@ -4385,9 +4385,13 @@ def license_verify():
 
     # A locally-issued key, for accounts that upgraded through the web UI
     # on this same server. Checked first so it works even with billing
-    # keys absent (self-hosting, development).
+    # keys absent (self-hosting, development). A Paddle subscription id
+    # is a licence too - it was not, so a Paddle customer could pay and
+    # still be unable to activate the desktop build.
     user = next((u for u in USERS.values()
-                 if u.get("stripe_subscription_id") == key), None)
+                 if key and key in (u.get("stripe_subscription_id"),
+                                    u.get("paddle_subscription_id"))),
+                None)
     if user:
         return jsonify({
             "valid": user["plan"] == "pro",
