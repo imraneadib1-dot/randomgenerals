@@ -1054,7 +1054,11 @@ def load_threads():
     # Backfill "mode" on threads saved before workspaces existed. Old
     # image conversations didn't record a mode either, so infer it from
     # whether the thread actually contains an image message.
-    for t in data.values():
+    for tid, t in data.items():
+        # The thread knows its own id, so the code that holds a thread
+        # dict - _stream_reply, _canned_reply - can save just that one
+        # without a reverse lookup through the whole table.
+        t["id"] = tid
         if "mode" not in t:
             has_image = any(m.get("type") == "image"
                             for m in t.get("messages", []))
@@ -1081,8 +1085,33 @@ def load_threads():
 
 
 def save_threads():
+    """The whole table, in one go. Not called by the app any more - see
+    save_thread - but kept because the checks seed threads through it."""
     with DATA_LOCK:
         db.save_threads(THREADS)
+
+
+def save_thread(thread: dict) -> None:
+    """Persist ONE thread, the one being changed.
+
+    THREADS is read and appended to by eight request threads at once,
+    and every message used to rewrite the whole table from it - a
+    DELETE and a reinsert of every user's every conversation, per
+    message, while iterating a dict other requests were mutating. The
+    row is snapshotted under DATA_LOCK here, so the message list cannot
+    change between being read and being written, and only that row is
+    touched. Mutation sites take the same lock around their append.
+    """
+    with DATA_LOCK:
+        tid = thread.get("id")
+        if not tid or THREADS.get(tid) is not thread:
+            # Deleted from under us, or never registered. Nothing to
+            # write; a delete has its own db call at its own site.
+            return
+        row = (tid, thread["title"], thread.get("mode", "chat"),
+               thread["updated"], thread.get("owner_id"),
+               json.dumps(thread["messages"]))
+    db.save_thread(*row)
 
 
 def load_users():
@@ -2266,13 +2295,12 @@ def _migrate_guest_threads(uid):
     guest_id = session.pop("guest_id", None)
     if not guest_id:
         return
-    moved = False
-    for t in THREADS.values():
-        if t.get("owner_id") == guest_id:
+    with DATA_LOCK:
+        moved = [t for t in THREADS.values() if t.get("owner_id") == guest_id]
+        for t in moved:
             t["owner_id"] = uid
-            moved = True
     if moved:
-        save_threads()
+        db.reassign_threads(guest_id, uid)
 
 
 # WHERE ACCOUNTS AND BILLING ACTUALLY LIVE.
@@ -2588,9 +2616,10 @@ def delete_account():
 
     removed = db.delete_user(uid, email)
     USERS.pop(uid, None)
-    for tid in [t for t, v in THREADS.items()
-               if v.get("owner_id") == uid]:
-        THREADS.pop(tid, None)
+    with DATA_LOCK:
+        for tid in [t for t, v in THREADS.items()
+                    if v.get("owner_id") == uid]:
+            THREADS.pop(tid, None)
     session.clear()
     return jsonify({"ok": True, "removed": removed})
 
@@ -4041,11 +4070,12 @@ def export_history():
 def clear_history():
     """Delete every thread for this owner, now."""
     owner_id = current_owner_id()
-    doomed = [tid for tid, t in THREADS.items()
-              if t.get("owner_id") == owner_id]
-    for tid in doomed:
-        THREADS.pop(tid, None)
-    save_threads()
+    with DATA_LOCK:
+        doomed = [tid for tid, t in THREADS.items()
+                  if t.get("owner_id") == owner_id]
+        for tid in doomed:
+            THREADS.pop(tid, None)
+    db.delete_threads_for(owner_id)
     return jsonify({"ok": True, "deleted": len(doomed)})
 
 
@@ -4061,13 +4091,13 @@ def apply_retention(owner_id):
         return 0
     cutoff = (datetime.datetime.now(datetime.timezone.utc)
               - datetime.timedelta(days=int(days))).isoformat()
-    doomed = [tid for tid, t in THREADS.items()
-              if t.get("owner_id") == owner_id
-              and (t.get("updated") or "") < cutoff]
-    for tid in doomed:
-        THREADS.pop(tid, None)
+    with DATA_LOCK:
+        doomed = [tid for tid, t in THREADS.items()
+                  if t.get("owner_id") == owner_id
+                  and (t.get("updated") or "") < cutoff]
+        for tid in doomed:
+            THREADS.pop(tid, None)
     if doomed:
-        save_threads()
         db.delete_threads_older_than(owner_id, cutoff)
     return len(doomed)
 
@@ -5054,14 +5084,17 @@ def create_thread():
     mode = payload.get("mode") if payload.get(
         "mode") in VALID_MODES else DEFAULT_MODE
     tid = str(uuid.uuid4())
-    THREADS[tid] = {
+    thread = {
+        "id": tid,
         "title": "New chat",
         "messages": [],
         "updated": now_iso(),
         "mode": mode,
         "owner_id": current_owner_id(),
     }
-    save_threads()
+    with DATA_LOCK:
+        THREADS[tid] = thread
+    save_thread(thread)
     return jsonify({"id": tid, "mode": mode})
 
 
@@ -5081,8 +5114,9 @@ def delete_thread(tid):
     thread = THREADS.get(tid)
     if not thread or thread.get("owner_id") != current_owner_id():
         return jsonify({"error": "Not found"}), 404
-    THREADS.pop(tid, None)
-    save_threads()
+    with DATA_LOCK:
+        THREADS.pop(tid, None)
+    db.delete_thread(tid)
     return jsonify({"ok": True})
 
 
@@ -5702,10 +5736,12 @@ def generate_image_route():
             "credits": credits_view(account_credits),
         }), 402
 
-    thread["messages"].append(
-        {"role": "user", "content": prompt, "type": "text"})
-    if thread["title"] == "New chat":
-        thread["title"] = prompt[:40]
+    with DATA_LOCK:
+        thread["messages"].append(
+            {"role": "user", "content": prompt, "type": "text",
+             "kind": "text"})
+        if thread["title"] == "New chat":
+            thread["title"] = prompt[:40]
 
     # A language model expands the request before it reaches the image
     # model - see enhance_prompt() in imagegen.py for why that is the
@@ -5719,18 +5755,20 @@ def generate_image_route():
 
     if error:
         thread["updated"] = now_iso()
-        save_threads()
+        save_thread(thread)
         return jsonify({"error": error}), 502
 
-    thread["messages"].append({
-        "role": "assistant",
-        "content": url,
-        "type": "image",
-        "provider": "imagegen",
-        "model": _image_model_name(backend),
-    })
-    thread["updated"] = now_iso()
-    save_threads()
+    with DATA_LOCK:
+        thread["messages"].append({
+            "role": "assistant",
+            "content": url,
+            "type": "image",
+            "provider": "imagegen",
+            "model": _image_model_name(backend),
+            "kind": "text",
+        })
+        thread["updated"] = now_iso()
+    save_thread(thread)
     spend_credits(cost)
 
     # Not echoing a `credits` field here - spend_credits() re-fetches its
@@ -6200,10 +6238,11 @@ def _canned_reply(thread: dict, text: str, kind: str = "refusal") -> Response:
     `kind` travels first as a stream event, so the browser knows before
     the first character that this is not an answer - see stream_event.
     """
-    thread["messages"].append(_assistant_message(
-        text, "filter", "content-filter", kind=kind))
-    thread["updated"] = now_iso()
-    save_threads()
+    with DATA_LOCK:
+        thread["messages"].append(_assistant_message(
+            text, "filter", "content-filter", kind=kind))
+        thread["updated"] = now_iso()
+    save_thread(thread)
 
     def generate():
         yield stream_event({"event": "reply", "kind": kind})
@@ -6877,14 +6916,15 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                 # reader shouldn't have to guess why one reply differs.
                 # Tool output is kept on the turn too, so a reload shows
                 # the sources and the picture where the stream did.
-                thread["messages"].append(_assistant_message(
-                    full_reply, provider, model, kind=kind,
-                    fallback=fell_back_to_cloud,
-                    sources=web_results or None,
-                    charged=charged or None,
-                    tool_displays=tools_used.displays or None))
-                thread["updated"] = now_iso()
-                save_threads()
+                with DATA_LOCK:
+                    thread["messages"].append(_assistant_message(
+                        full_reply, provider, model, kind=kind,
+                        fallback=fell_back_to_cloud,
+                        sources=web_results or None,
+                        charged=charged or None,
+                        tool_displays=tools_used.displays or None))
+                    thread["updated"] = now_iso()
+                save_thread(thread)
 
     # stream_with_context keeps the request context alive for as long as the
     # generator is running. Without it Flask tears the context down as soon
@@ -6958,16 +6998,17 @@ def chat():
     blocked = moderation.check_message(user_message)
     if blocked is not None:
         user_msg["kind"] = "blocked"
-        thread["messages"].append(user_msg)
-        if thread["title"] == "New chat":
-            thread["title"] = user_message[:40]
+        with DATA_LOCK:
+            thread["messages"].append(user_msg)
+            if thread["title"] == "New chat":
+                thread["title"] = user_message[:40]
         return _canned_reply(thread, blocked, kind="refusal")
 
     memory_stored = maybe_capture_memory(current_owner_id(), user_message)
-    thread["messages"].append(user_msg)
-
-    if thread["title"] == "New chat":
-        thread["title"] = user_message[:40]
+    with DATA_LOCK:
+        thread["messages"].append(user_msg)
+        if thread["title"] == "New chat":
+            thread["title"] = user_message[:40]
 
     # Someone asked to remember something and their memory is full.
     # Saying so beats silently dropping it - they'd otherwise believe it
@@ -7036,12 +7077,13 @@ def regenerate(tid):
             "credits": credits_view(account_credits),
         }), 402
 
-    old_reply = thread["messages"].pop()
+    with DATA_LOCK:
+        old_reply = thread["messages"].pop()
+        last_user = thread["messages"][-1] if thread["messages"] else None
     web_results = old_reply.get("sources") or []
-    last_user = thread["messages"][-1] if thread["messages"] else None
     files = (last_user.get("attachments") if last_user and
              last_user.get("role") == "user" else None) or []
-    save_threads()
+    save_thread(thread)
 
     return _stream_reply(thread, provider, model, web_results, files, strength)
 

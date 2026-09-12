@@ -600,13 +600,67 @@ def load_threads():
     }
 
 
+def save_thread(tid: str, title: str, mode: str, updated: str,
+                owner_id: str | None, messages_json: str) -> None:
+    """Write ONE thread, inserting or replacing its row.
+
+    The message list arrives already serialised. app.py builds that
+    string under its own lock, so the list cannot change between being
+    read and being written - which is the race save_threads() below
+    had: it iterated every thread in memory while other requests were
+    appending to them.
+    """
+    conn = _connect()
+    with _lock:
+        conn.execute(
+            "INSERT INTO threads (id, title, mode, updated, owner_id, "
+            "messages_json) VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET title = excluded.title, "
+            "mode = excluded.mode, updated = excluded.updated, "
+            "owner_id = excluded.owner_id, "
+            "messages_json = excluded.messages_json",
+            (tid, title, mode, updated, owner_id, messages_json))
+        conn.commit()
+
+
+def delete_thread(tid: str) -> None:
+    conn = _connect()
+    with _lock:
+        conn.execute("DELETE FROM threads WHERE id = ?", (tid,))
+        conn.commit()
+
+
+def delete_threads_for(owner_id: str) -> int:
+    """Every thread this owner has. -> how many went."""
+    conn = _connect()
+    with _lock:
+        cur = conn.execute("DELETE FROM threads WHERE owner_id = ?",
+                           (owner_id,))
+        conn.commit()
+    return cur.rowcount or 0
+
+
+def reassign_threads(from_owner: str, to_owner: str) -> int:
+    """Hand one owner's threads to another - a guest signing in keeps
+    the conversation they started. -> how many moved."""
+    conn = _connect()
+    with _lock:
+        cur = conn.execute(
+            "UPDATE threads SET owner_id = ? WHERE owner_id = ?",
+            (to_owner, from_owner))
+        conn.commit()
+    return cur.rowcount or 0
+
+
 def save_threads(threads):
     """Replace the whole `threads` table with the contents of `threads`.
 
-    A full replace rather than a diff - THREADS in app.py is small (one
-    person's conversation history) and every call site already has the
-    complete, current dict in memory, so there's nothing to gain from
-    tracking per-row deltas.
+    KEPT FOR THE TESTS AND FOR ONE-OFF REPAIRS ONLY. The app writes one
+    thread at a time now (save_thread above). This was called on every
+    message, and did a DELETE plus a reinsert of every user's every
+    thread for each one - while iterating a dict that other requests
+    were appending to, which is a "dictionary changed size during
+    iteration" waiting for enough traffic to happen.
     """
     conn = _connect()
     with _lock:
