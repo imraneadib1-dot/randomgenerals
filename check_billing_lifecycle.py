@@ -134,6 +134,93 @@ r = client.post("/api/license/verify", json={"key": "sub_01"})
 check("a Paddle subscription id verifies", r.get_json().get("valid"), True)
 check("as Pro", r.get_json().get("tier"), "pro")
 
+print("\n== a cancellation, then a stale 'active' that arrives late ==")
+r = deliver(subscription_event(
+    "subscription.canceled", uid, "canceled", "2026-09-05T10:00:00Z"))
+check("the cancellation is applied", user()["plan"], "free")
+check("with free credits", user()["credits"]["balance"],
+      appmod.PLANS["free"]["cap"])
+balance_after_cancel = user()["credits"]["balance"]
+r = deliver(subscription_event(
+    "subscription.updated", uid, "active", "2026-09-03T10:00:00Z"))
+check("an older event is acknowledged", r.status_code, 200)
+check("but not applied", r.get_json().get("applied"), False)
+check("the account stays free", user()["plan"], "free")
+check("and is not refilled", user()["credits"]["balance"], balance_after_cancel)
+check("the applied stamp is the cancellation's",
+      reloaded()["subscription_updated_at"], "2026-09-05T10:00:00Z")
+
+print("\n== the same event twice ==")
+deliver(subscription_event(
+    "subscription.activated", uid, "active", "2026-09-06T10:00:00Z"))
+check("re-activated by a newer event", user()["plan"], "pro")
+pro_balance = user()["credits"]["balance"]
+user()["credits"]["balance"] -= 500          # they used some
+r = deliver(subscription_event(
+    "subscription.activated", uid, "active", "2026-09-06T10:00:00Z"))
+check("a redelivery of the same event is applied harmlessly",
+      r.get_json().get("applied"), True)
+check("without a second refill", user()["credits"]["balance"],
+      pro_balance - 500)
+
+print("\n== an event without custom_data, for a known subscription ==")
+ev = subscription_event("subscription.updated", uid, "active",
+                        "2026-09-07T10:00:00Z", cancel=True)
+del ev["data"]["custom_data"]
+r = deliver(ev)
+check("matched by subscription id", r.get_json().get("applied"), True)
+check("cancel-at-period-end mirrored", user()["cancel_at_period_end"], True)
+check("still Pro until then", user()["plan"], "pro")
+
+print("\n== a payment alone upgrades ==")
+uid2 = appmod._create_user("payer2@example.com", password_hash="x")
+r = deliver({
+    "event_type": "transaction.completed",
+    "occurred_at": "2026-09-08T10:00:00Z",
+    "data": {"id": "txn_09", "status": "completed",
+             "customer_id": "ctm_02", "subscription_id": "sub_02",
+             "custom_data": {"user_id": uid2},
+             "billed_at": "2026-09-08T09:59:00Z",
+             "details": {"totals": {"currency_code": "USD",
+                                    "grand_total": "199", "fee": "35",
+                                    "earnings": "164"}}},
+})
+u2 = appmod.USERS[uid2]
+check("recorded as a payment", r.get_json().get("recorded"), "payment")
+check("and the payer is Pro without waiting for a subscription event",
+      u2["plan"], "pro")
+check("with the subscription id", u2["paddle_subscription_id"], "sub_02")
+check("a later subscription event still applies on top",
+      deliver(subscription_event(
+          "subscription.updated", uid2, "active", "2026-09-08T10:00:05Z",
+          sub_id="sub_02", customer_id="ctm_02",
+          period_end="2026-10-08T00:00:00Z")).get_json().get("applied"), True)
+check("bringing the renewal date", u2["current_period_end"],
+      "2026-10-08T00:00:00Z")
+
+print("\n== reconciliation: asking Paddle when the webhook did not come ==")
+answers = {}
+pb_real_get = pb.get_subscription
+pb.get_subscription = lambda sub_id: answers.get(sub_id, (None, "not found"))
+answers["sub_02"] = (pb.subscription_state({
+    "id": "sub_02", "customer_id": "ctm_02", "status": "canceled",
+    "updated_at": "2026-09-20T00:00:00Z"}), None)
+result = appmod.reconcile_subscriptions()
+check("every known subscription is asked about", result["checked"] >= 2, True)
+check("a cancellation the webhook never delivered is applied",
+      u2["plan"], "free")
+check("counted as a change", result["changed"], 1)
+answers["sub_02"] = (pb.subscription_state({
+    "id": "sub_02", "customer_id": "ctm_02", "status": "active",
+    "updated_at": "2026-09-01T00:00:00Z"}), None)
+appmod.reconcile_subscriptions()
+check("but an OLDER state from the API cannot undo it", u2["plan"], "free")
+answers["sub_01"] = (None, "Could not reach Paddle: timeout")
+result = appmod.reconcile_subscriptions()
+check("an unreachable Paddle is reported, not fatal",
+      any("sub_01" in e for e in result["errors"]), True)
+pb.get_subscription = pb_real_get
+
 print("")
 if FAILED:
     print("%d FAILED:" % len(FAILED))

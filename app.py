@@ -3065,6 +3065,21 @@ def paddle_webhook():
             payment["email"] or (payer or {}).get("email", ""),
             payment["currency"], payment["gross"], payment["fee"],
             payment["earnings"], payment["created"])
+        # A COMPLETED PAYMENT IS AN ACTIVE SUBSCRIPTION. The upgrade
+        # used to wait for a separate subscription.* event; if that one
+        # was delayed, or the destination was not subscribed to it, the
+        # customer was charged and never upgraded. The payment is proof
+        # enough, and the ordering rule below means a later, fuller
+        # subscription event still applies on top.
+        if payer and payment["subscription_id"]:
+            _apply_subscription_state(payer, {
+                "subscription_id": payment["subscription_id"],
+                "customer_id": payment["customer_id"],
+                "status": "active", "active": True,
+                "cancel_at_period_end": False,
+                "current_period_end": None,
+                "occurred_at": payment["occurred_at"],
+            })
         return jsonify({"received": True, "handled": True,
                         "recorded": "payment"})
 
@@ -3078,27 +3093,154 @@ def paddle_webhook():
     # user_id comes from custom_data set at checkout, which is the only
     # reliable link back to a local account - matching on email breaks
     # as soon as someone pays with a different address than they signed
-    # up with.
+    # up with. A subscription this app already knows the id of is
+    # matched on that too, for events that arrive without custom_data.
     user = USERS.get(str(event.get("user_id") or ""))
+    if not user and event.get("subscription_id"):
+        user = next((u for u in USERS.values()
+                     if u.get("paddle_subscription_id")
+                     == event["subscription_id"]), None)
     if not user:
         return jsonify({"received": True, "handled": False,
                         "reason": "unknown user"})
 
-    if event["active"]:
+    applied = _apply_subscription_state(user, event)
+    return jsonify({"received": True, "handled": True,
+                    "applied": applied})
+
+
+def _apply_subscription_state(user: dict, state: dict) -> bool:
+    """The one place a subscription's state reaches an account.
+    -> True if applied, False if it was older than what is stored.
+
+    Paddle delivers at least once and in no promised order. Before
+    this, events were applied as they arrived, so a redelivered or
+    delayed "active" landing after a "canceled" re-granted Pro - with
+    a full credit refill from _apply_plan. Each account remembers the
+    occurred_at of the last state it applied; anything older is
+    acknowledged and ignored. Equal is applied, so a redelivery of the
+    same event is harmless (_apply_plan only refills on a real change).
+    """
+    newer = state.get("occurred_at") or ""
+    known = user.get("subscription_updated_at") or ""
+    if newer and known and _paddle_time(newer) < _paddle_time(known):
+        return False
+
+    if state.get("active"):
         if user["plan"] != "pro":
             _apply_plan(user, "pro")
     elif user["plan"] != "free":
         _apply_plan(user, "free")
 
-    user["paddle_subscription_id"] = event.get("subscription_id")
-    user["paddle_customer_id"] = event.get("customer_id")
-    user["subscription_status"] = event.get("status")
-    user["cancel_at_period_end"] = event.get("cancel_at_period_end", False)
-    if event.get("current_period_end"):
-        user["current_period_end"] = event["current_period_end"]
+    if state.get("subscription_id"):
+        user["paddle_subscription_id"] = state["subscription_id"]
+    if state.get("customer_id"):
+        user["paddle_customer_id"] = state["customer_id"]
+    user["subscription_status"] = state.get("status")
+    user["cancel_at_period_end"] = bool(state.get("cancel_at_period_end"))
+    if state.get("current_period_end"):
+        user["current_period_end"] = state["current_period_end"]
+    if newer:
+        user["subscription_updated_at"] = newer
     save_users()
+    return True
 
-    return jsonify({"received": True, "handled": True})
+
+def _paddle_time(value: str) -> datetime.datetime:
+    """Paddle's RFC 3339 timestamps ("2026-09-12T10:00:00.123456Z") as
+    something comparable. Unparseable means "epoch", so a malformed
+    stamp is treated as old rather than crashing the webhook."""
+    try:
+        return datetime.datetime.fromisoformat(
+            str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return datetime.datetime.fromtimestamp(0, datetime.timezone.utc)
+
+
+# How far past its renewal date a Pro account may be before the
+# reconciler asks Paddle about it even without a subscription id to go
+# on. Paddle retries a failed renewal for a few days; three is inside
+# that window, so a genuinely late payment is not mistaken for a lapse.
+RECONCILE_GRACE_DAYS = 3
+
+# Every six hours. Webhooks carry the news within seconds when they
+# work; this is for when they do not, and a lapsed subscription being
+# noticed a few hours late costs nothing anyone would notice.
+RECONCILE_EVERY_SECONDS = 6 * 3600
+
+
+def reconcile_subscriptions() -> dict:
+    """Ask Paddle about every subscription this app thinks it has.
+    -> {"checked": n, "changed": n, "errors": [...]}
+
+    The webhook is how changes normally arrive, and it is at-least-once,
+    not guaranteed: a destination disabled after repeated failures, a
+    rotated secret, a tunnel outage, all leave a cancelled subscription
+    marked active here indefinitely, because nothing compared
+    current_period_end to the calendar. This is the second source of
+    truth. It goes through _apply_subscription_state like a webhook, so
+    the ordering rule holds and it can never apply something older
+    than what a webhook already delivered.
+    """
+    out: dict[str, Any] = {"checked": 0, "changed": 0, "errors": []}
+    if not paddle_billing.configured():
+        out["errors"].append("Paddle is not configured")
+        return out
+    now = datetime.datetime.now(datetime.timezone.utc)
+    grace = datetime.timedelta(days=RECONCILE_GRACE_DAYS)
+    for user in list(USERS.values()):
+        sub_id = user.get("paddle_subscription_id")
+        lapsed = (user.get("plan") == "pro"
+                  and user.get("current_period_end")
+                  and _paddle_time(user["current_period_end"]) + grace < now)
+        if not sub_id and not lapsed:
+            continue
+        if not sub_id:
+            # Pro, past its renewal by more than the grace, and no
+            # subscription to ask about - a Stripe-era or hand-granted
+            # plan. Recorded rather than revoked: revoking on a guess
+            # is worse than a dashboard line saying it needs a look.
+            out["errors"].append("%s is Pro past %s with no Paddle "
+                                 "subscription" % (user.get("email"),
+                                                   user["current_period_end"]))
+            continue
+        out["checked"] += 1
+        state, err = paddle_billing.get_subscription(sub_id)
+        if err:
+            out["errors"].append("%s: %s" % (sub_id, err))
+            continue
+        before = (user.get("plan"), user.get("subscription_status"),
+                  user.get("cancel_at_period_end"))
+        _apply_subscription_state(user, state)
+        after = (user.get("plan"), user.get("subscription_status"),
+                 user.get("cancel_at_period_end"))
+        if before != after:
+            out["changed"] += 1
+            app.logger.info("reconcile: %s %s -> %s", user.get("email"),
+                            before, after)
+    return out
+
+
+def _reconcile_forever() -> None:
+    """The scheduled run. A daemon thread, like the boot probes."""
+    while True:
+        time.sleep(RECONCILE_EVERY_SECONDS)
+        try:
+            result = reconcile_subscriptions()
+            if result["changed"] or result["errors"]:
+                app.logger.info("reconcile: %s", result)
+        except Exception as e:                          # noqa: BLE001
+            app.logger.warning("reconcile failed: %s", e)
+
+
+threading.Thread(target=_reconcile_forever, daemon=True).start()
+
+
+@app.route("/api/admin/reconcile", methods=["POST"])
+def admin_reconcile():
+    """Run the reconciler now. Owner only, like /stats."""
+    _owner_only()
+    return jsonify(reconcile_subscriptions())
 
 
 # ---------------------------------------------------------------- #

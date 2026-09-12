@@ -444,6 +444,11 @@ def parse_payment(payload):
         "txn_id": data.get("id") or "",
         "user_id": str((data.get("custom_data") or {}).get("user_id") or ""),
         "customer_id": data.get("customer_id") or "",
+        # A completed payment on a subscription means that subscription
+        # is active, whether or not the subscription.* event that says
+        # so ever arrives. app.py applies it as one.
+        "subscription_id": data.get("subscription_id") or "",
+        "occurred_at": payload.get("occurred_at") or "",
         "email": ((data.get("customer") or {}).get("email") or ""),
         "currency": (totals.get("currency_code")
                      or data.get("currency_code") or "USD"),
@@ -457,25 +462,24 @@ def parse_payment(payload):
     }
 
 
-def parse_event(payload):
-    """Normalise a webhook into the fields app.py stores.
+def subscription_state(data, occurred_at=""):
+    """One subscription object -> the fields app.py stores.
 
-    -> dict with event_type, user_id, subscription_id, status, active,
-       cancel_at_period_end, current_period_end - or None if this event
-       is not about a subscription and should simply be acknowledged.
+    The same object arrives three ways - inside a subscription.* webhook,
+    from GET /subscriptions/{id} when reconciling, and in the response to
+    a cancel - and all three are read here so they cannot disagree about
+    what "active" or "cancels at period end" means.
+
+    `occurred_at` is when this state was true. For a webhook that is the
+    event's own timestamp; for an API read it is the subscription's
+    updated_at. app.py compares it to the last one applied and ignores
+    anything older, which is what makes delivery order not matter.
     """
-    event_type = payload.get("event_type", "")
-    if not event_type.startswith("subscription."):
-        return None
-
-    data = payload.get("data") or {}
+    data = data or {}
     custom = data.get("custom_data") or {}
     status = data.get("status", "")
-
     period = data.get("current_billing_period") or {}
-
     return {
-        "event_type": event_type,
         "user_id": custom.get("user_id"),
         "subscription_id": data.get("id"),
         "customer_id": data.get("customer_id"),
@@ -487,4 +491,49 @@ def parse_event(payload):
         "cancel_at_period_end": bool(
             (data.get("scheduled_change") or {}).get("action") == "cancel"),
         "current_period_end": period.get("ends_at"),
+        "occurred_at": occurred_at or data.get("updated_at") or "",
     }
+
+
+def parse_event(payload):
+    """Normalise a webhook into the fields app.py stores.
+
+    -> subscription_state() plus event_type - or None if this event is
+       not about a subscription and should simply be acknowledged.
+    """
+    event_type = payload.get("event_type", "")
+    if not event_type.startswith("subscription."):
+        return None
+    state = subscription_state(payload.get("data"),
+                               payload.get("occurred_at") or "")
+    state["event_type"] = event_type
+    return state
+
+
+def get_subscription(sub_id):
+    """What Paddle says a subscription is right now. -> (state, error).
+
+    The webhook is the normal way to learn about changes, and it is
+    at-least-once, not exactly-once: a destination that failed too many
+    times is disabled, a rotated secret refuses everything, a tunnel
+    outage drops the lot. Any of those leaves a cancelled subscription
+    marked active here for ever. This is the other direction - asking
+    - and app.py's reconcile_subscriptions() runs it on a schedule.
+    """
+    if not configured():
+        return None, config_problem()
+    if not sub_id:
+        return None, "no subscription id"
+    try:
+        r = requests.get(f"{api_base()}/subscriptions/{sub_id}",
+                         headers=_headers(), timeout=20)
+    except requests.exceptions.RequestException as e:
+        return None, f"Could not reach Paddle: {e}"
+    if r.status_code == 404:
+        return None, "not found"
+    if r.status_code >= 400:
+        return None, f"Paddle refused ({r.status_code})"
+    try:
+        return subscription_state(r.json()["data"]), None
+    except (ValueError, KeyError, TypeError):
+        return None, "Unexpected response from Paddle."
