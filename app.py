@@ -2359,6 +2359,7 @@ def landing():
 @app.route("/app")
 def index():
     return render_template("index.html", plan_perks=plan_perks(),
+                           plans=PLANS,
                            accept_types=attachments.accept_attribute())
 
 
@@ -2950,8 +2951,12 @@ def subscribe():
                 # Paddle appends ?_ptxn=<id> to this. It is where the
                 # overlay opens, not a "payment finished" landing page -
                 # appending checkout=success here made the app announce
-                # success before anyone had paid.
-                return_url=request.host_url.rstrip("/") + "/app",
+                # success before anyone had paid. checkout=paddle says
+                # only that a Paddle checkout was in progress, so a
+                # browser that comes back this way (the overlay could
+                # not open, so it navigated) starts polling for the
+                # upgrade rather than announcing it.
+                return_url=request.host_url.rstrip("/") + "/app?checkout=paddle",
             )
             if err:
                 # 400, NOT 502. A payment provider declining is not a

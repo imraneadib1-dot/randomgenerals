@@ -1174,7 +1174,7 @@
             <div class="plan-card plan-card-pro" id="planCardPro">
               <div class="plan-card-top">
                 <span class="plan-name">Pro</span>
-                <span class="plan-price">$1.99<small>/mo</small></span>
+                <span class="plan-price">{{ plans["pro"]["price"].split("/")[0] }}<small>/{{ plans["pro"]["price"].split("/")[1] if "/" in plans["pro"]["price"] else "mo" }}</small></span>
               </div>
               <ul class="plan-features">
                 {% for text, on in plan_perks["pro"] %}
@@ -1195,8 +1195,10 @@
           <p class="plan-note" id="planNote">Sign in to manage your plan.</p>
           <p class="auth-error" id="planError" hidden></p>
           <p class="plan-fineprint" id="planFineprint">
-            Demo checkout only — no real payment is processed. Wire this up to
-            Stripe or another billing provider before taking real money.
+            Payments are handled by the payment provider on its own secure
+            page; card details never touch this server. Cancel any time
+            from this tab — Pro stays until the end of the period you paid
+            for.
           </p>
                   <div class="memory-divider"></div>
 

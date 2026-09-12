@@ -2011,6 +2011,12 @@ let currentUser = null;
 // next to currentUser, for the same temporal-dead-zone reason as the
 // declarations at the top of the file.
 let subscriptionState = null;
+// Set while the page is waiting for the server to confirm a payment,
+// so refreshAuthUI() does not overwrite the "activating Pro" line with
+// "Signed in as …" - which is exactly what it did the moment
+// loadAuthState() finished, so the message was never seen. Hoisted for
+// the same temporal-dead-zone reason as its neighbours.
+let upgradePoll = null;
 
 function openSettings() {
   settingsBackdrop.hidden = false;
@@ -2341,7 +2347,7 @@ function refreshAuthUI() {
     accountEmail.textContent = currentUser.email;
     accountPlanBadge.textContent =
       currentUser.plan === "pro" ? "Pro plan" : "Free plan";
-    planNote.textContent = `Signed in as ${currentUser.email}.`;
+    if (!upgradePoll) planNote.textContent = `Signed in as ${currentUser.email}.`;
     planFreeBtn.disabled = currentUser.plan !== "pro";
     planFreeBtn.textContent = freeButtonLabel();
     planProBtn.hidden = currentUser.plan === "pro";
@@ -2524,6 +2530,18 @@ function loadPaddle(token, environment, customerId) {
         // than handing it nothing.
         const options = { token };
         if (customerId) options.pwCustomer = { id: customerId };
+        // The overlay reports what happened inside it. Without this the
+        // page learnt nothing when somebody paid: the plan badge said
+        // Free until they reloaded, and only then if the webhook had
+        // already landed. checkout.completed is the moment to start
+        // asking the server whether it has heard.
+        options.eventCallback = (evt) => {
+          const name = evt && evt.name;
+          if (name === "checkout.completed") awaitUpgrade();
+          else if (name === "checkout.closed" && !upgradePoll) {
+            planProBtn.disabled = !billingLive;
+          }
+        };
         window.Paddle.Initialize(options);
         resolve(window.Paddle);
       } catch (e) {
@@ -2865,6 +2883,47 @@ managePlanBtn.addEventListener("click", async () => {
   }
 });
 
+/* The webhook is how the server learns somebody paid, and it arrives a
+   few seconds after the overlay closes. Ask every two seconds, for up to
+   a minute, until the plan has flipped - then refresh everything that
+   shows it. A timeout is not a failure: the payment went through and
+   the plan updates on its own; it only means this tab stops asking. */
+async function awaitUpgrade() {
+  if (upgradePoll) return;
+  setError(planError, "");
+  planNote.textContent = "Payment received — activating Pro…";
+  const started = Date.now();
+  upgradePoll = true;
+  try {
+    while (Date.now() - started < 60000) {
+      try {
+        const res = await fetch("/api/billing/subscription");
+        if (res.ok) {
+          const s = await res.json();
+          if (s.plan === "pro") {
+            if (currentUser) currentUser.plan = "pro";
+            subscriptionState = s;
+            await loadSubscription();
+            loadCredits();
+            upgradePoll = null;
+            refreshAuthUI();
+            planNote.textContent = "You're on Pro. Thank you.";
+            return;
+          }
+        }
+      } catch (_) {
+        /* a blip; ask again */
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    planNote.textContent =
+      "Payment received — your plan updates within a minute or two. " +
+      "Reload if it hasn't.";
+  } finally {
+    upgradePoll = null;
+  }
+}
+
 function handleCheckoutReturn() {
   const params = new URLSearchParams(window.location.search);
   const checkout = params.get("checkout");
@@ -2872,6 +2931,12 @@ function handleCheckoutReturn() {
   if (checkout === "success") {
     setError(planError, "");
     planNote.textContent = "Payment received — syncing your plan…";
+    awaitUpgrade();
+  } else if (checkout === "paddle") {
+    // A Paddle checkout was in progress and the browser came back by
+    // navigation rather than the overlay. Whether it was paid is not
+    // known yet - so ask, and say nothing until the server does.
+    if (currentUser && currentUser.plan !== "pro") awaitUpgrade();
   } else if (checkout === "cancel") {
     setError(planError, "Checkout cancelled — no charge was made.");
   }
