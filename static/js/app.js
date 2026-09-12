@@ -2558,10 +2558,11 @@ function loadPaddle(token, environment, customerId) {
 // always known at that moment - somebody who signs in, or pays for the
 // first time, acquires one mid-session. Paddle.Update is how that gets
 // through to Retain without a reload.
+let lastPaddleCustomer = "";
 function updatePaddleCustomer(customerId) {
   if (!customerId || !window.Paddle || !window.Paddle.Update) return;
-  if (updatePaddleCustomer.last === customerId) return;
-  updatePaddleCustomer.last = customerId;
+  if (lastPaddleCustomer === customerId) return;
+  lastPaddleCustomer = customerId;
   try {
     window.Paddle.Update({ pwCustomer: { id: customerId } });
   } catch (e) {
@@ -4620,6 +4621,7 @@ function initSettingsPanels() {
     });
   }
 
+  /** @type {[string, string, string, (s: string, radix?: number) => number][]} */
   const sliders = [
     ["setTemperature", "setTemperatureOut", "temperature", parseFloat],
     ["setTopP", "setTopPOut", "top_p", parseFloat],
@@ -4649,7 +4651,7 @@ function initSettingsPanels() {
   const prompt = S("setSystemPrompt");
   if (prompt) {
     prompt.addEventListener("input", () => {
-      S("setPromptCount").textContent = prompt.value.length;
+      S("setPromptCount").textContent = String(prompt.value.length);
       patchSettingsDebounced({ system_prompt: prompt.value });
     });
   }
@@ -5077,7 +5079,7 @@ function initProfileControls() {
   const bio = S("profileBio");
   if (bio) {
     bio.addEventListener("input", () => {
-      S("bioCount").textContent = bio.value.length;
+      S("bioCount").textContent = String(bio.value.length);
       patchSettingsDebounced({ bio: bio.value });
     });
   }

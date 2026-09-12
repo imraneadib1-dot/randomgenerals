@@ -1,0 +1,26 @@
+{
+  "//": [
+    "Type-checks the front-end WITHOUT a build. The files under static/js",
+    "are served to the browser exactly as written; tsc only reads them.",
+    "`npm run check` (or python check_frontend.py) runs it. Types come",
+    "from JSDoc comments in the modules and from static/js/types.d.ts,",
+    "which declares the globals the CDN scripts and the desktop bridge",
+    "put on window. strict is off to start with: the point is to catch",
+    "an undeclared name or a wrong call, not to annotate 5000 lines at",
+    "once - tighten it as the modules are split out."
+  ],
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": false,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "types": []
+  },
+  "include": ["static/js/**/*.js", "static/js/**/*.d.ts"]
+}

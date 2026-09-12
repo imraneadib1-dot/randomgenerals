@@ -86,3 +86,5 @@ mobile/android/
 # desktop/electron-builder.yml about the recursion that caused.
 desktop/dist/
 desktop/node_modules/
+# Dev-only: the front-end type check (npm run check).
+node_modules/

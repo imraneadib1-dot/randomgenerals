@@ -21,7 +21,7 @@ const VERSION = "rg-shell-v1";
 const SHELL = [
   "/app",
   "/static/style.css",
-  "/static/script.js",
+  "/static/js/app.js",
   "/static/icons/icon-192.png",
   "/static/icons/icon-512.png",
   "/static/manifest.webmanifest",

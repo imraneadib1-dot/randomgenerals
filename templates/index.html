@@ -32,6 +32,37 @@
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css"
     />
+    <!-- Theme applied BEFORE the stylesheet paints. Read after first
+         paint, someone who chose Light would watch the app load dark and
+         then flip, which reads as a bug rather than a preference being
+         honoured. Inline and synchronous is the only way to beat that -
+         and it has to be HERE, in the head, ahead of the stylesheet. For
+         a while it sat at the end of the body, after 1600 lines of
+         markup, saying all of the above and doing none of it.
+
+         try/catch because localStorage throws outright in some privacy
+         modes, and an appearance preference is not worth a blank page. -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("theme") || "system";
+          var dark = window.matchMedia
+            && window.matchMedia("(prefers-color-scheme: dark)").matches;
+          var mode = t === "system" ? (dark ? "dark" : "light") : t;
+          if (mode === "light") {
+            document.documentElement.setAttribute("data-theme", "light");
+          }
+          var c = localStorage.getItem("contrast");
+          if (c === "high") {
+            document.documentElement.setAttribute("data-contrast", "high");
+          }
+          var z = localStorage.getItem("textSize");
+          if (z && z !== "medium") {
+            document.documentElement.setAttribute("data-textsize", z);
+          }
+        } catch (e) {}
+      })();
+    </script>
     <link
       rel="stylesheet"
       href="{{ asset('style.css') }}"
@@ -1630,34 +1661,10 @@
       defer
       src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.1/mermaid.min.js"
     ></script>
-    <!-- Theme applied BEFORE the stylesheet paints. Read after first
-         paint, someone who chose Light would watch the app load dark and
-         then flip, which reads as a bug rather than a preference being
-         honoured. Inline and synchronous is the only way to beat that.
-
-         try/catch because localStorage throws outright in some privacy
-         modes, and an appearance preference is not worth a blank page. -->
-    <script>
-      (function () {
-        try {
-          var t = localStorage.getItem("theme") || "system";
-          var dark = window.matchMedia
-            && window.matchMedia("(prefers-color-scheme: dark)").matches;
-          var mode = t === "system" ? (dark ? "dark" : "light") : t;
-          if (mode === "light") {
-            document.documentElement.setAttribute("data-theme", "light");
-          }
-          var c = localStorage.getItem("contrast");
-          if (c === "high") {
-            document.documentElement.setAttribute("data-contrast", "high");
-          }
-          var z = localStorage.getItem("textSize");
-          if (z && z !== "medium") {
-            document.documentElement.setAttribute("data-textsize", z);
-          }
-        } catch (e) {}
-      })();
-    </script>
-    <script src="{{ asset('script.js') }}"></script>
+    <!-- The app. A module: strict mode, its own scope, deferred until the
+         document is parsed - which is when it ran anyway, from the end of
+         the body. Being a module is what lets it be split into files
+         without a bundler. -->
+    <script type="module" src="{{ asset('js/app.js') }}"></script>
   </body>
 </html>

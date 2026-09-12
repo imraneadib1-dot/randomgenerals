@@ -1,0 +1,11 @@
+{
+  "name": "randomgenerals-frontend-check",
+  "private": true,
+  "description": "Dev-only. The front-end is plain ES modules served as-is; this exists to type-check them with tsc --checkJs. Nothing here is part of a build or a deploy.",
+  "scripts": {
+    "check": "tsc -p jsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
