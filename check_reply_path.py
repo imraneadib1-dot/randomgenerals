@@ -164,6 +164,11 @@ use(fake_streamer(["fine"]))
 CALLS.clear()
 send(tid, "next question")
 seen = [m["content"] for m in CALLS[-1]["history"]]
+system = CALLS[-1]["history"][0]
+check("the system prompt leads", system["role"], "system")
+check("and carries the honesty contract",
+      "HONESTY" in system["content"]
+      and "Never say you ran code" in system["content"], True)
 check("no error text in the model's history",
       any("[Error talking to" in c for c in seen), False)
 check("the questions and answers are there",
