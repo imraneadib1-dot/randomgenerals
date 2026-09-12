@@ -3,6 +3,7 @@ import { renderAttachChips } from "./attachments.js";
 import { loadCredits, renderCredits } from "./credits.js";
 import { chatForm, chatLog, messageInput, modelSelect, sendBtn, topbarModelChip } from "./dom.js";
 import { sendImagePrompt } from "./image.js";
+import { StreamRenderer } from "./markdown.js";
 import { addMessage, addMessageActions, renderContent, renderMsgAttachments, renderSourceChips } from "./message.js";
 import { loadThreadList } from "./sidebar.js";
 import { shouldAutoSearch } from "./voice.js";
@@ -173,6 +174,12 @@ export async function consumeStream(res, bubble) {
   const SEP = "";   // U+001E RECORD SEPARATOR
   let buf = "";
   let visible = "";
+  // One render per frame, not one per chunk - see StreamRenderer. The
+  // old loop re-rendered the whole bubble, re-highlighted every code
+  // block and re-ran KaTeX on every network chunk, so a long reply cost
+  // more to draw with every token it gained.
+  const renderer = new StreamRenderer(bubble);
+  const scroller = chatLog.parentElement;
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -204,12 +211,17 @@ export async function consumeStream(res, bubble) {
     // survive - leaving the shimmer running underneath the reply and the
     // caret suppressed for the rest of the stream.
     if (sofar) clearThinking(bubble);
-    renderContent(bubble, sofar);
-    chatLog.parentElement.scrollTop = chatLog.parentElement.scrollHeight;
+    // Follow the reply only if the reader was already at the bottom.
+    // Forcing the scroll on every chunk yanked the page away from
+    // anyone who had scrolled up to re-read something.
+    const nearBottom =
+      scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
+    renderer.update(sofar);
+    if (nearBottom) scroller.scrollTop = scroller.scrollHeight;
   }
   const cut = buf.indexOf(SEP);
   visible += cut === -1 ? buf : buf.slice(0, cut);
-  renderContent(bubble, visible);
+  renderer.finish(visible);
   return visible;
 }
 

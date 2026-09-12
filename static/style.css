@@ -3826,6 +3826,53 @@ html.time-night .night-moon {
   font-size: 0.9em;
 }
 
+/* The rest of what markdown can produce. Written when the renderer
+   arrived; the rules above were written for it a while before it did. */
+.msg.assistant .msg-bubble strong { font-weight: 600; color: var(--ink); }
+.msg.assistant .msg-bubble a {
+  color: var(--bay);
+  text-decoration: underline;
+  text-decoration-color: rgba(160, 131, 72, 0.45);
+  text-underline-offset: 2px;
+}
+.msg.assistant .msg-bubble a:hover { text-decoration-color: currentColor; }
+.msg.assistant .msg-bubble hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 0.4em 0;
+}
+.msg.assistant .msg-bubble table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.94em;
+  display: block;
+  overflow-x: auto;
+}
+.msg.assistant .msg-bubble th,
+.msg.assistant .msg-bubble td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.msg.assistant .msg-bubble th {
+  font-weight: 600;
+  color: var(--ink);
+  border-bottom-color: var(--border-strong);
+}
+.msg.assistant .msg-bubble img { max-width: 100%; border-radius: 8px; }
+/* A bare <pre> mid-stream, before the header is attached at the end. */
+.msg.assistant .msg-bubble > pre {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--code-bg, rgba(0, 0, 0, 0.25));
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
 /* The composer earns the accent by being used. */
 .composer-form:focus-within {
   border-color: var(--border-strong);

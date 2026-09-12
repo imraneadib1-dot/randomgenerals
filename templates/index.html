@@ -1633,6 +1633,14 @@
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <!-- Markdown. marked parses what the model writes, DOMPurify makes
+         it safe to put in the page. Both are optional: with either
+         blocked, replies fall back to the plain fence-and-code renderer
+         (see markdown.js), so an ad blocker degrades the typography and
+         never the answer. Not deferred: the module that uses them is,
+         and runs after these. -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
 
     <!-- KaTeX, for maths.
 

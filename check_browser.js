@@ -113,6 +113,30 @@ function check(label, ok, detail) {
   console.log("    reply kind: %s, text: %s", bubbles.lastKind, JSON.stringify(bubbles.lastText.slice(0, 90)));
   check("no errors during the round-trip", errors.length === 0, errors.slice(-3).join(" | "));
 
+  console.log("== the reply is rendered as markdown ==");
+  const md = await page.evaluate(() => {
+    const b = document.querySelector(".msg.assistant:last-of-type .msg-bubble");
+    return {
+      strong: !!b.querySelector("strong"),
+      items: b.querySelectorAll("li").length,
+      code: !!b.querySelector(".code-block .copy-btn"),
+      highlighted: !!b.querySelector("code .hljs-built_in, code .hljs-keyword, code .hljs-string, code .hljs-number"),
+      math: !!b.querySelector(".katex"),
+      source: (b.dataset.md || "").includes("**Hello**"),
+      libs: !!(window.marked && window.DOMPurify),
+    };
+  });
+  if (!md.libs) {
+    console.log("    (marked/DOMPurify did not load from the CDN here; the fallback renderer ran)");
+  } else {
+    check("bold is bold", md.strong);
+    check("a list is a list", md.items === 2, String(md.items));
+    check("a fence is a code block with its header", md.code);
+    check("and highlighted once, at the end", md.highlighted);
+    check("maths is typeset", md.math);
+  }
+  check("the markdown source is kept for Save", md.source);
+
   await page.waitForFunction(() => document.querySelectorAll(".thread-item").length > 0,
     null, { timeout: 10000 }).catch(() => {});
   const threads = await page.evaluate(() => document.querySelectorAll(".thread-item").length);

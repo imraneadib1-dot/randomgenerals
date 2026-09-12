@@ -1,5 +1,5 @@
-import { renderMath } from "./bays.js";
 import { chatLog, emptyState } from "./dom.js";
+import { renderMarkdown } from "./markdown.js";
 import { regenerateLast } from "./image.js";
 import { downloadBlob, downloadHtml, isPreviewable, noteFilename, openPreview } from "./preview.js";
 import { PROVIDER_META } from "./shell.js";
@@ -182,106 +182,13 @@ export function escapeHtml(str) {
     .replace(/'/g, "&#39;");
 }
 
+/**
+ * Draw a finished reply. The markdown renderer does the work; this is
+ * the name every caller already used, kept so a reload (openThread)
+ * and a stream's last frame render the same way.
+ */
 export function renderContent(bubble, text) {
-  // Keep the source. Save-as-Markdown wants the markdown, not the
-  // rendered text - textContent has already lost the headings, the
-  // fences and the LaTeX delimiters KaTeX consumed.
-  try {
-    bubble.dataset.md = text;
-  } catch (_) { /* a bubble without a dataset still renders */ }
-  const parts = [];
-  const fenceRegex = /```(\w*)\n([\s\S]*?)```/g;
-  let lastIndex = 0;
-  let match;
-
-  while ((match = fenceRegex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push({ type: "text", content: text.slice(lastIndex, match.index) });
-    }
-    parts.push({
-      type: "code",
-      lang: match[1] || "plaintext",
-      content: match[2],
-    });
-    lastIndex = fenceRegex.lastIndex;
-  }
-  if (lastIndex < text.length) {
-    parts.push({ type: "text", content: text.slice(lastIndex) });
-  }
-
-  bubble.innerHTML = "";
-
-  parts.forEach((part) => {
-    if (part.type === "code") {
-      const block = document.createElement("div");
-      block.className = "code-block";
-
-      const header = document.createElement("div");
-      header.className = "code-block-header";
-      const langSpan = document.createElement("span");
-      langSpan.textContent = part.lang;
-      header.appendChild(langSpan);
-
-      const copyBtn = document.createElement("button");
-      copyBtn.className = "copy-btn";
-      copyBtn.textContent = "Copy";
-      copyBtn.onclick = () => {
-        navigator.clipboard.writeText(part.content);
-        copyBtn.textContent = "Copied!";
-        setTimeout(() => (copyBtn.textContent = "Copy"), 1500);
-      };
-      header.appendChild(copyBtn);
-
-      // A page you can look at, not just read the source of.
-      //
-      // This is the difference between "here is some HTML" and "here is
-      // your website". The model is asked for one self-contained file
-      // precisely so this works: no missing stylesheet, no broken script
-      // path, nothing to assemble before it renders.
-      if (isPreviewable(part.lang, part.content)) {
-        const previewBtn = document.createElement("button");
-        previewBtn.className = "copy-btn";
-        previewBtn.textContent = "Preview";
-        previewBtn.onclick = () => openPreview(part.content);
-        header.appendChild(previewBtn);
-
-        const saveBtn = document.createElement("button");
-        saveBtn.className = "copy-btn";
-        saveBtn.textContent = "Save .html";
-        saveBtn.onclick = () => downloadHtml(part.content);
-        header.appendChild(saveBtn);
-      }
-
-      const pre = document.createElement("pre");
-      const code = document.createElement("code");
-      if (part.lang && part.lang !== "plaintext") {
-        code.className = `language-${part.lang}`;
-      }
-      code.textContent = part.content;
-      pre.appendChild(code);
-
-      block.appendChild(header);
-      block.appendChild(pre);
-      bubble.appendChild(block);
-
-      if (window.hljs) hljs.highlightElement(code);
-    } else {
-      const span = document.createElement("span");
-      span.style.whiteSpace = "pre-wrap";
-      span.innerHTML = escapeHtml(part.content).replace(
-        /`([^`]+)`/g,
-        '<span class="inline-code">$1</span>',
-      );
-      bubble.appendChild(span);
-    }
-  });
-
-  // Last, once every part is in the DOM. renderContent is also called
-  // repeatedly while a reply streams, and KaTeX is happy to render a
-  // half-arrived expression as an error - but each call rebuilds the
-  // bubble from scratch, so the final one always renders the finished
-  // text and overwrites anything the earlier passes got wrong.
-  renderMath(bubble);
+  renderMarkdown(bubble, text, { final: true });
 }
 
 /** Top-level statements this module's section used to run as the

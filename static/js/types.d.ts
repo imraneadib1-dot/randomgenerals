@@ -27,6 +27,18 @@ declare global {
     },
   ): void;
 
+  /** marked 12 (UMD build). */
+  const marked: {
+    parse(src: string): string;
+    use(options: Record<string, unknown>): void;
+  };
+
+  /** DOMPurify 3 (UMD build). */
+  const DOMPurify: {
+    sanitize(html: string, config?: Record<string, unknown>): string;
+    addHook(name: string, hook: (node: Element) => void): void;
+  };
+
   /** mermaid 10 (UMD build). */
   const mermaid: {
     initialize(config: Record<string, unknown>): void;
@@ -121,6 +133,8 @@ declare global {
   }
 
   interface Window {
+    marked?: typeof marked;
+    DOMPurify?: typeof DOMPurify;
     Paddle?: PaddleStatic;
     mermaid?: typeof mermaid;
     hljs?: typeof hljs;

@@ -62,7 +62,11 @@ appmod._failover_chain = lambda provider, mode: []
 def fake_stream(model, history, **kw):
     if kw.get("usage") is not None:
         kw["usage"]["eval_count"] = 12
-    for piece in ("Hello ", "from ", "the ", "fake ", "model."):
+    # Markdown on purpose: the check reads the rendered DOM for it.
+    for piece in ("**Hello** from the fake model.\n\n",
+                  "- one\n- two\n\n",
+                  "The area is $x^2$.\n\n",
+                  "```python\nprint(1)\n```\n"):
         yield piece
 
 
