@@ -180,6 +180,62 @@ appmod.imagegen.generate_image = real_gen
 check("a failed generation answers 502", r.status_code, 502)
 check("and the charge was given back", db.load_credits(uid)["balance"], before)
 
+print("\n== a sandbox run costs something, and a sandbox that never ran does not ==")
+c, tid = tab()
+before = db.load_credits(uid)["balance"]
+real_run = appmod.codeexec.run_python
+appmod.codeexec.run_python = lambda code: {"stdout": "4\n", "stderr": ""}
+r = c.post("/api/run-code", json={"code": "print(2+2)"})
+check("a run answers", r.status_code, 200)
+check("and is charged the floor", before - db.load_credits(uid)["balance"],
+      appmod.CREDIT_COST_RUN)
+appmod.codeexec.run_python = lambda code: {"error": "sandbox could not start"}
+before = db.load_credits(uid)["balance"]
+r = c.post("/api/run-code", json={"code": "print(1)"})
+check("a sandbox failure is a 502", r.status_code, 502)
+check("and refunded", db.load_credits(uid)["balance"], before)
+appmod.codeexec.run_python = real_run
+db.save_credits(uid, {"balance": 3, "starting": 2000, "plan": "free",
+                      "last_refill": now})
+appmod.USERS[uid]["credits"]["balance"] = 3
+r = c.post("/api/run-code", json={"code": "print(1)"})
+check("with too little, refused before running", r.status_code, 402)
+
+print("\n== the API key is metered like the chat bay ==")
+import openai_api                                         # noqa: E402
+raw_key = "rg_meter_key"
+appmod.USERS[uid]["api_key_hash"] = openai_api.hash_key(raw_key)
+appmod.ollama_provider = lambda: {"models": ["fake-local"]}
+HDR = {"Authorization": "Bearer " + raw_key}
+r = appmod.app.test_client().post(
+    "/v1/chat/completions", headers=HDR,
+    json={"messages": [{"role": "user", "content": "hi"}]})
+check("with 3 credits the API refuses up front", r.status_code, 402)
+db.save_credits(uid, {"balance": 500, "starting": 2000, "plan": "free",
+                      "last_refill": now})
+appmod.USERS[uid]["credits"]["balance"] = 500
+r = appmod.app.test_client().post(
+    "/v1/chat/completions", headers=HDR,
+    json={"messages": [{"role": "user", "content": "hi"}]})
+check("with credits it answers", r.status_code, 200)
+check("and charges for the reply", db.load_credits(uid)["balance"] < 500, True)
+after_json = db.load_credits(uid)["balance"]
+r = appmod.app.test_client().post(
+    "/v1/chat/completions", headers=HDR,
+    json={"messages": [{"role": "user", "content": "hi"}], "stream": True})
+r.get_data()                                 # drain the stream
+check("streaming charges too, once the stream has ended",
+      db.load_credits(uid)["balance"] < after_json, True)
+
+print("\n== uploads respect the plan's size limit ==")
+import io as _io                                          # noqa: E402
+big = _io.BytesIO(b"x" * (21 * 1024 * 1024))
+r = c.post("/api/upload", data={"files": (big, "big.txt")},
+           content_type="multipart/form-data")
+check("21 MB on a free account is refused", r.status_code, 413)
+check("naming the limit", r.get_json().get("limit_mb"), 20)
+check("and pointing at Pro", r.get_json().get("upgrade_required"), True)
+
 print("\n== video quota: the comparison is in the statement ==")
 grabbed = []
 errors = hammer(8, lambda i: grabbed.append(

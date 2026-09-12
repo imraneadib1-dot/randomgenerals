@@ -821,6 +821,9 @@ CREDIT_MAX = 100
 # balance at all" gate, and that gate should be the price of the
 # cheapest possible request, which is now the floor.
 CREDIT_COST_CHAT = CREDIT_MIN
+# One sandbox run. The floor: it is a few seconds of CPU, not a model
+# call, and the point is that it is not nothing.
+CREDIT_COST_RUN = CREDIT_MIN
 
 
 def _band(value):
@@ -3491,12 +3494,24 @@ def openai_chat_completions():
             "%s is a Pro model. Upgrade in the app, or ask for a free "
             "one." % model, 403, "permission_error")
 
+    # Metered like the chat bay. This route charged nothing, so an API
+    # key on a free account was unmetered generation.
+    with CREDITS_LOCK:
+        apply_refill(user["credits"])
+    db.save_credits(user["id"], user["credits"])
+    if user["credits"]["balance"] < CREDIT_MIN:
+        return _api_error("Out of credits. They refill automatically, or "
+                          "upgrade to Pro in the app.", 402,
+                          "insufficient_quota")
+
     opts = openai_api.options_from(payload)
     opts["num_ctx"] = 16384
     usage: dict[str, Any] = {}
     failure: dict[str, str] = {}
-    pieces = _v1_pieces([(provider, model)] + _failover_chain(provider, "code"),
-                        history, opts, usage, failure)
+    pieces = _v1_charged(
+        _v1_pieces([(provider, model)] + _failover_chain(provider, "code"),
+                   history, opts, usage, failure),
+        user, usage)
 
     if payload.get("stream"):
         return Response(
@@ -3550,6 +3565,25 @@ def _v1_route(requested: str) -> tuple[str, str | None]:
         # Slow is still better than nothing when it is all there is.
         return "ollama", next((m for m in local if "coder" in m), local[0])
     return "ollama", None
+
+
+def _v1_charged(pieces, user: dict, usage: dict):
+    """Charge the API account once the reply has fully streamed. A
+    generator around the generator, so the charge happens in a finally
+    whether the caller joined the pieces or streamed them - and only
+    for text that was actually produced."""
+    produced = False
+    try:
+        for piece in pieces:
+            produced = produced or bool(piece)
+            yield piece
+    finally:
+        if produced:
+            cost = usage_based_cost(usage.get("eval_count"), "code")
+            charged, new_balance = db.debit_to_floor(user["id"], cost)
+            user["credits"]["balance"] = new_balance
+            if charged:
+                db.note_usage(user["id"], charged)
 
 
 def _v1_pieces(candidates, history, opts, usage, failure):
@@ -5918,11 +5952,29 @@ def _web_context_block(results):
 # ----------------------------------------------------------------------
 @app.route("/api/upload", methods=["POST"])
 def upload_files():
-    uploaded = request.files.getlist("files")
-    results = [
-        attachments.save_and_extract(f)
-        for f in uploaded[:10] if f and f.filename
-    ]
+    uploaded = [f for f in request.files.getlist("files")[:10]
+                if f and f.filename]
+    # The plan's ceiling, which features.py has always stated (20 MB
+    # free, 100 MB Pro) and nothing enforced - the only cap was the
+    # app-wide MAX_CONTENT_LENGTH. Checked per file and as a total,
+    # since ten files just under the limit is not under the limit.
+    plan = features.normalize_plan(current_account()[0].get("plan"))
+    limit_mb = int(features.get(plan, "max_upload_mb") or 20)
+    limit = limit_mb * 1024 * 1024
+    total = 0
+    for f in uploaded:
+        f.stream.seek(0, os.SEEK_END)
+        size = f.stream.tell()
+        f.stream.seek(0)
+        total += size
+        if size > limit or total > limit:
+            return jsonify({
+                "error": "%s is over the %d MB upload limit for your plan."
+                         % (f.filename, limit_mb),
+                "limit_mb": limit_mb,
+                "upgrade_required": plan != features.PRO,
+            }), 413
+    results = [attachments.save_and_extract(f) for f in uploaded]
     return jsonify({"attachments": results})
 
 
@@ -6639,8 +6691,20 @@ def run_code_route():
     if len(code) > 20000:
         return jsonify({"error": "That's too long to run here."}), 400
 
+    # A sandbox run is a slice of the same two cores that serve the
+    # site, and it was free: the one generation route that checked
+    # nothing. Charged up front at the floor; given back if the sandbox
+    # itself failed to start, because the person's code never ran.
+    ok, credits = charge_up_front(CREDIT_COST_RUN)
+    if not ok:
+        return jsonify({
+            "error": "Out of credits. They'll refill automatically.",
+            "credits": credits_view(credits),
+        }), 402
+
     result: dict[str, Any] = codeexec.run_python(code)
     if "error" in result and result["error"]:
+        refund_charge(CREDIT_COST_RUN)
         return jsonify(result), 502
     result["timeout"] = codeexec.TIMEOUT_SECONDS
     return jsonify(result)
@@ -6938,14 +7002,22 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # So: if there are images and this model is blind, look for one that
     # is not, among providers that are actually up, and use it for this
     # message only. The thread's own model is unchanged.
-    if any(f["kind"] == "image" for f in files) and not is_vision_model(model):
+    # Pro only. features.py has said FREE: vision False since the tiers
+    # were written, and nothing read it - every image was routed to a
+    # vision model for everyone. A free account's image is now
+    # acknowledged by name and not looked at, with a nudge to upgrade,
+    # which is what the tier table always described.
+    plan_now = features.normalize_plan(current_account()[0].get("plan"))
+    may_see = features.enabled(plan_now, "vision")
+    if (may_see and any(f["kind"] == "image" for f in files)
+            and not is_vision_model(model)):
         seer_provider, seer_model = _vision_route()
         # Both, so the pair is either fully replaced or left alone - a
         # provider without a model is not a route.
         if seer_provider and seer_model:
             provider, model = seer_provider, seer_model
 
-    vision_available = is_vision_model(model)
+    vision_available = may_see and is_vision_model(model)
     images_b64 = [
         b64 for f in files if f["kind"] == "image" and vision_available
         for b64 in [attachments.encode_image_base64(f["url"])] if b64

@@ -626,6 +626,37 @@ check("a Pro model on a free key is refused", r.status_code, 403)
 r = client.post("/v1/chat/completions", json={"messages": []})
 check("no key, no answer", r.status_code, 401)
 
+print("\n== seeing an image is a Pro feature ==")
+# features.py has said FREE: vision False since the tiers were written;
+# nothing read it, so every image went to a vision model for everyone.
+appmod._vision_route = lambda: ("ollama", "gemma3:4b")
+use(fake_streamer(["I see"]))
+tid = new_thread()
+CALLS.clear()
+client.post("/api/chat", json={
+    "thread_id": tid, "provider": "ollama", "model": "fake-model",
+    "message": "what is in this?",
+    "attachments": [{"filename": "pic.png", "kind": "image", "url": "/x.png"}]})
+check("a free account's image does not switch the model",
+      CALLS[-1]["model"], "fake-model")
+check("and the model is told it cannot see it",
+      "can't see images" in CALLS[-1]["history"][0]["content"], True)
+check("so no image bytes are sent", "images" in CALLS[-1]["kw"], False)
+
+pro_uid = appmod._create_user("seer@example.com", password_hash="x")
+appmod._apply_plan(appmod.USERS[pro_uid], "pro")
+pro = appmod.app.test_client()
+with pro.session_transaction() as s:
+    s["user_id"] = pro_uid
+pro_tid = pro.post("/api/threads", json={"mode": "chat"}).get_json()["id"]
+CALLS.clear()
+pro.post("/api/chat", json={
+    "thread_id": pro_tid, "provider": "ollama", "model": "fake-model",
+    "message": "and this?",
+    "attachments": [{"filename": "pic.png", "kind": "image", "url": "/x.png"}]})
+check("a Pro account's image is routed to a model that can see",
+      CALLS[-1]["model"], "gemma3:4b")
+
 print("\n== the page names its build ==")
 html = client.get("/app").get_data(as_text=True)
 check("rg-build marker is in the page",
