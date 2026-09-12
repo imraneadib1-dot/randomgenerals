@@ -1123,6 +1123,9 @@ async function openThread(tid) {
       markReplyKind(bubble.parentElement, m.kind);
       renderContent(bubble, m.content);
       renderSourceChips(bubble.parentElement, m.sources);
+      (m.tool_displays || []).forEach((d) =>
+        renderToolDisplay(bubble.parentElement, d),
+      );
       if (replyKindOf(bubble.parentElement) === "text") {
         addMessageActions(bubble.parentElement, bubble, {
           allowRegenerate: i === lastAssistantIdx,
@@ -1508,7 +1511,17 @@ function handleToolEvent(msgEl, evt) {
   row.textContent = evt.status === "start" ? running + "…" : finished;
 
   if (evt.status !== "done" || !evt.display) return;
-  const d = evt.display;
+  renderToolDisplay(msgEl, evt.display);
+}
+
+/* What a tool produced, drawn under the reply: the sources a search
+   found, the picture that was generated, the output of code that ran.
+   Called live from the stream and again from openThread(), which
+   re-draws whatever the server kept on the message - so a reload shows
+   the same picture the stream did rather than a reply describing an
+   image that is no longer there. */
+function renderToolDisplay(msgEl, d) {
+  if (!d || !d.kind) return;
   if (d.kind === "sources") {
     renderSourceChips(msgEl, d.sources);
   } else if (d.kind === "image" && d.url) {
@@ -1518,6 +1531,17 @@ function handleToolEvent(msgEl, evt) {
     img.alt = d.prompt || "Generated image";
     img.loading = "lazy";
     msgEl.appendChild(img);
+  } else if (d.kind === "code") {
+    const box = document.createElement("div");
+    box.className = "tool-code";
+    const out = (d.stdout || "") + (d.stderr ? "\n" + d.stderr : "");
+    const pre = document.createElement("pre");
+    pre.className = "tool-code-output";
+    pre.textContent =
+      (out.trim() || "(ran, printed nothing)") +
+      (d.timed_out ? "\n[killed: took too long]" : "");
+    box.appendChild(pre);
+    msgEl.appendChild(box);
   }
 }
 

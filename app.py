@@ -6176,25 +6176,69 @@ def _canned_reply(thread: dict, text: str, kind: str = "refusal") -> Response:
 # request against a per-minute budget shared by everyone on the site.
 MAX_TOOL_ROUNDS = 3
 
+# What one round of the loop costs the person, on top of the reply. Each
+# round is a whole non-streamed model turn against the shared budget; a
+# chat that consulted the web twice did more work than one that did not,
+# and used to cost the same.
+CREDIT_TOOL_ROUND = 5
 
-def _run_tool_loop(model, history, specs, provider="groq",
-                   connector_map=None):
+# The loop's own turn, when the caller does not say otherwise: a short
+# ceiling because these turns are usually a tool call and a sentence,
+# and a low temperature because a tool call is a name and a JSON blob
+# and neither benefits from creativity. _stream_reply passes the
+# request's real options instead, so a first turn that turns out to be
+# the whole answer was generated the way the reader asked for.
+TOOL_TURN_OPTIONS: dict[str, Any] = {"num_predict": 900, "temperature": 0.2}
+
+
+class ToolLoopResult:
+    """What the loop hands back. A class rather than a tuple because it
+    grew a fifth field, and positional unpacking of five things is where
+    bugs live."""
+
+    def __init__(self, convo: list[dict]) -> None:
+        self.convo: list[dict] = convo         # history + tool exchange
+        self.notes: list[str] = []             # tool names, in call order
+        self.displays: list[dict] = []         # what the browser was shown
+        self.final_text: str | None = None     # a complete no-tool answer
+        self.rounds: int = 0                   # model turns spent
+        self.extra_cost: int = 0               # image generations etc.
+
+    @property
+    def cost(self) -> int:
+        return self.rounds * CREDIT_TOOL_ROUND + self.extra_cost
+
+
+def _run_tool_loop(model: str, history: list[dict], specs: list[dict],
+                   provider: str = "groq", connector_map: dict | None = None,
+                   options: dict | None = None):
     """Let the model call tools until it is ready to answer.
 
-    -> (history with the tool exchange appended, notes).
+    A generator: it YIELDS stream events as each tool starts and
+    finishes - so the browser shows "Searching the web…" while the
+    search is actually running, and the sources the moment it is done -
+    and RETURNS a ToolLoopResult, which the caller picks up with
+    `result = yield from _run_tool_loop(...)`.
 
     Never raises: a tool that fails returns its error as the tool
     result, so the model can say what went wrong instead of the whole
     reply dying on a failed search.
+
+    THE FIRST TURN IS NOT THROWN AWAY. When the model decides it needs
+    no tool and answers outright, that answer used to be discarded and
+    the same question streamed again - two generations against a
+    per-minute budget shared by everyone on the site, for one reply. If
+    the answer is complete (finish_reason "stop") it is returned as
+    `final_text` and the caller hands it straight to the reader. If it
+    hit the loop's own ceiling it is discarded as before, because a
+    cut-off answer regenerated at full length is the right outcome.
     """
-    notes = []
-    convo = list(history)
+    result = ToolLoopResult(convo=list(history))
     for _ in range(MAX_TOOL_ROUNDS):
         turn = PROVIDER_TURNS.get(provider, groq_api.chat_once)
         try:
-            msg, err = turn(
-                model, convo, tools=specs,
-                options={"num_predict": 900, "temperature": 0.2})
+            msg, err = turn(model, result.convo, tools=specs,
+                            options=dict(options or TOOL_TURN_OPTIONS))
         except groq_api.ProviderUnavailable:
             # The budget can drain between _groq_has_room() and this call,
             # and the loop's own turns are what drain it. chat_once raises
@@ -6202,16 +6246,24 @@ def _run_tool_loop(model, history, specs, provider="groq",
             # request dies on a rate limit that the streaming path handles
             # gracefully two functions later. Tools are an enhancement;
             # losing them costs a less-checked answer, not the answer.
-            return history, notes
+            result.convo = list(history)
+            return result
         if err or not msg:
             # The loop is an enhancement, not a requirement - fall
             # through to a normal answer rather than failing.
-            return history, notes
+            result.convo = list(history)
+            return result
         calls = msg.get("tool_calls") or []
         if not calls:
-            return convo, notes
+            text = (msg.get("content") or "").strip()
+            if text and msg.get("finish_reason") == "stop":
+                result.final_text = text
+            return result
 
-        convo.append({
+        # Counted only when the turn actually called something: a first
+        # turn that simply answers is the reply, and is charged as one.
+        result.rounds += 1
+        result.convo.append({
             "role": "assistant",
             "content": msg.get("content") or "",
             "tool_calls": calls,
@@ -6219,15 +6271,30 @@ def _run_tool_loop(model, history, specs, provider="groq",
         for call in calls:
             fn = (call.get("function") or {})
             name = fn.get("name") or ""
-            result = _dispatch_tool(name, fn.get("arguments"),
-                                    connector_map)
-            notes.append(name)
-            convo.append({
+            yield tool_event({"tool": name, "status": "start"})
+            tool_result = _dispatch_tool(name, fn.get("arguments"),
+                                         connector_map)
+            display = tool_result.get("display")
+            result.notes.append(name)
+            if display:
+                result.displays.append(display)
+                if display.get("kind") == "image":
+                    # A picture made inside a chat costs what a picture
+                    # costs. The reply's own charge covers the prose.
+                    result.extra_cost += image_cost("square")
+            # `display` travels with the event, which is how the
+            # sources, the generated image and the sandbox output reach
+            # the browser at all. The model is told the image "is
+            # already shown to the user" (tools.py) - that was untrue
+            # until this event carried it.
+            yield tool_event({"tool": name, "status": "done",
+                              "display": display})
+            result.convo.append({
                 "role": "tool",
                 "tool_call_id": call.get("id"),
-                "content": result.get("text") or "",
+                "content": tool_result.get("text") or "",
             })
-    return convo, notes
+    return result
 
 
 def _profile_context_block(settings):
@@ -6516,16 +6583,23 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
         # the browser is told in the same breath so it can show it as
         # one. The finally block charges only when this is still "text".
         reply_kind = "text"
+        tools_used = ToolLoopResult(convo=history)
         try:
             if tool_specs is not None:
-                history, tool_notes = _run_tool_loop(
+                # The loop's own turns use the reply's real options, not
+                # a short generic ceiling: when the first turn IS the
+                # answer it should be the answer the reader asked for.
+                tools_used = yield from _run_tool_loop(
                     model, history, tool_specs, provider=provider,
-                    connector_map=connector_map)
-                # Announce the tools that ran before the prose starts.
-                # An answer that quietly consulted the web is harder to
-                # trust than one that says it did.
-                for name in tool_notes:
-                    yield tool_event({"tool": name, "status": "done"})
+                    connector_map=connector_map,
+                    options=dict(stream_kwargs.get("options") or {}))
+                history = tools_used.convo
+                if tools_used.final_text is not None:
+                    # The model answered in full without reaching for a
+                    # tool. Handing that over beats generating it twice.
+                    full_reply = tools_used.final_text
+                    yield full_reply
+                    return
 
             # ASK DOWN THE CHAIN UNTIL SOMEBODY ANSWERS.
             #
@@ -6687,7 +6761,10 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                 # opening with a markdown link also does.
                 charged = 0
                 if kind == "text":
-                    cost = usage_based_cost(usage.get("eval_count"), mode)
+                    # The prose, plus whatever the tools did on the way
+                    # to it - each round of the loop and any image made.
+                    cost = (usage_based_cost(usage.get("eval_count"), mode)
+                            + tools_used.cost)
                     try:
                         if spend_credits(cost):
                             charged = cost
@@ -6699,11 +6776,14 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                 # `fallback` is recorded on the message so reloading the
                 # thread still shows it answered from the cloud - a
                 # reader shouldn't have to guess why one reply differs.
+                # Tool output is kept on the turn too, so a reload shows
+                # the sources and the picture where the stream did.
                 thread["messages"].append(_assistant_message(
                     full_reply, provider, model, kind=kind,
                     fallback=fell_back_to_cloud,
                     sources=web_results or None,
-                    charged=charged or None))
+                    charged=charged or None,
+                    tool_displays=tools_used.displays or None))
                 thread["updated"] = now_iso()
                 save_threads()
 

@@ -299,9 +299,13 @@ def chat_once(model, history, tools=None, options=None, timeout=120):
         return None, "OpenRouter returned an unreadable response."
     note_cost(payload.get("usage"))
     try:
-        return payload["choices"][0]["message"], None
-    except (KeyError, IndexError):
+        choice = payload["choices"][0]
+        message = dict(choice["message"])
+    except (KeyError, IndexError, TypeError):
         return None, "OpenRouter returned an unreadable response."
+    # Same as groq_api.chat_once: the tool loop reads this.
+    message["finish_reason"] = choice.get("finish_reason")
+    return message, None
 
 
 def stream_chat(model, history, options=None, images=None, usage=None):

@@ -38,7 +38,6 @@ MAX_RESULT_CHARS = 6000
 # stuck in a loop - searching, not liking the result, searching again.
 # Cutting it off costs one bad answer; not cutting it off costs the
 # user's whole quota.
-MAX_ROUNDS = 4
 
 
 def _truncate(text, limit=MAX_RESULT_CHARS):

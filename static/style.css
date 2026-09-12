@@ -1624,6 +1624,60 @@ html.time-night .night-moon {
   animation: dotPulse 1s ease-in-out infinite;
 }
 
+/* ---- Tools the model used: the strip, and what they produced ----
+   These classes existed in script.js with no rules behind them - the
+   strip rendered as bare text because the events that drive it never
+   carried anything to draw. They do now (see _run_tool_loop in app.py),
+   so it gets the same treatment as the search status above. */
+.tool-activity {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 6px 4px 2px;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+.tool-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.tool-row::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--bay);
+  opacity: 0.55;
+}
+.tool-row.is-running::before {
+  opacity: 1;
+  animation: dotPulse 1s ease-in-out infinite;
+}
+.tool-image {
+  display: block;
+  max-width: min(100%, 512px);
+  margin: 10px 0 4px;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+}
+.tool-code-output {
+  margin: 10px 0 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow: auto;
+}
+
 .source-chips {
   display: flex;
   flex-wrap: wrap;

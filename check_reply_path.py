@@ -389,6 +389,92 @@ out = ollama(FakeOllama([{"message": {"content": "done"}},
                          {"done": True, "done_reason": "stop"}]))
 check("quiet when it finished", "length limit" in out, False)
 
+print("\n== tools: what they produce reaches the browser ==")
+# The loop only runs on a hosted channel (PROVIDER_TURNS), so the fast
+# channel is faked at both ends: its non-streamed turn and its stream.
+appmod._groq_has_room = lambda plan: True
+appmod._dispatch_tool = lambda name, args, cmap: {
+    "text": "found: the sky is blue",
+    "display": {"kind": "sources",
+                "sources": [{"title": "Sky facts", "url": "https://x/sky"}]},
+}
+TURNS = []
+
+
+def fake_turn(*replies):
+    """A non-streamed turn that answers from a script, one per call."""
+    queue = list(replies)
+
+    def turn(model, convo, tools=None, options=None):
+        TURNS.append({"convo": list(convo), "tools": tools,
+                      "options": dict(options or {})})
+        return (queue.pop(0) if queue else
+                {"content": "out of script", "finish_reason": "stop"}), None
+    return turn
+
+
+def send_groq(tid, text):
+    return client.post("/api/chat", json={
+        "thread_id": tid, "provider": "groq", "model": "fake-groq",
+        "message": text,
+    })
+
+
+appmod.PROVIDER_TURNS["groq"] = fake_turn(
+    {"content": "", "tool_calls": [{"id": "c1", "function": {
+        "name": "web_search", "arguments": '{"query": "sky"}'}}]},
+    {"content": "The sky is blue, per Sky facts.", "finish_reason": "stop"},
+)
+appmod.PROVIDER_STREAMERS["groq"] = fake_streamer(["STREAMED - should not"])
+tid = new_thread()
+CALLS.clear()
+TURNS.clear()
+before = balance()
+r = send_groq(tid, "what colour is the sky?")
+events, text = events_and_text(r.get_data(as_text=True))
+tool_events = [e for e in events if e.get("tool")]
+check("a start event, then a done event",
+      [e["status"] for e in tool_events], ["start", "done"])
+check("the done event carries what the tool produced",
+      tool_events[-1].get("display", {}).get("kind"), "sources")
+check("the answer came from the loop's own turn", text,
+      "The sky is blue, per Sky facts.")
+check("so the stream was never opened - one generation, not two",
+      CALLS, [])
+msg = stored(tid)[-1]
+check("stored as an answer", msg.get("kind"), "text")
+check("with the tool output kept for reloads",
+      (msg.get("tool_displays") or [{}])[0].get("kind"), "sources")
+check("charged the reply plus one tool round", msg.get("charged"),
+      appmod.usage_based_cost(None, "chat") + appmod.CREDIT_TOOL_ROUND)
+check("the tool result was in the model's second turn",
+      any(m.get("role") == "tool" and "sky is blue" in m.get("content", "")
+          for m in TURNS[-1]["convo"]), True)
+check("the loop's turn used the reply's options, not a generic cap",
+      "reasoning_effort" in TURNS[0]["options"], True)
+
+print("\n== tools: a first turn that is the whole answer ==")
+appmod.PROVIDER_TURNS["groq"] = fake_turn(
+    {"content": "No tool needed: 2+2=4.", "finish_reason": "stop"})
+CALLS.clear()
+send_groq(tid, "2+2?")
+check("answered from the first turn", stored(tid)[-1]["content"],
+      "No tool needed: 2+2=4.")
+check("stream never opened", CALLS, [])
+check("no tool round charged - it was simply the reply",
+      stored(tid)[-1].get("charged"), appmod.usage_based_cost(None, "chat"))
+
+print("\n== tools: a first turn cut off at the ceiling is regenerated ==")
+appmod.PROVIDER_TURNS["groq"] = fake_turn(
+    {"content": "A very long answer that got cut", "finish_reason": "length"})
+appmod.PROVIDER_STREAMERS["groq"] = fake_streamer(["the full answer"],
+                                                  usage={"eval_count": 500})
+CALLS.clear()
+send_groq(tid, "explain everything")
+check("the cut-off draft was discarded", stored(tid)[-1]["content"],
+      "the full answer")
+check("and the stream regenerated it", len(CALLS), 1)
+
 print("\n== the page names its build ==")
 html = client.get("/app").get_data(as_text=True)
 check("rg-build marker is in the page",

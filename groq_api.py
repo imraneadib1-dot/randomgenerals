@@ -548,9 +548,16 @@ def chat_once(model, history, tools=None, options=None, timeout=120):
     if r.status_code != 200:
         return None, "Groq error %d" % r.status_code
     try:
-        return r.json()["choices"][0]["message"], None
-    except (ValueError, KeyError, IndexError):
+        choice = r.json()["choices"][0]
+        message = dict(choice["message"])
+    except (ValueError, KeyError, IndexError, TypeError):
         return None, "Groq returned an unreadable response."
+    # Why it stopped, carried on the message. The tool loop uses this
+    # to tell a complete answer - which it can hand straight to the
+    # reader - from one cut off at the loop's own ceiling, which has to
+    # be regenerated at full length.
+    message["finish_reason"] = choice.get("finish_reason")
+    return message, None
 
 
 def stream_chat(model, history, options=None, images=None, usage=None):
