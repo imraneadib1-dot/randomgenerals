@@ -81,11 +81,38 @@ else:
     if code:
         print("    " + out.strip().replace("\n", "\n    ")[:1500])
 
+print("\n== every import points at a file that exists ==")
+import re                                                 # noqa: E402
+IMPORT_RE = re.compile(r'^\s*import\s[^;]*?from\s+"\./([^"]+)"', re.M)
+missing = []
+for rel in modules:
+    text = open(os.path.join(HERE, rel), encoding="utf-8").read()
+    for target in IMPORT_RE.findall(text):
+        if not os.path.exists(os.path.join(JS_DIR, target)):
+            missing.append("%s -> %s" % (rel, target))
+check("no module imports a file that is not there", missing, [])
+
 print("\n== the page loads it as a module ==")
+import json                                               # noqa: E402
 import app as appmod                                      # noqa: E402
-html = appmod.app.test_client().get("/app").get_data(as_text=True)
+client = appmod.app.test_client()
+html = client.get("/app").get_data(as_text=True)
 check("the app script is a module",
       'type="module" src="/static/js/app.js?v=' in html, True)
+m = re.search(r'<script type="importmap">(.*?)</script>', html, re.S)
+check("an import map is in the page", bool(m), True)
+imports = json.loads(m.group(1))["imports"] if m else {}
+expected = {"/static/js/" + os.path.basename(r) for r in modules}
+check("it covers every module", sorted(expected - set(imports)), [])
+check("with versioned targets",
+      all(v.startswith(k + "?v=") for k, v in imports.items()), True)
+check("and precedes the module script",
+      html.find('type="importmap"') < html.find('type="module" src="/static/js/'),
+      True)
+r = client.get("/static/js/app.js")
+check("modules answer", r.status_code, 200)
+check("and ask browsers without import maps to revalidate",
+      r.headers.get("Cache-Control"), "no-cache")
 check("the old path is gone from the page",
       "static/script.js" in html, False)
 check("and from disk",

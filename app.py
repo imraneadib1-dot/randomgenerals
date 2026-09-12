@@ -1603,6 +1603,48 @@ def asset(filename):
     return url_for("static", filename=filename, v=version)
 
 
+@app.template_global()
+def module_map() -> str:
+    """An import map giving every front-end module a versioned URL.
+
+    asset() versions the entry script's URL with its mtime, and that is
+    enough for a single file. It is not enough for modules: app.js
+    imports "./state.js", the browser resolves that to /static/js/
+    state.js with no ?v=, and Cloudflare serves that URL from cache for
+    four hours - so after a deploy the NEW app.js would run against the
+    OLD state.js until the cache turned over, which is a class of bug
+    nobody could reproduce locally.
+
+    An import map is consulted with the resolved URL, so mapping each
+    module's plain URL to its versioned one makes every relative import
+    cache-busted without touching the import statements. Browsers
+    without import maps ignore it and still run the app; for them the
+    no-cache header on /static/js/ (see _module_cache_headers) means a
+    revalidation per module instead of a stale one.
+    """
+    js_dir = os.path.join(app.static_folder or "static", "js")
+    entries = {}
+    try:
+        names = sorted(n for n in os.listdir(js_dir) if n.endswith(".js"))
+    except OSError:
+        names = []
+    for name in names:
+        plain = url_for("static", filename="js/" + name)
+        entries[plain] = asset("js/" + name)
+    return json.dumps({"imports": entries}, separators=(",", ":"))
+
+
+@app.after_request
+def _module_cache_headers(response):
+    """Modules revalidate rather than cache. The import map above is
+    what actually keeps them fresh; this is for the browsers that do
+    not read it, and it costs a 304 per module for them, not a
+    download - Flask sends an ETag with every static file."""
+    if request.path.startswith("/static/js/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 def _read_build_id() -> str:
     """The short git commit this process was started from.
 

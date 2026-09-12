@@ -6,6 +6,7 @@
     "check": "tsc -p jsconfig.json"
   },
   "devDependencies": {
+    "playwright-core": "^1.63.0",
     "typescript": "^5.6.0"
   }
 }

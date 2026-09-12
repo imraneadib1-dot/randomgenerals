@@ -15,6 +15,11 @@
          a restart and compares it to the checkout - see build_id() in
          app.py for why a marker beats grepping for new phrases. -->
     <meta name="rg-build" content="{{ build_id() }}" />
+    <!-- Every module's URL, versioned. The app is ES modules that import
+         each other by relative path; without this a deploy would run the
+         new entry against modules Cloudflare cached from the old one.
+         Must precede the module script - see module_map() in app.py. -->
+    <script type="importmap">{{ module_map()|safe }}</script>
     <meta name="theme-color" content="#141a22" />
     <meta name="mobile-web-app-capable" content="yes" />
     <!-- iOS ignores the manifest's icons and reads this instead. Without
