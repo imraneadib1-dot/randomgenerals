@@ -1,3 +1,4 @@
+import { confirmDialog } from "./confirm.js";
 /* ----------------------------------------------------------------
    Account management
 
@@ -127,9 +128,12 @@ export function initAccountControls() {
       const st = document.getElementById("deleteStatus");
       // The typed address is the confirmation the server checks; this
       // dialog is the second one, because the action has no undo.
-      if (!window.confirm(
-        "Delete your account and everything in it? This cannot be undone."
-      )) return;
+      const sure = await confirmDialog({
+        title: "Delete your account?",
+        body: "Everything in it goes with it. This cannot be undone.",
+        confirmLabel: "Delete my account", danger: true,
+      });
+      if (!sure) return;
       st.textContent = "Deleting…";
       try {
         const r = await fetch("/api/account/delete", {

@@ -141,6 +141,32 @@ function check(label, ok, detail) {
     null, { timeout: 10000 }).catch(() => {});
   const threads = await page.evaluate(() => document.querySelectorAll(".thread-item").length);
   check("the thread appeared in the sidebar", threads >= 1, String(threads));
+
+  console.log("== deleting asks first, on a real dialog ==");
+  await page.hover(".thread-item");
+  await page.click(".thread-item .thread-delete");
+  await page.waitForSelector("dialog.confirm[open]", { timeout: 5000 }).catch(() => {});
+  const dlg = await page.evaluate(() => {
+    const d = document.querySelector("dialog.confirm");
+    return { open: !!(d && d.open), focusInside: !!(d && d.contains(document.activeElement)),
+             title: d ? d.querySelector(".confirm-title").textContent : "" };
+  });
+  check("a confirm dialog opened", dlg.open);
+  check("with focus inside it", dlg.focusInside);
+  check("saying what it is about", /Delete/.test(dlg.title), dlg.title);
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => !document.querySelector("dialog.confirm[open]"), null, { timeout: 5000 }).catch(() => {});
+  check("Escape cancels", await page.evaluate(() => !document.querySelector("dialog.confirm[open]")));
+  check("and the thread is still there",
+    await page.evaluate(() => document.querySelectorAll(".thread-item").length) === threads);
+  await page.hover(".thread-item");
+  await page.click(".thread-item .thread-delete");
+  await page.waitForSelector("dialog.confirm[open]", { timeout: 5000 }).catch(() => {});
+  await page.click("dialog.confirm .confirm-ok");
+  await page.waitForFunction((n) => document.querySelectorAll(".thread-item").length < n, threads, { timeout: 10000 }).catch(() => {});
+  check("confirming deletes it",
+    await page.evaluate(() => document.querySelectorAll(".thread-item").length) === threads - 1);
+  check("no errors on the way", errors.length === 0, errors.slice(-3).join(" | "));
   for (const n of [...new Set(notes)]) console.log("    note: %s", n);
 
   await browser.close();

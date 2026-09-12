@@ -5,6 +5,9 @@ import { strengthToggle } from "./dom.js";
 import { modalTabs } from "./modal.js";
 import { applyChatFont, renderAvatar } from "./profile.js";
 import { deleteAllConversations, loadThreadList } from "./sidebar.js";
+import { confirmDialog } from "./confirm.js";
+import { explain, patchJSON } from "./api.js";
+import { toast } from "./toast.js";
 
 /* ----------------------------------------------------------------
    Settings that do something
@@ -136,8 +139,12 @@ export function initDataControls() {
 
   if (deleteBtn) {
     deleteBtn.addEventListener("click", async () => {
-      if (!confirm(
-        "Delete every conversation? This cannot be undone.")) return;
+      const sure = await confirmDialog({
+        title: "Delete every conversation?",
+        body: "This cannot be undone.",
+        confirmLabel: "Delete all", danger: true,
+      });
+      if (!sure) return;
       try {
         await deleteAllConversations((t) => (status.textContent = t));
       } catch (_) {
@@ -187,17 +194,17 @@ export async function loadSettingsDoc() {
 
 export async function patchSettings(patch) {
   try {
-    const res = await fetch("/api/settings", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    });
-    const data = await res.json();
-    if (!res.ok) return { ok: false, error: data.error || "Could not save." };
+    const data = await patchJSON("/api/settings", patch);
     if (state.settingsDoc) state.settingsDoc.settings = data.settings;
     return { ok: true };
-  } catch (_) {
-    return { ok: false, error: "Could not reach the server." };
+  } catch (err) {
+    // Said out loud, once, whatever the caller does with the result.
+    // Most callers ignored it: the native control already showed the
+    // new value, so a save that failed looked exactly like one that
+    // worked until the next reload put the old value back.
+    const error = explain(err, "Could not save.");
+    toast(error, { kind: "error", id: "settings-save" });
+    return { ok: false, error };
   }
 }
 
@@ -580,8 +587,12 @@ export function initSessions() {
   const all = S("sessionRevokeAll");
   if (all) {
     all.addEventListener("click", async () => {
-      if (!window.confirm(
-        "Sign out every other device? You will stay signed in here.")) return;
+      const sure = await confirmDialog({
+        title: "Sign out every other device?",
+        body: "You will stay signed in here.",
+        confirmLabel: "Sign them out",
+      });
+      if (!sure) return;
       const res = await fetch("/api/account/sessions/revoke-others",
                               { method: "POST" });
       const data = await res.json();

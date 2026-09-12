@@ -1,4 +1,7 @@
 import { state } from "./state.js";
+import { del as deleteJSON, explain, getJSON } from "./api.js";
+import { confirmDialog } from "./confirm.js";
+import { toast } from "./toast.js";
 import { readPref, writePref } from "./appearance.js";
 import { showEmptyState } from "./bays.js";
 import { markReplyKind, renderToolDisplay, replyKindOf } from "./chat.js";
@@ -39,8 +42,16 @@ export async function deleteAllConversations(say) {
 }
 
 export async function loadThreadList() {
-  const res = await fetch(`/api/threads?mode=${state.currentBay}`);
-  const data = await res.json();
+  let data;
+  try {
+    data = await getJSON(`/api/threads?mode=${state.currentBay}`);
+  } catch (err) {
+    // Fired from eight places without an await, so a failure here was
+    // an unhandled rejection and a list that silently stopped updating.
+    toast(explain(err, "Could not load your conversations."),
+          { kind: "error", id: "threads" });
+    return;
+  }
   threadList.innerHTML = "";
 
   // Nothing to clear, nothing to offer. A destructive button that does
@@ -73,7 +84,21 @@ export async function loadThreadList() {
     del.title = "Delete";
     del.onclick = async (e) => {
       e.stopPropagation();
-      await fetch(`/api/threads/${t.id}`, { method: "DELETE" });
+      // A confirmation, because there is no undo. "Clear all" always
+      // asked; deleting one did not, and the button sat a few pixels
+      // from the row it belonged to.
+      const ok = await confirmDialog({
+        title: "Delete this conversation?",
+        body: t.title ? `"${t.title}" will be gone for good.` : "It will be gone for good.",
+        confirmLabel: "Delete", danger: true,
+      });
+      if (!ok) return;
+      try {
+        await deleteJSON(`/api/threads/${t.id}`);
+      } catch (err) {
+        toast(explain(err, "Could not delete it."), { kind: "error" });
+        return;
+      }
       if (t.id === state.currentThreadId) {
         state.currentThreadId = null;
         showEmptyState();
@@ -96,13 +121,15 @@ export async function loadThreadList() {
 export async function openThread(tid) {
   state.currentThreadId = tid;
   sidebar.classList.remove("open");
-  const res = await fetch(`/api/threads/${tid}`);
-  if (!res.ok) {
+  let thread;
+  try {
+    thread = await getJSON(`/api/threads/${tid}`);
+  } catch (err) {
     state.currentThreadId = null;
     showEmptyState();
+    toast(explain(err, "Could not open that conversation."), { kind: "error" });
     return;
   }
-  const thread = await res.json();
 
   topbarTitle.textContent = thread.title;
   chatLog.innerHTML = "";
@@ -179,9 +206,12 @@ export function mountSidebar() {
       const list = await (await fetch("/api/threads")).json();
       const n = (list.threads || []).length;
       if (!n) return;
-      if (!confirm(
-        `Delete ${n} conversation${n === 1 ? "" : "s"}, in every channel? `
-        + "This cannot be undone.")) return;
+      const sure = await confirmDialog({
+        title: `Delete ${n} conversation${n === 1 ? "" : "s"}?`,
+        body: "In every channel. This cannot be undone.",
+        confirmLabel: "Delete all", danger: true,
+      });
+      if (!sure) return;
       clearThreadsBtn.disabled = true;
       try {
         await deleteAllConversations();

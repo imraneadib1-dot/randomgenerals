@@ -29,6 +29,7 @@ import { mountConnectors } from "./connectors.js";
 import { mountInstall } from "./install.js";
 import { mountProfile } from "./profile.js";
 import { boot } from "./boot.js";
+import { installErrorReporting } from "./toast.js";
 
 mountShell();
 mountComposer();
@@ -56,6 +57,9 @@ mountAccount();
 mountConnectors();
 mountInstall();
 mountProfile();
+
+// Anything nobody caught becomes a toast, not a console line.
+installErrorReporting();
 
 // Last, after every module's declarations exist and every listener is
 // attached - which is what retires the temporal-dead-zone crashes the

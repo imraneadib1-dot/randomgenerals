@@ -1,3 +1,4 @@
+import { toast } from "./toast.js";
 /** Top-level statements this module's section used to run as the
  *  script loaded - listeners, immediate calls - in the same order.
  *  Called from app.js once every module has been evaluated. */
@@ -41,7 +42,7 @@ export function mountInstall() {
         return;
       }
       if (isIOS) {
-        window.alert(
+        toast(
           "To install:\n\n" +
             "1. Tap the Share button at the bottom of Safari\n" +
             "2. Scroll down and tap \u201cAdd to Home Screen\u201d\n\n" +

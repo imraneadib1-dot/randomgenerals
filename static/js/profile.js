@@ -49,6 +49,12 @@ export async function loadUsage() {
 export async function loadInvoices() {
   const list = S("invoiceList");
   if (!list) return;
+  // Signed out, there is nothing to list - and asking anyway was a 401
+  // in the console on every guest's page load.
+  if (!state.currentUser) {
+    list.innerHTML = "";
+    return;
+  }
   try {
     const res = await fetch("/api/billing/invoices");
     const data = await res.json();

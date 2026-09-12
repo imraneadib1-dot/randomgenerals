@@ -2,8 +2,10 @@ import { state } from "./state.js";
 import { renderAttachChips } from "./attachments.js";
 import { loadCredits, renderCredits } from "./credits.js";
 import { chatForm, chatLog, messageInput, modelSelect, sendBtn, topbarModelChip } from "./dom.js";
-import { sendImagePrompt } from "./image.js";
+import { regenerateLast, sendImagePrompt } from "./image.js";
+import { explain, postJSON } from "./api.js";
 import { StreamRenderer } from "./markdown.js";
+import { toast } from "./toast.js";
 import { addMessage, addMessageActions, renderContent, renderMsgAttachments, renderSourceChips } from "./message.js";
 import { loadThreadList } from "./sidebar.js";
 import { shouldAutoSearch } from "./voice.js";
@@ -13,12 +15,12 @@ import { shouldAutoSearch } from "./voice.js";
    ---------------------------------------------------------------- */
 export async function ensureThread() {
   if (state.currentThreadId) return state.currentThreadId;
-  const res = await fetch("/api/threads", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode: state.currentBay }),
-  });
-  state.currentThreadId = (await res.json()).id;
+  // Throws on failure - and the caller stops. This was an unguarded
+  // fetch awaited by the submit handler: a 429 or a dropped connection
+  // here was an unhandled rejection, the message text was already
+  // cleared, and nothing on screen said why it never sent.
+  const data = await postJSON("/api/threads", { mode: state.currentBay });
+  state.currentThreadId = data.id;
   return state.currentThreadId;
 }
 
@@ -129,11 +131,29 @@ export function replyKindOf(msgEl) {
    the three cannot disagree about it. */
 export function finishReply(msgEl, bubble, fullText, { allowRegenerate }) {
   if (!fullText) {
-    renderContent(bubble, "[No response received. Check the channel setup.]");
+    markReplyKind(msgEl, "error");
+    renderContent(bubble, "No response received. Check the channel setup.");
+    fullText = "x";
+  }
+  const kind = replyKindOf(msgEl);
+  if (kind === "text") {
+    addMessageActions(msgEl, bubble, { allowRegenerate });
     return;
   }
-  if (replyKindOf(msgEl) !== "text") return;
-  addMessageActions(msgEl, bubble, { allowRegenerate });
+  // An error is the one non-answer worth acting on, and the action is
+  // to ask again. A refusal and a notice get nothing: there is no
+  // "try again" for a question the filter declined.
+  if (kind === "error" && allowRegenerate) {
+    const row = document.createElement("div");
+    row.className = "msg-actions";
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "msg-action-btn msg-action-retry";
+    retry.textContent = "Retry";
+    retry.addEventListener("click", () => regenerateLast(msgEl));
+    row.appendChild(retry);
+    msgEl.appendChild(row);
+  }
 }
 
 /* The waiting state. Built as real elements rather than a CSS pseudo so
@@ -379,7 +399,13 @@ export function mountChat() {
     if (state.activeStreamController) return; // send button is in stop mode right now
     const text = messageInput.value.trim();
     if (!text || !state.activeProvider) return;
-    await ensureThread();
+    try {
+      await ensureThread();
+    } catch (err) {
+      // The text stays in the box; the person can try again.
+      toast(explain(err, "Could not start a conversation."), { kind: "error" });
+      return;
+    }
     messageInput.value = "";
     messageInput.style.height = "auto";
     if (state.currentBay === "image") await sendImagePrompt(text);

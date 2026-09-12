@@ -1674,6 +1674,11 @@
       defer
       src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.1/mermaid.min.js"
     ></script>
+    <!-- Where toasts land. toast.js fills it with two live regions - one
+         polite, one assertive - so what the app says in passing is also
+         said to assistive tech. See toast.js. -->
+    <div class="toasts" id="toasts" aria-label="Notifications"></div>
+
     <!-- The app. A module: strict mode, its own scope, deferred until the
          document is parsed - which is when it ran anyway, from the end of
          the body. Being a module is what lets it be split into files

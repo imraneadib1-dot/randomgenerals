@@ -4556,3 +4556,177 @@ label.btn-secondary { cursor: pointer; }
   font-family: var(--font-mono);
   font-size: var(--text-sm);
 }
+
+
+/* ---- toasts ------------------------------------------------------------
+   The one way the app says something in passing. Bottom-right, stacked,
+   never over the composer on a phone (see the breakpoint below). The
+   two regions are for assistive tech - polite and assertive - and are
+   invisible as boxes; the toasts inside them are what is drawn.
+   ------------------------------------------------------------------------ */
+.toasts {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(380px, calc(100vw - 36px));
+  pointer-events: none;
+}
+.toast-region { display: contents; }
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px 11px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border-left-width: 3px;
+  border-left-color: var(--bay);
+  animation: toastIn 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.toast-success { border-left-color: #8fc9a3; }
+.toast-error { border-left-color: var(--danger); }
+.toast.is-leaving { animation: toastOut 0.16s ease forwards; }
+.toast-text { flex: 1; }
+.toast-action {
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  font-size: var(--text-xs);
+  padding: 4px 9px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.toast-action:hover { border-color: var(--bay); color: var(--bay); }
+.toast-close {
+  border: 0;
+  background: none;
+  color: var(--ink-faint);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  margin: -2px -4px 0 0;
+}
+.toast-close:hover { color: var(--ink); }
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes toastOut {
+  to { opacity: 0; transform: translateY(6px); }
+}
+@media (max-width: 640px) {
+  /* Above the composer, full width, so a toast is never under a thumb. */
+  .toasts { right: 12px; left: 12px; bottom: 92px; max-width: none; }
+}
+
+/* ---- confirm dialog -----------------------------------------------------
+   A <dialog> opened with showModal(): focus stays inside, Escape
+   closes, and ::backdrop is ours to draw. Replaces window.confirm(),
+   which blocks the tab and on a phone says "localhost says". */
+dialog.confirm {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 22px 22px 18px;
+  width: min(420px, calc(100vw - 32px));
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  font-family: var(--font-body);
+}
+dialog.confirm::backdrop {
+  background: rgba(10, 18, 28, 0.55);
+  backdrop-filter: blur(3px);
+}
+dialog.confirm[open] { animation: toastIn 0.18s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.confirm-title {
+  font-family: var(--font-display, inherit);
+  font-size: 17px;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+.confirm-body {
+  margin: 0 0 18px;
+  color: var(--ink-soft);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.confirm-actions button {
+  font: inherit;
+  font-weight: 600;
+  font-size: var(--text-sm);
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+.confirm-actions button:hover { border-color: var(--bay); }
+.confirm-ok { background: var(--bay); color: var(--on-accent, #182a3a); border-color: transparent; }
+.confirm-ok.is-danger { background: var(--danger); color: #1a1212; }
+.confirm-actions button:focus-visible { outline: 2px solid var(--accent-ink, var(--bay)); outline-offset: 2px; }
+
+/* ---- replies that are not answers ---------------------------------------
+   An error from a provider, a refusal from the filter, a notice from
+   the app. Drawn as what they are - a muted card with a mark - not as
+   prose the model wrote, and never with Copy / Save / Regenerate
+   attached (see finishReply in chat.js). The server names the kind in
+   the stream before the first character, and on the stored message. */
+.msg.assistant.is-error .msg-bubble,
+.msg.assistant.is-refusal .msg-bubble,
+.msg.assistant.is-notice .msg-bubble {
+  padding: 10px 14px 10px 40px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  position: relative;
+  max-width: 68ch;
+}
+.msg.assistant.is-error .msg-bubble::before,
+.msg.assistant.is-refusal .msg-bubble::before,
+.msg.assistant.is-notice .msg-bubble::before {
+  content: "!";
+  position: absolute;
+  left: 13px;
+  top: 10px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  opacity: 0.8;
+}
+.msg.assistant.is-error .msg-bubble { border-color: var(--danger-edge); color: var(--danger); }
+.msg.assistant.is-error .msg-bubble::before { content: "\00d7"; }
+.msg.assistant.is-notice .msg-bubble::before { content: "i"; font-style: italic; }
+.msg.user.is-blocked .msg-bubble {
+  opacity: 0.6;
+  border-style: dashed;
+}
+.msg-actions .msg-action-retry { color: var(--bay); }

@@ -5,6 +5,7 @@ import { freeButtonLabel } from "./billing.js";
 import { loadCredits, renderCredits } from "./credits.js";
 import { accountAvatar, accountEmail, accountPlanBadge, authSignedIn, authSignedOut, forgotSwitch, googleSignInBtn, localAuthAge, localAuthEmail, localAuthError, localAuthForm, localAuthName, localAuthPassword, localAuthSubmit, localAuthSwitch, logoutBtn, planError, planFreeBtn, planNote, planProBtn, resetForm, settingsBtnLabel } from "./dom.js";
 import { loadThreadList } from "./sidebar.js";
+import { toast } from "./toast.js";
 
 /* ---- Sign-in: Google only ---- */
 
@@ -252,7 +253,7 @@ export function mountAuth() {
       document.getElementById("resetIntro").textContent =
         "Enter your email and we will send you a code.";
       document.getElementById("resetStep2").hidden = true;
-      alert("Password changed. Log in with your new password.");
+      toast("Password changed. Log in with your new password.", { kind: "success" });
     } catch (e) {
       setError(err, "Could not reach the server.");
     } finally {

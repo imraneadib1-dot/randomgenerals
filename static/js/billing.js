@@ -3,6 +3,7 @@ import { changePlan, refreshAuthUI, setError } from "./auth.js";
 import { loadCredits, renderCredits } from "./credits.js";
 import { googleAuthError, googleNotConfiguredNote, googleSignInBtn, managePlanBtn, messageInput, planError, planFineprint, planFreeBtn, planNote, planProBtn, subCreditsValue, subDashboard, subEmailValue, subPaymentRow, subPaymentValue, subPlanValue, subRenewalLabel, subRenewalRow, subRenewalValue, subSinceValue, subStatusRow, subStatusValue, subVerifiedValue } from "./dom.js";
 import { openSettings } from "./modal.js";
+import { confirmDialog } from "./confirm.js";
 
 export function freeButtonLabel() {
   if (!state.currentUser || state.currentUser.plan !== "pro") return "Current plan";
@@ -28,9 +29,12 @@ export async function leaveOrKeepPro() {
       ? new Date(state.subscriptionState.current_period_end).toLocaleDateString(
           undefined, { year: "numeric", month: "long", day: "numeric" })
       : "the end of the paid period";
-    if (!confirm(`Cancel Pro? You keep it until ${until}, and you can change your mind before then.`)) {
-      return;
-    }
+    const sure = await confirmDialog({
+      title: "Cancel Pro?",
+      body: `You keep it until ${until}, and you can change your mind before then.`,
+      confirmLabel: "Cancel Pro", cancelLabel: "Keep it", danger: true,
+    });
+    if (!sure) return;
   }
   planFreeBtn.disabled = true;
   try {
