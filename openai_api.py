@@ -120,13 +120,20 @@ def _chunk(cid, created, model, delta=None, finish=None):
     }
 
 
-def stream_sse(pieces, model):
+def stream_sse(pieces, model, usage=None, failure=None):
     """Wrap a generator of text in OpenAI's streaming format.
 
     The first chunk carries the role and no content, then one chunk per
     piece, then an empty delta with finish_reason, then the literal
     [DONE]. Clients wait for that terminator; without it Cursor sits
     showing a spinner after the answer has finished arriving.
+
+    `usage` is the dict the channel fills in as it streams; its
+    finish_reason is reported rather than a hard-coded "stop", so a
+    reply cut off at max_tokens says "length" the way the real API
+    does. `failure` is set by the caller's generator when no channel
+    answered - reported as an error event, then [DONE], rather than a
+    stream that simply stops.
     """
     cid = "chatcmpl-" + secrets.token_hex(12)
     created = int(time.time())
@@ -135,20 +142,31 @@ def stream_sse(pieces, model):
         _chunk(cid, created, model, delta={"role": "assistant", "content": ""})
     ) + "\n\n"
 
+    sent_any = False
     for piece in pieces:
         if not piece:
             continue
+        sent_any = True
         yield "data: " + json.dumps(
             _chunk(cid, created, model, delta={"content": piece})
         ) + "\n\n"
 
+    if failure and not sent_any:
+        yield "data: " + json.dumps({"error": {
+            "message": failure.get("message", "No model answered."),
+            "type": "server_error", "code": None}}) + "\n\n"
+        yield "data: [DONE]\n\n"
+        return
+
+    finish = (usage or {}).get("finish_reason") or "stop"
     yield "data: " + json.dumps(
-        _chunk(cid, created, model, finish="stop")
+        _chunk(cid, created, model, finish=finish)
     ) + "\n\n"
     yield "data: [DONE]\n\n"
 
 
-def completion(text, model, prompt_tokens=0, completion_tokens=0):
+def completion(text, model, prompt_tokens=0, completion_tokens=0,
+               finish_reason="stop"):
     """The non-streaming response body."""
     return {
         "id": "chatcmpl-" + secrets.token_hex(12),
@@ -158,7 +176,7 @@ def completion(text, model, prompt_tokens=0, completion_tokens=0):
         "choices": [{
             "index": 0,
             "message": {"role": "assistant", "content": text},
-            "finish_reason": "stop",
+            "finish_reason": finish_reason,
         }],
         # Some clients read these and will divide by zero or show NaN if
         # the block is missing entirely, so it is always present even

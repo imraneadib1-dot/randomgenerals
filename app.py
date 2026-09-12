@@ -3123,26 +3123,29 @@ def openai_chat_completions():
     # ("gpt-4o", "claude-3-5-sonnet") and refusing those would make the
     # integration look broken when it is only mislabelled.
     requested = (payload.get("model") or "").strip()
-    local = list(ollama_provider().get("models") or [])
-
-    if requested in local:
-        provider, model = "ollama", requested
-    elif local and ollama_reachable():
-        provider, model = "ollama", (
-            next((m for m in local if "coder" in m), local[0]))
-    else:
+    provider, model = _v1_route(requested)
+    if not model:
         return _api_error(
-            "No model is available right now - Ollama is not answering.",
+            "No model is available right now - nothing is answering.",
             503, "server_error")
+    # The same gate the chat bay applies. This route skipped it, so a
+    # free account's API key ran Pro models.
+    if not features.model_allowed(user.get("plan"), model):
+        return _api_error(
+            "%s is a Pro model. Upgrade in the app, or ask for a free "
+            "one." % model, 403, "permission_error")
 
     opts = openai_api.options_from(payload)
     opts["num_ctx"] = 16384
-    streamer = PROVIDER_STREAMERS[provider]
-    pieces = streamer(model, history, options=opts)
+    usage: dict[str, Any] = {}
+    failure: dict[str, str] = {}
+    pieces = _v1_pieces([(provider, model)] + _failover_chain(provider, "code"),
+                        history, opts, usage, failure)
 
     if payload.get("stream"):
         return Response(
-            stream_with_context(openai_api.stream_sse(pieces, model)),
+            stream_with_context(
+                openai_api.stream_sse(pieces, model, usage, failure)),
             mimetype="text/event-stream",
             headers={
                 # Same reason as the chat stream: without this an nginx
@@ -3154,14 +3157,73 @@ def openai_chat_completions():
         )
 
     text = "".join(pieces)
-    # Rough, but present: clients divide by these and some render NaN if
-    # the block is missing. ~4 chars per token is close enough to be
-    # useful and is clearly documented as an estimate.
+    if failure and not text:
+        return _api_error(failure["message"], 503, "server_error")
+    # Rough where the provider did not say: clients divide by these and
+    # some render NaN if the block is missing. ~4 chars per token is
+    # close enough to be useful and is clearly documented as an
+    # estimate; the real count is used whenever the channel reported it.
     prompt_chars = sum(len(m.get("content") or "") for m in history)
     return jsonify(openai_api.completion(
         text, model,
         prompt_tokens=prompt_chars // 4,
-        completion_tokens=len(text) // 4))
+        completion_tokens=usage.get("eval_count") or len(text) // 4,
+        finish_reason=usage.get("finish_reason") or "stop"))
+
+
+def _v1_route(requested: str) -> tuple[str, str | None]:
+    """Which channel answers an API request. -> (provider, model).
+
+    A name the local model list has is used as asked. Otherwise the
+    local model is preferred only when it is up AND measured fast
+    enough - the chat bay's own rule, which this route skipped, so on
+    the deployment where Ollama takes a minute to say its first word
+    the API went there anyway. Then the fast channel, then nothing.
+    """
+    local = list(ollama_provider().get("models") or [])
+    if requested and requested in local:
+        return "ollama", requested
+    if requested and requested in (groq_api.models() or []):
+        return "groq", requested
+    if local and ollama_reachable() and _local_is_fast():
+        return "ollama", next((m for m in local if "coder" in m), local[0])
+    groq_model = _groq_model_for("code")
+    if groq_model:
+        return "groq", groq_model
+    if local and ollama_reachable():
+        # Slow is still better than nothing when it is all there is.
+        return "ollama", next((m for m in local if "coder" in m), local[0])
+    return "ollama", None
+
+
+def _v1_pieces(candidates, history, opts, usage, failure):
+    """Text from the first channel that answers. A generator, so the
+    same failover the chat bay does works whether the caller streams
+    or joins.
+
+    Never raises to the caller: a channel refusing before its first
+    chunk moves to the next; every channel refusing, or anything
+    unexpected, records a message in `failure` and ends the stream.
+    Without this a requests exception from the streamer became a 500
+    on the non-streaming path and a stream that simply stopped, with no
+    [DONE], on the streaming one.
+    """
+    failures: list[tuple[str, BaseException]] = []
+    for p, m in candidates:
+        try:
+            for piece in PROVIDER_STREAMERS[p](m, history, options=opts,
+                                               usage=usage):
+                yield piece
+            return
+        except groq_api.ProviderUnavailable as e:
+            failures.append((p, e))
+            continue
+        except Exception as e:                            # noqa: BLE001
+            app.logger.warning("/v1 reply failed on %s: %s", p, e)
+            failure["message"] = ("Something went wrong talking to %s."
+                                  % _channel_name(p))
+            return
+    failure["message"] = _nobody_answered(failures).strip("[]")
 
 
 @app.route("/api/account/api-key", methods=["POST"])

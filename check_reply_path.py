@@ -554,6 +554,73 @@ check("the earlier file's text is in the model's history",
       "PELICAN" in seen, True)
 check("labelled with its name", "[Attached: notes.txt]" in seen, True)
 
+print("\n== /v1/chat/completions: the OpenAI-compatible route ==")
+import openai_api                                         # noqa: E402
+uid = appmod._create_user("api@example.com", password_hash="x")
+raw_key = "rg_test_key_123"
+appmod.USERS[uid]["api_key_hash"] = openai_api.hash_key(raw_key)
+appmod.save_users()
+HDR = {"Authorization": "Bearer " + raw_key}
+appmod.ollama_provider = lambda: {"models": ["fake-local", "gemma3:4b"]}
+appmod.ollama_reachable = lambda: True
+
+
+def v1(body):
+    return client.post("/v1/chat/completions", json=body, headers=HDR)
+
+
+def sse_events(body_text):
+    out = []
+    for line in body_text.split("\n"):
+        if line.startswith("data: ") and line[6:] != "[DONE]":
+            out.append(json.loads(line[6:]))
+    return out, body_text.rstrip().endswith("data: [DONE]")
+
+
+use(fake_streamer(["hello", " api"], usage={"eval_count": 7,
+                                            "finish_reason": "length"}))
+r = v1({"messages": [{"role": "user", "content": "hi"}]})
+check("answers", r.status_code, 200)
+body = r.get_json()
+check("with the text", body["choices"][0]["message"]["content"], "hello api")
+check("finish_reason comes from the channel, not a constant",
+      body["choices"][0]["finish_reason"], "length")
+check("completion_tokens is the real count when reported",
+      body["usage"]["completion_tokens"], 7)
+
+r = v1({"messages": [{"role": "user", "content": "hi"}], "stream": True})
+evts, done = sse_events(r.get_data(as_text=True))
+check("streams", r.status_code, 200)
+check("ends with [DONE]", done, True)
+check("the final chunk reports length",
+      evts[-1]["choices"][0]["finish_reason"], "length")
+
+use(refusing(providers.Unreachable("down")))
+r = v1({"messages": [{"role": "user", "content": "hi"}]})
+check("every channel refusing is a 503, not a 500", r.status_code, 503)
+check("with an OpenAI-shaped error", "error" in r.get_json(), True)
+r = v1({"messages": [{"role": "user", "content": "hi"}], "stream": True})
+evts, done = sse_events(r.get_data(as_text=True))
+check("a streamed failure is an error event", "error" in evts[-1], True)
+check("and still ends with [DONE]", done, True)
+
+
+def exploding(model, history, **kw):
+    raise RuntimeError("boom")
+    yield  # pragma: no cover
+
+
+use(exploding)
+r = v1({"messages": [{"role": "user", "content": "hi"}]})
+check("an unexpected exception is a 503, not a traceback", r.status_code, 503)
+check("and never leaks the exception text",
+      "boom" in r.get_data(as_text=True), False)
+
+r = v1({"model": "gemma3:4b", "messages": [{"role": "user", "content": "hi"}]})
+check("a Pro model on a free key is refused", r.status_code, 403)
+r = client.post("/v1/chat/completions", json={"messages": []})
+check("no key, no answer", r.status_code, 401)
+
 print("\n== the page names its build ==")
 html = client.get("/app").get_data(as_text=True)
 check("rg-build marker is in the page",
