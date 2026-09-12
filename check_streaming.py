@@ -160,6 +160,20 @@ out = run(openrouter_api, FakeResponse(
 check("mid-stream drop explained", "dropped part-way" in out, True)
 check("text kept", "partial answer" in out, True)
 
+print("\n== OpenRouter: what it generated is what gets charged ==")
+# app.py charges by usage["eval_count"], the name Groq and Ollama both
+# use. OpenRouter reports completion_tokens, and for a while that was
+# all it reported - so the one paid channel was billed at the floor,
+# every reply, however long.
+usage = {}
+run(openrouter_api, FakeResponse(sse(
+    piece("a long reply"),
+    {"choices": [{"delta": {}, "finish_reason": "stop"}],
+     "usage": {"prompt_tokens": 12, "completion_tokens": 42}})),
+    usage=usage)
+check("completion_tokens is reported as eval_count", usage.get("eval_count"), 42)
+check("the original field survives too", usage.get("completion_tokens"), 42)
+
 print("\n== the ceiling that caused it ==")
 check("default mode no longer capped at 1400",
       app.STRENGTH_LEVELS["quick"]["options"]["num_predict"], 2600)

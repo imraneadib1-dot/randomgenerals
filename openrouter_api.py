@@ -388,6 +388,13 @@ def stream_chat(model, history, options=None, images=None, usage=None):
                 note_cost(data["usage"])
                 if usage is not None:
                     usage.update(data["usage"])
+                    # The name app.py charges by. Groq and Ollama both
+                    # report generated tokens as eval_count; this channel
+                    # reported completion_tokens only, so
+                    # usage_based_cost() read None and billed every
+                    # Kimi reply - the one paid channel - at the floor.
+                    if "completion_tokens" in data["usage"]:
+                        usage["eval_count"] = data["usage"]["completion_tokens"]
     except requests.exceptions.RequestException as e:
         # Mid-stream. Text is already on screen, so this is said at the
         # end of it rather than raised - there is nowhere to fail over
