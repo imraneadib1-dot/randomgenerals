@@ -22,6 +22,13 @@ import sys
 sys.path.insert(0, os.path.abspath("."))
 os.environ.setdefault("GROQ_API_KEY", "gsk_" + "x" * 40)
 os.environ.setdefault("OPENROUTER_API_KEY", "sk-or-" + "x" * 20)
+# Nothing here needs the real database or a real Ollama, and `import
+# app` below opens both. On a synced folder the live app.db took
+# minutes to open, and the boot probe waited on a tunnel timeout.
+import tempfile                                            # noqa: E402
+os.environ.setdefault("DB_PATH", os.path.join(
+    tempfile.mkdtemp(prefix="streamtest-"), "test.db"))
+os.environ["OLLAMA_URL"] = "http://127.0.0.1:1"
 
 import requests                                            # noqa: E402
 
@@ -128,11 +135,29 @@ check("explains the drop in plain words", "dropped part-way" in out, True)
 check("no raw Python exception in the reply",
       "ConnectionError" in out or "Traceback" in out, False)
 
+print("\n== Groq: a server error before any text ==")
+# Their outage, not this request's, and nothing has streamed - so it is
+# raised for failover rather than yielded as "[Groq error 502.]", which
+# made the outage the reply.
+try:
+    run(groq_api, FakeResponse(sse(), status=502))
+    check("a 5xx raises so another provider can answer", "did not", "raise")
+except groq_api.ProviderUnavailable as e:
+    check("a 5xx raises Unreachable", isinstance(e, groq_api.Unreachable), True)
+out = run(groq_api, FakeResponse(sse(), status=400))
+check("a 4xx is still said - another provider would refuse it too",
+      out.startswith("[Groq error 400"), True)
+
 print("\n== the exception hierarchy the call sites rely on ==")
+import providers                                           # noqa: E402
 check("RateLimited is a ProviderUnavailable",
       issubclass(groq_api.RateLimited, groq_api.ProviderUnavailable), True)
 check("Unreachable is a ProviderUnavailable",
       issubclass(groq_api.Unreachable, groq_api.ProviderUnavailable), True)
+check("groq_api's is the shared class from providers.py",
+      groq_api.ProviderUnavailable is providers.ProviderUnavailable, True)
+check("OpenRouter raises the same class",
+      openrouter_api.RateLimited is providers.RateLimited, True)
 import app                                                 # noqa: E402
 src = open("app.py", encoding="utf-8").read()
 check("no call site still catches only RateLimited",
@@ -159,6 +184,44 @@ out = run(openrouter_api, FakeResponse(
     sse(piece("partial answer"), piece("more")), boom_after=1))
 check("mid-stream drop explained", "dropped part-way" in out, True)
 check("text kept", "partial answer" in out, True)
+
+print("\n== OpenRouter: failures BEFORE any text are raised, not said ==")
+# This channel used to yield every failure as text - "[OpenRouter error
+# 502.]", "[Could not reach OpenRouter: ...]" - so an outage on the paid
+# channel became the reply instead of being answered by the free one.
+
+
+def raised(fn, cls):
+    try:
+        fn()
+    except cls:
+        return True
+    except Exception:                                    # noqa: BLE001
+        return False
+    return False
+
+
+check("a dropped connection before the first chunk raises Unreachable",
+      raised(lambda: run(openrouter_api, FakeResponse(
+          sse(piece("never")), boom_after=0)), providers.Unreachable), True)
+check("a 5xx raises Unreachable",
+      raised(lambda: run(openrouter_api, FakeResponse(sse(), status=503)),
+             providers.Unreachable), True)
+check("a 429 raises RateLimited",
+      raised(lambda: run(openrouter_api, FakeResponse(sse(), status=429)),
+             providers.RateLimited), True)
+out = run(openrouter_api, FakeResponse(sse(), status=402))
+check("out of credit is still said - nobody else can top the key up",
+      "out of credit" in out, True)
+_real_post = requests.post
+requests.post = lambda *a, **k: FakeResponse(sse(), status=429)
+try:
+    check("chat_once 429 raises too, so the tool loop drops the tools",
+          raised(lambda: openrouter_api.chat_once(
+              "m", [{"role": "user", "content": "hi"}]),
+              providers.RateLimited), True)
+finally:
+    requests.post = _real_post
 
 print("\n== OpenRouter: what it generated is what gets charged ==")
 # app.py charges by usage["eval_count"], the name Groq and Ollama both

@@ -40,6 +40,7 @@ import moderation  # noqa: E402  content filtering - see moderation.py
 import features  # noqa: E402  per-tier feature flags - see features.py
 import stats  # noqa: E402  owner-only usage figures - see stats.py
 import dashboard  # noqa: E402  visitors, money, requests - see dashboard.py
+import providers  # noqa: E402  how every channel fails - see providers.py
 import groq_api  # noqa: E402  fast open-weight models - see groq_api.py
 import openai_api  # noqa: E402  OpenAI-compatible API - see openai_api.py
 import connectors  # noqa: E402  pasted links, turned into tools
@@ -1026,8 +1027,9 @@ MESSAGE_KINDS = ("text", "error", "refusal", "notice", "blocked")
 # The prefixes fabricated replies had before `kind` existed. Used once,
 # at load, to label rows saved by earlier builds - see load_threads().
 _LEGACY_ERROR_RE = re.compile(
-    r"^\[(Error talking to|The fast channel|The model returned nothing|"
-    r"No model is answering|Groq error|OpenRouter error|Ollama error|"
+    r"^\[(Error talking to|Something went wrong talking to|"
+    r"The fast channel|The model returned nothing|No model is answering|"
+    r"No model could answer|Groq error|OpenRouter error|Ollama error|"
     r"Could not reach)")
 
 # The model never sees more than this much history from the app. The
@@ -4534,6 +4536,107 @@ def _local_alternative(mode):
     return names[0] if names else None
 
 
+def _groq_model_for(mode: str) -> str | None:
+    """The Groq model this bay would pick, for a request that arrives on
+    the fast channel by failover rather than by choice. None when Groq
+    cannot answer at all."""
+    if not (groq_api.configured() and groq_api.models()):
+        return None
+    names = groq_api.models()
+    for provider_id, pattern in BAY_ROUTES.get(mode, BAY_ROUTES["chat"]):
+        if provider_id != "groq":
+            continue
+        match = next((n for n in names if pattern in n.lower()), None)
+        if match:
+            return match
+    return groq_api.PREFERRED[0]
+
+
+def _failover_chain(provider: str, mode: str) -> list[tuple[str, str]]:
+    """Who to ask next when `provider` refuses before its first chunk.
+
+    -> [(provider, model), ...] in the order to try them. Every channel
+    fails the same way now (providers.py), so the fallback is a table
+    rather than a special case for Groq:
+
+        ollama      -> groq
+        groq        -> ollama
+        openrouter  -> groq -> ollama
+
+    Each candidate is checked for being able to answer at all - a key,
+    a model list, a local model that is up and measured fast enough -
+    but NOT for having budget: a candidate that turns out to be
+    rate-limited raises the same exception and the loop moves on, and
+    the caller decides afterwards whether waiting for a refill is worth
+    it. Checking budget here would only refuse a channel a second
+    before it refused itself.
+    """
+    chain: list[tuple[str, str]] = []
+    if provider in ("ollama", "openrouter"):
+        groq_model = _groq_model_for(mode)
+        if groq_model:
+            chain.append(("groq", groq_model))
+    if provider in ("groq", "openrouter"):
+        local = _local_alternative(mode)
+        if local:
+            chain.append(("ollama", local))
+    return chain
+
+
+_CHANNEL_NAMES = {
+    "groq": "the fast channel",
+    "ollama": "the local model",
+    "openrouter": "the Kimi channel",
+}
+
+
+def _channel_name(provider: str) -> str:
+    """What a channel is called in a sentence shown to a person."""
+    return _CHANNEL_NAMES.get(provider, provider)
+
+
+def _retry_after(provider: str,
+                 failures: list[tuple[str, BaseException]]) -> float | None:
+    """Seconds until a rate-limited channel refills, if that is known.
+
+    Groq reports it in every response's headers, which budget_state()
+    keeps. Other channels may put a number in Retry-After, which their
+    RateLimited carries as its message; anything else is unknown, and
+    unknown means do not wait.
+    """
+    if provider == "groq":
+        _left, resets_in = groq_api.budget_state()
+        return resets_in or None
+    for p, exc in failures:
+        if p == provider and isinstance(exc, providers.RateLimited):
+            try:
+                return float(str(exc))
+            except ValueError:
+                return None
+    return None
+
+
+def _nobody_answered(failures: list[tuple[str, BaseException]]) -> str:
+    """The sentence shown when every channel refused before its first
+    chunk. Names each one and why, in a person's words - never the
+    exception's own text, which is a host and a port and a pool state.
+    """
+    tried = "; ".join("%s is %s" % (_channel_name(p), providers.describe(e))
+                      for p, e in failures)
+    if any(isinstance(e, providers.RateLimited) for _, e in failures):
+        _left, resets_in = groq_api.budget_state()
+        return ("[The fast channel has used its per-minute allowance and "
+                "nothing else could take over (%s). It refills in about "
+                "%d seconds - send that again then.]"
+                % (tried, max(1, int(resets_in or 5))))
+    if not tried:
+        return ("[No model is answering. If this is running on your own "
+                "machine, start Ollama, or check OLLAMA_URL and "
+                "OLLAMA_API_KEY on the server.]")
+    return ("[No model could answer just now (%s). Try again in a "
+            "moment.]" % tried)
+
+
 # How long a request may wait for the per-minute budget to refill
 # before giving up and saying so.
 #
@@ -4542,6 +4645,12 @@ def _local_alternative(mode):
 # it stays shorter than somebody's patience - past about half a minute
 # a spinner is worse than a sentence telling them when to come back.
 RATE_LIMIT_WAIT_SECONDS = 25
+
+# The wait above is taken in slices, and the browser is told at every
+# slice how long is left - so "the fast channel is busy" is a countdown
+# in the thinking indicator rather than an unexplained pause. See the
+# "wait" event in stream_event.
+RATE_LIMIT_WAIT_SLICE = 2
 
 # The longest reply asked of a local model on the failover path.
 #
@@ -5033,43 +5142,81 @@ def stream_ollama(model, history, options=None, images=None, usage=None):
         "keep_alive": OLLAMA_KEEP_ALIVE,
     }
     if options:
-        body["options"] = options
-    with requests.post(
-        f"{OLLAMA_URL}/api/chat",
-        json=body,
-        headers=ollama_headers(),
-        stream=True,
-        # (connect, read). The read timeout applies BETWEEN CHUNKS on a
-        # streamed response, not to the whole reply - so this is "how
-        # long may it go silent", not "how long may it take".
-        #
-        # It was a single 120, which meant a stall - a model still
-        # loading, or a request queued behind another one - showed
-        # nothing at all for two minutes and then an HTTPConnectionPool
-        # traceback in the middle of the conversation. Two minutes of
-        # nothing is worse than a quick, honest failure: once tokens are
-        # flowing they arrive every fraction of a second, so 45 seconds
-        # of silence already means something is wrong.
-        timeout=(10, 45),
-    ) as r:
-        r.raise_for_status()
-        for line in r.iter_lines():
-            if not line:
-                continue
-            try:
-                chunk = json.loads(line.decode("utf-8"))
-            except json.JSONDecodeError:
-                continue
-            if chunk.get("error"):
-                yield f"[Ollama error: {chunk['error']}]"
-                return
-            piece = chunk.get("message", {}).get("content", "")
-            if piece:
-                yield piece
-            if chunk.get("done"):
-                if usage is not None:
-                    usage["eval_count"] = chunk.get("eval_count")
-                return
+        # Ollama's options are sampling parameters. The hosted channels
+        # share this dict and read keys of their own from it - tools,
+        # reasoning_effort - which Ollama would log as unknown.
+        body["options"] = {k: v for k, v in options.items()
+                           if k not in ("tools", "reasoning_effort")}
+    # The same contract as the hosted channels (providers.py): before
+    # the first chunk a failure is RAISED so the caller can answer from
+    # elsewhere; after it, it is said at the end of the reply. Before
+    # this, a refused connection escaped as a requests exception and was
+    # written into the conversation as
+    # "[Error talking to ollama: HTTPConnectionPool(...)]".
+    sent_any = False
+    try:
+        with requests.post(
+            f"{OLLAMA_URL}/api/chat",
+            json=body,
+            headers=ollama_headers(),
+            stream=True,
+            # (connect, read). The read timeout applies BETWEEN CHUNKS
+            # on a streamed response, not to the whole reply - so this
+            # is "how long may it go silent", not "how long may it
+            # take".
+            #
+            # It was a single 120, which meant a stall - a model still
+            # loading, or a request queued behind another one - showed
+            # nothing at all for two minutes and then an
+            # HTTPConnectionPool traceback in the middle of the
+            # conversation. Two minutes of nothing is worse than a
+            # quick, honest failure: once tokens are flowing they
+            # arrive every fraction of a second, so 45 seconds of
+            # silence already means something is wrong.
+            timeout=(10, 45),
+        ) as r:
+            if r.status_code != 200:
+                # A missing model, an overloaded server - either way
+                # nothing has streamed and another channel may answer.
+                raise providers.Unreachable(
+                    "Ollama returned %d" % r.status_code)
+            for line in r.iter_lines():
+                if not line:
+                    continue
+                try:
+                    chunk = json.loads(line.decode("utf-8"))
+                except json.JSONDecodeError:
+                    continue
+                if chunk.get("error"):
+                    if not sent_any:
+                        raise providers.Unreachable(str(chunk["error"])[:200])
+                    yield f"\n\n_…Ollama stopped: {chunk['error']}_"
+                    return
+                piece = chunk.get("message", {}).get("content", "")
+                if piece:
+                    sent_any = True
+                    yield piece
+                if chunk.get("done"):
+                    if usage is not None:
+                        usage["eval_count"] = chunk.get("eval_count")
+                        if chunk.get("done_reason"):
+                            usage["finish_reason"] = chunk["done_reason"]
+                    # Why it stopped, said in the reply for the same
+                    # reason the hosted channels say it: a reply cut
+                    # off at num_predict looks exactly like one that
+                    # ended awkwardly, and the failover path caps this
+                    # channel at 900 tokens, where it happens often.
+                    if chunk.get("done_reason") == "length":
+                        yield ("\n\n_…that hit the length limit for one "
+                               "reply. Say **continue** and I'll pick up "
+                               "where I left off._")
+                    return
+    except requests.exceptions.RequestException as e:
+        if not sent_any:
+            raise providers.Unreachable(str(e))
+        yield ("\n\n_…the connection to the model dropped part-way "
+               "through. The answer above is incomplete — ask again to "
+               "get the rest._")
 
 
 def stream_event(payload: dict) -> str:
@@ -6252,7 +6399,6 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                        "OLLAMA_API_KEY on the server.]")
             return streaming_response(unavailable())
 
-    streamer = PROVIDER_STREAMERS[provider]
     # num_ctx matters more here than it looks. Without it, Ollama defaults
     # to a model's advertised max context - 131,072 for llama3.2 - which
     # alone needs an ~18GB KV cache. That doesn't fit in this machine's
@@ -6305,20 +6451,23 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # asked to look something up, gpt-oss-120b and qwen3.8-27b each
     # returned a well-formed web_search call with a sensible query.
     #
-    # So tools are offered on the hosted channel only. The loop runs
-    # BEFORE the stream opens: a tool call arrives as a name and a JSON
-    # blob, and half of either is useless, so those turns are fetched
-    # whole and unseen, and only the final answer is streamed.
+    # So tools are offered on the hosted channels only. The loop runs
+    # inside generate() below, AFTER the response has started: a tool
+    # call arrives as a name and a JSON blob, and half of either is
+    # useless, so those turns are fetched whole and unseen - but the
+    # headers go out first, so the browser sees a live "searching the
+    # web…" instead of nothing at all for as long as the loop takes.
     tool_specs = None
-    tool_notes = []
     connector_map = {}
-    # The loop spends an extra non-streamed turn before the answer, so it
-    # is offered only while the shared per-minute budget can carry one.
-    # Under pressure the reply still happens, just without tools - which
-    # is the same degradation every other part of this channel makes.
+    # The loop spends an extra non-streamed turn before the answer, so on
+    # the fast channel it is offered only while the shared per-minute
+    # budget can carry one. Under pressure the reply still happens, just
+    # without tools - the same degradation every other part of that
+    # channel makes. (Only Groq has that budget; the check used to gate
+    # OpenRouter's tools on Groq's headroom.)
     if (provider in PROVIDER_TURNS
             and features.FEATURES[plan]["builtin_tools"]
-            and _groq_has_room(plan)):
+            and (provider != "groq" or _groq_has_room(plan))):
         tool_specs = tools.available_specs(
             allow_images=(mode != "image"),
             allow_code=True,
@@ -6338,112 +6487,124 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
             history = ([{"role": "system",
                          "content": history[0]["content"] + TOOL_USE_PROMPT}]
                        + history[1:])
-        history, tool_notes = _run_tool_loop(
-            model, history, tool_specs, provider=provider,
-            connector_map=connector_map)
+
+    def kwargs_for(candidate: str) -> dict[str, Any]:
+        """The stream arguments for whichever channel ends up answering.
+
+        A CEILING THE LOCAL MODEL CAN ACTUALLY REACH. The code bay asks
+        for up to 3,500 tokens, which is a fair request of a hosted 120B
+        and a very long wait from a 1B on two shared cores. The fallback
+        exists to get an answer out, not to attempt the same answer
+        slowly, so it asks for a shorter one - which is also honest
+        about what a model this size is good for. The prompt is trimmed
+        too, inside stream_ollama, for every path into it.
+        """
+        if candidate != "ollama" or provider == "ollama":
+            return stream_kwargs
+        local_kwargs = dict(stream_kwargs)
+        opts = dict(local_kwargs.get("options") or {})
+        if opts.get("num_predict", 0) > LOCAL_FALLBACK_MAX_TOKENS:
+            opts["num_predict"] = LOCAL_FALLBACK_MAX_TOKENS
+            local_kwargs["options"] = opts
+        return local_kwargs
 
     def generate():
-        nonlocal provider, model, streamer, fell_back_to_cloud
+        nonlocal provider, model, history, fell_back_to_cloud
         full_reply = ""
         # What the saved turn will be. Flips to "error" at every site
         # below that fabricates a sentence in place of an answer, and
         # the browser is told in the same breath so it can show it as
         # one. The finally block charges only when this is still "text".
         reply_kind = "text"
-        # Announce the tools that ran BEFORE the prose starts. They have
-        # already finished by this point - the loop resolves them before
-        # a stream is opened - so each is emitted as done rather than
-        # started. An answer that quietly consulted the web is harder to
-        # trust than one that says it did.
-        for name in tool_notes:
-            yield tool_event({"tool": name, "status": "done"})
         try:
-            try:
-                for piece in streamer(model, history, **stream_kwargs):
-                    full_reply += piece
-                    yield piece
-            except groq_api.ProviderUnavailable:
-                # Safe to retry: this is raised only before the first
-                # chunk, so nothing has reached the browser yet and the
-                # same conversation can be answered locally without the
-                # reader seeing a seam. Covers both a drained per-minute
-                # budget and an unreachable host - a failure after the
-                # first token is yielded as a sentence instead, because
-                # by then there is nowhere to fail over to.
-                local = _local_alternative(mode)
-                if not local:
-                    # NO LOCAL MODEL - but that used to end the request,
-                    # and it should not. The per-minute budget refills on
-                    # a fixed window and the response headers say exactly
-                    # when: "try again in a moment" was asking somebody
-                    # to do by hand, without knowing the number, the one
-                    # thing the server could do for them.
-                    #
-                    # A desktop install shares one free key with the
-                    # public site, so it hits this while the site is
-                    # busy and is left with no fallback at all. Waiting
-                    # out a window that is usually seconds away turns a
-                    # dead end into a pause.
-                    _left, resets_in = groq_api.budget_state()
-                    waited = False
-                    if resets_in and resets_in <= RATE_LIMIT_WAIT_SECONDS:
-                        # +1 so the window has genuinely rolled over
-                        # rather than landing on the boundary.
-                        time.sleep(resets_in + 1)
-                        waited = True
-                    if waited:
-                        try:
-                            for piece in streamer(model, history,
-                                                  **stream_kwargs):
-                                full_reply += piece
-                                yield piece
-                            # `return` still runs the finally below,
-                            # which is what saves and moderates the
-                            # reply - so there is nothing to do here.
-                            return
-                        except groq_api.ProviderUnavailable:
-                            # Still busy after the window rolled - the
-                            # site is under sustained load rather than
-                            # briefly spiky. Fall through and say so.
-                            pass
-                    _left, resets_in = groq_api.budget_state()
-                    reply_kind = "error"
-                    full_reply = (
-                        "[The fast channel has used its per-minute "
-                        "allowance and there is no local model here to "
-                        "take over. It refills in about %d seconds - "
-                        "send that again then.]" % max(1, int(resets_in or 5)))
-                    yield stream_event({"event": "reply", "kind": reply_kind})
-                    yield full_reply
-                    return
-                provider, model = "ollama", local
-                streamer = PROVIDER_STREAMERS[provider]
-                fell_back_to_cloud = True
-                # A CEILING THE LOCAL MODEL CAN ACTUALLY REACH.
+            if tool_specs is not None:
+                history, tool_notes = _run_tool_loop(
+                    model, history, tool_specs, provider=provider,
+                    connector_map=connector_map)
+                # Announce the tools that ran before the prose starts.
+                # An answer that quietly consulted the web is harder to
+                # trust than one that says it did.
+                for name in tool_notes:
+                    yield tool_event({"tool": name, "status": "done"})
+
+            # ASK DOWN THE CHAIN UNTIL SOMEBODY ANSWERS.
+            #
+            # Every channel raises ProviderUnavailable only before its
+            # first chunk (providers.py), so a refusal here is always
+            # safe to hand to the next candidate - nothing has reached
+            # the browser and the reader never sees a seam. A failure
+            # AFTER the first chunk is yielded by the channel as a
+            # sentence at the end of the reply, because by then there
+            # is nowhere to fail over to.
+            candidates = [(provider, model)] + _failover_chain(provider, mode)
+            failures: list[tuple[str, BaseException]] = []
+            limited: tuple[str, str] | None = None
+            answered = False
+            for i, (p, m) in enumerate(candidates):
+                try:
+                    for piece in PROVIDER_STREAMERS[p](
+                            m, history, **kwargs_for(p)):
+                        full_reply += piece
+                        yield piece
+                except groq_api.ProviderUnavailable as e:
+                    failures.append((p, e))
+                    if limited is None and isinstance(e, providers.RateLimited):
+                        limited = (p, m)
+                    continue
+                answered = True
+                if i > 0:
+                    # Recorded on the message so a reload still shows
+                    # which channel actually answered.
+                    provider, model = p, m
+                    fell_back_to_cloud = True
+                break
+
+            if not answered and limited is not None:
+                # NOBODY COULD ANSWER, but one of them is only busy. The
+                # per-minute budget refills on a fixed window and the
+                # response headers say exactly when: "try again in a
+                # moment" was asking somebody to do by hand, without
+                # knowing the number, the one thing the server could do
+                # for them. A desktop install shares one free key with
+                # the public site, so it hits this while the site is
+                # busy and has no local model to fall back on.
                 #
-                # The code bay asks for up to 3,500 tokens, which is a
-                # fair request of a hosted 120B and a very long wait from
-                # a 1B on two shared cores. The fallback exists to get an
-                # answer out, not to attempt the same answer slowly, so
-                # it asks for a shorter one - which is also honest about
-                # what a model this size is good for.
-                local_kwargs = dict(stream_kwargs)
-                opts = dict(local_kwargs.get("options") or {})
-                if opts.get("num_predict", 0) > LOCAL_FALLBACK_MAX_TOKENS:
-                    opts["num_predict"] = LOCAL_FALLBACK_MAX_TOKENS
-                    local_kwargs["options"] = opts
-                # AND THE PROMPT, not only the reply. Capping output
-                # alone still handed a 1B model the whole conversation -
-                # a pasted file included - and reading it is most of the
-                # work: the request then went silent long enough to trip
-                # the read timeout and surface an Ollama traceback,
-                # which is how this failure looked from the outside even
-                # after the fast channel was fixed.
-                # No trimming here any more - stream_ollama does it for
-                # every path into it, this one included.
-                for piece in streamer(model, history, **local_kwargs):
-                    full_reply += piece
-                    yield piece
+                # Waited in slices, and the browser is told at each one
+                # how long is left, so the pause is a countdown in the
+                # thinking indicator rather than a hang.
+                p, m = limited
+                wait = _retry_after(p, failures)
+                if wait is not None and wait <= RATE_LIMIT_WAIT_SECONDS:
+                    # +1 so the window has genuinely rolled over rather
+                    # than landing on the boundary.
+                    remaining = wait + 1
+                    while remaining > 0:
+                        yield stream_event({"event": "wait",
+                                            "seconds": int(remaining + 0.999)})
+                        step = min(RATE_LIMIT_WAIT_SLICE, remaining)
+                        time.sleep(step)
+                        remaining -= step
+                    try:
+                        for piece in PROVIDER_STREAMERS[p](
+                                m, history, **kwargs_for(p)):
+                            full_reply += piece
+                            yield piece
+                        answered = True
+                        if (p, m) != candidates[0]:
+                            provider, model = p, m
+                            fell_back_to_cloud = True
+                    except groq_api.ProviderUnavailable as e:
+                        # Still busy after the window rolled - the site
+                        # is under sustained load rather than briefly
+                        # spiky. Fall through and say so.
+                        failures.append((p, e))
+
+            if not answered:
+                reply_kind = "error"
+                full_reply = _nobody_answered(failures)
+                yield stream_event({"event": "reply", "kind": reply_kind})
+                yield full_reply
+                return
 
             # AN EMPTY STREAM IS A FAILURE, NOT AN ANSWER.
             #
@@ -6471,7 +6632,8 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                                "missing.",
                 }]
                 try:
-                    for piece in streamer(model, nudged, **stream_kwargs):
+                    for piece in PROVIDER_STREAMERS[provider](
+                            model, nudged, **kwargs_for(provider)):
                         full_reply += piece
                         yield piece
                 except Exception as e:                      # noqa: BLE001
@@ -6491,8 +6653,12 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
             # A backstop for anything unexpected from the streamer - a
             # broken reply still gets recorded (as an error, so it is
             # shown as one and never replayed) instead of vanishing.
+            # The exception's own text goes to the log, not the person:
+            # a requests error carries a host, a port and a pool state.
+            app.logger.warning("reply failed on %s: %s", provider, e)
             reply_kind = "error"
-            full_reply = f"[Error talking to {provider}: {e}]"
+            full_reply = ("[Something went wrong talking to %s. Try "
+                          "sending that again.]" % _channel_name(provider))
             yield stream_event({"event": "reply", "kind": reply_kind})
             yield full_reply
         finally:

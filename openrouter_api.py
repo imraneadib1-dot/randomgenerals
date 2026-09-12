@@ -46,6 +46,7 @@ import requests
 
 import db
 import groq_api
+from providers import RateLimited, Unreachable
 
 API_ROOT = "https://openrouter.ai/api/v1"
 
@@ -282,6 +283,11 @@ def chat_once(model, history, tools=None, options=None, timeout=120):
                           headers=_headers(), timeout=timeout)
     except requests.exceptions.RequestException as e:
         return None, "Could not reach OpenRouter: %s" % e
+    if r.status_code == 429:
+        # Same as Groq's chat_once: raised, so the tool loop can drop
+        # the tools and still answer, rather than returned as an error
+        # it would treat the same as a bad request.
+        raise RateLimited("OpenRouter rate limit")
     if r.status_code == 402:
         return None, ("This OpenRouter key is out of credit - Kimi is a "
                       "paid model.")
@@ -334,74 +340,92 @@ def stream_chat(model, history, options=None, images=None, usage=None):
     # sending unknown fields to a different lab's model is how the qwen
     # empty-reply bug happened - see groq_api._supports_effort.
 
-    try:
-        r = requests.post(API_ROOT + "/chat/completions", json=body,
-                          headers=_headers(), stream=True, timeout=120)
-    except requests.exceptions.RequestException as e:
-        yield "[Could not reach OpenRouter: %s]" % e
-        return
-
-    if r.status_code == 402:
-        # Worth its own message. "error 402" tells someone nothing, and
-        # this is the one failure here with an obvious remedy.
-        yield ("[This OpenRouter key is out of credit. Kimi is a paid "
-               "model - top the key up, or unset OPENROUTER_API_KEY to go "
-               "back to the free channel.]")
-        return
-    if r.status_code in (401, 403):
-        yield "[OpenRouter rejected the key.]"
-        return
-    if r.status_code != 200:
-        yield "[OpenRouter error %d.]" % r.status_code
-        return
-
     # Why the model stopped. Read for the same reason as on the Groq
     # channel: "length" means it ran out of budget mid-answer, and
     # without checking it a truncated reply is indistinguishable from a
     # complete one that ended awkwardly.
     finish = None
+    # Whether any content has reached the caller yet. Before the first
+    # token a failure is raised and answered elsewhere; after it the
+    # reply is on somebody's screen and the only honest option is to
+    # say what happened at the end of it. See providers.py.
     sent_any = False
 
     try:
-        for raw in r.iter_lines(decode_unicode=True):
-            if not raw or not raw.startswith("data: "):
-                continue
-            chunk = raw[6:].strip()
-            if chunk == "[DONE]":
-                break
-            try:
-                data = json.loads(chunk)
-            except ValueError:
-                continue
-            try:
-                choice = data["choices"][0]
-            except (KeyError, IndexError):
-                choice = None
-            if choice is not None:
-                piece = (choice.get("delta") or {}).get("content")
-                if piece:
-                    sent_any = True
-                    yield piece
-                if choice.get("finish_reason"):
-                    finish = choice["finish_reason"]
-            if data.get("usage"):
-                note_cost(data["usage"])
-                if usage is not None:
-                    usage.update(data["usage"])
-                    # The name app.py charges by. Groq and Ollama both
-                    # report generated tokens as eval_count; this channel
-                    # reported completion_tokens only, so
-                    # usage_based_cost() read None and billed every
-                    # Kimi reply - the one paid channel - at the floor.
-                    if "completion_tokens" in data["usage"]:
-                        usage["eval_count"] = data["usage"]["completion_tokens"]
+        # `with`, so the connection is returned to the pool however this
+        # generator ends - an early return on 402, or the browser
+        # closing the tab mid-reply, which abandons the generator
+        # without ever reaching the end of the loop.
+        with requests.post(API_ROOT + "/chat/completions", json=body,
+                           headers=_headers(), stream=True,
+                           timeout=120) as r:
+            if r.status_code == 429:
+                raise RateLimited(r.headers.get("retry-after")
+                                  or "OpenRouter rate limit")
+            if r.status_code == 402:
+                # Worth its own message. "error 402" tells someone
+                # nothing, and this is the one failure here with an
+                # obvious remedy. Said, not raised: another provider
+                # cannot top the key up.
+                yield ("[This OpenRouter key is out of credit. Kimi is a "
+                       "paid model - top the key up, or unset "
+                       "OPENROUTER_API_KEY to go back to the free channel.]")
+                return
+            if r.status_code in (401, 403):
+                yield "[OpenRouter rejected the key.]"
+                return
+            if r.status_code >= 500:
+                # Their outage, not this request's fault, and nothing
+                # has streamed. This used to be yielded as
+                # "[OpenRouter error 502.]" - the outage became the reply.
+                raise Unreachable("OpenRouter returned %d" % r.status_code)
+            if r.status_code != 200:
+                yield "[OpenRouter error %d.]" % r.status_code
+                return
+
+            for raw in r.iter_lines(decode_unicode=True):
+                if not raw or not raw.startswith("data: "):
+                    continue
+                chunk = raw[6:].strip()
+                if chunk == "[DONE]":
+                    break
+                try:
+                    data = json.loads(chunk)
+                except ValueError:
+                    continue
+                try:
+                    choice = data["choices"][0]
+                except (KeyError, IndexError):
+                    choice = None
+                if choice is not None:
+                    piece = (choice.get("delta") or {}).get("content")
+                    if piece:
+                        sent_any = True
+                        yield piece
+                    if choice.get("finish_reason"):
+                        finish = choice["finish_reason"]
+                if data.get("usage"):
+                    note_cost(data["usage"])
+                    if usage is not None:
+                        usage.update(data["usage"])
+                        # The name app.py charges by. Groq and Ollama
+                        # both report generated tokens as eval_count;
+                        # this channel reported completion_tokens only,
+                        # so usage_based_cost() read None and billed
+                        # every Kimi reply - the one paid channel - at
+                        # the floor.
+                        if "completion_tokens" in data["usage"]:
+                            usage["eval_count"] = (
+                                data["usage"]["completion_tokens"])
     except requests.exceptions.RequestException as e:
+        if not sent_any:
+            # Nothing has been streamed, so this can still be raised
+            # and answered by another provider instead of becoming an
+            # error message the person has to read.
+            raise Unreachable(str(e))
         # Mid-stream. Text is already on screen, so this is said at the
         # end of it rather than raised - there is nowhere to fail over
         # to once the reader has started reading.
-        if not sent_any:
-            yield "[Could not reach OpenRouter: %s]" % e
-            return
         yield ("\n\n_…the connection to the model dropped part-way "
                "through. The answer above is incomplete — ask again to "
                "get the rest._")

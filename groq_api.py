@@ -343,28 +343,10 @@ def budget_state():
     return _budget["remaining"], left
 
 
-class ProviderUnavailable(Exception):
-    """This channel cannot answer, and nothing has been streamed yet.
-
-    The contract every subclass keeps: RAISED ONLY BEFORE THE FIRST
-    CHUNK. That is what makes it recoverable - the caller can answer the
-    same conversation from somewhere else and the reader never sees a
-    seam. Once any text has reached the browser it is too late to switch
-    providers, so a failure after that point is yielded as a sentence
-    instead, never raised.
-
-    Catch this rather than the subclasses: a drained budget and an
-    unreachable host both mean "ask someone else", and the three call
-    sites in app.py do the same thing for both.
-    """
-
-
-class RateLimited(ProviderUnavailable):
-    """Groq's per-minute token budget is spent."""
-
-
-class Unreachable(ProviderUnavailable):
-    """Groq could not be reached at all - DNS, TLS, timeout, reset."""
+# The failure contract is shared by every channel now and lives in
+# providers.py. Imported by name here on purpose: app.py and the checks
+# say groq_api.ProviderUnavailable, and this keeps that the same class.
+from providers import ProviderUnavailable, RateLimited, Unreachable  # noqa: E402,F401
 
 
 # What to ask for when the caller says nothing. "low" rather than the
@@ -675,7 +657,17 @@ def stream_chat(model, history, options=None, images=None, usage=None):
                 raise Unreachable(
                     "the conversation grew past what one request may "
                     "spend in a minute")
+            if r.status_code >= 500:
+                # Groq's problem, not the request's, and nothing has
+                # streamed - so this is exactly what failover is for.
+                # It used to be yielded as "[Groq error 502.]", which
+                # made a provider outage the reply.
+                raise Unreachable("Groq returned %d" % r.status_code)
             if r.status_code != 200:
+                # A 4xx that is not 429/413/401/403 is something wrong
+                # with THIS request - a bad model name, a malformed
+                # body. Another provider would refuse it the same way,
+                # so it is said rather than raised.
                 detail = ""
                 try:
                     detail = (r.json().get("error", {}).get("message")

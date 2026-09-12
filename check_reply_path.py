@@ -151,7 +151,9 @@ events, text = events_and_text(r.get_data(as_text=True))
 check("browser is told it is an error",
       any(e.get("event") == "reply" and e.get("kind") == "error"
           for e in events), True)
-check("what the person saw", text.startswith("partial answer[Error talking to ollama"), True)
+check("what the person saw",
+      text.startswith("partial answer[Something went wrong talking to"), True)
+check("and not the exception's own text", "connection reset" in text, False)
 msg = stored(tid)[-1]
 check("stored as kind error", msg.get("kind"), "error")
 check("not charged", msg.get("charged"), None)
@@ -246,6 +248,146 @@ big["messages"] = [{"role": "user", "content": "x" * 50_000, "type": "text",
                     "kind": "text"}] * 3
 check("and at most HISTORY_MAX_CHARS, oldest dropped first",
       len(appmod._model_history(big)), 2)
+
+print("\n== failover: a channel that refuses before its first chunk ==")
+import providers                                          # noqa: E402
+import requests                                           # noqa: E402
+
+
+def refusing(exc):
+    def streamer(model, history, **kw):
+        CALLS.append({"model": model, "history": list(history), "kw": kw})
+        raise exc
+        yield  # noqa: F841 - makes this a generator  # pragma: no cover
+    return streamer
+
+
+# The chain for a local primary is the fast channel. Neither is real
+# here, so both ends are stubbed: the chain says "groq, fake-groq" and
+# the streamer table says what fake-groq does.
+appmod._groq_model_for = lambda mode: "fake-groq"
+appmod.PROVIDER_STREAMERS["groq"] = fake_streamer(["from the fast channel"])
+use(refusing(providers.Unreachable("connection refused")))
+tid = new_thread()
+CALLS.clear()
+r = send(tid, "who answers?")
+events, text = events_and_text(r.get_data(as_text=True))
+check("the second channel answered", text, "from the fast channel")
+check("no error event - the reader never saw a seam",
+      [e for e in events if e.get("event") == "reply"], [])
+msg = stored(tid)[-1]
+check("stored as an answer", msg.get("kind"), "text")
+check("from the channel that actually answered", msg.get("provider"), "groq")
+check("and marked as a fallback", msg.get("fallback"), True)
+check("both channels were asked, in order",
+      [c["model"] for c in CALLS], ["fake-model", "fake-groq"])
+
+print("\n== failover: everybody refuses ==")
+appmod.PROVIDER_STREAMERS["groq"] = refusing(providers.Unreachable("502"))
+use(refusing(providers.Unreachable("HTTPConnectionPool(host='x', port=1)")))
+before = balance()
+r = send(tid, "anyone?")
+events, text = events_and_text(r.get_data(as_text=True))
+check("told as an error", any(e.get("kind") == "error" for e in events), True)
+check("names the channels in a person's words",
+      "the local model is not answering" in text
+      and "the fast channel is not answering" in text, True)
+check("and never the exception text", "HTTPConnectionPool" in text, False)
+check("stored as kind error", stored(tid)[-1].get("kind"), "error")
+check("nothing charged", balance(), before)
+
+print("\n== failover: the fast channel is busy, and refills soon ==")
+# Rate-limited with a Retry-After of one second and nobody else to ask:
+# the server waits it out and says so at every slice.
+appmod._failover_chain = lambda provider, mode: []
+attempts = {"n": 0}
+
+
+def busy_then_fine(model, history, **kw):
+    attempts["n"] += 1
+    if attempts["n"] == 1:
+        raise providers.RateLimited("1")
+    yield "answered after the window rolled"
+
+
+use(busy_then_fine)
+r = send(tid, "patience?")
+events, text = events_and_text(r.get_data(as_text=True))
+waits = [e for e in events if e.get("event") == "wait"]
+check("the browser was told to wait", len(waits) >= 1, True)
+check("with a countdown in seconds",
+      all(isinstance(e.get("seconds"), int) and e["seconds"] > 0
+          for e in waits), True)
+check("then answered", text, "answered after the window rolled")
+check("as an ordinary reply", stored(tid)[-1].get("kind"), "text")
+check("on the second attempt", attempts["n"], 2)
+
+print("\n== the local channel keeps the same contract ==")
+
+
+class FakeOllama:
+    """Enough of requests.Response for stream_ollama."""
+
+    def __init__(self, lines, status=200, boom_after=None):
+        self._lines, self.status_code, self._boom = lines, status, boom_after
+
+    def iter_lines(self):
+        for i, line in enumerate(self._lines):
+            if self._boom is not None and i >= self._boom:
+                raise requests.exceptions.ConnectionError("reset")
+            yield json.dumps(line).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def ollama(response, usage=None):
+    real = requests.post
+    requests.post = lambda *a, **k: response
+    try:
+        return "".join(appmod.stream_ollama(
+            "m", [{"role": "user", "content": "hi"}], usage=usage))
+    finally:
+        requests.post = real
+
+
+def raises(fn, exc):
+    try:
+        fn()
+    except exc:
+        return True
+    except Exception:                                    # noqa: BLE001
+        return False
+    return False
+
+
+check("a 500 before any chunk is raised, not written into the chat",
+      raises(lambda: ollama(FakeOllama([], status=500)),
+             providers.Unreachable), True)
+check("a refused connection likewise",
+      raises(lambda: ollama(FakeOllama([{"message": {"content": "x"}}],
+                                       boom_after=0)),
+             providers.Unreachable), True)
+check("an Ollama error before any chunk likewise",
+      raises(lambda: ollama(FakeOllama([{"error": "model not found"}])),
+             providers.Unreachable), True)
+out = ollama(FakeOllama([{"message": {"content": "half an"}},
+                         {"message": {"content": " answer"}}], boom_after=1))
+check("a drop after the first chunk is said, not raised",
+      out.startswith("half an") and "dropped part-way" in out, True)
+usage = {}
+out = ollama(FakeOllama([{"message": {"content": "cut"}},
+                         {"done": True, "done_reason": "length",
+                          "eval_count": 900}]), usage=usage)
+check("a reply cut off at num_predict says so", "length limit" in out, True)
+check("and reports why it stopped", usage.get("finish_reason"), "length")
+check("and what it generated", usage.get("eval_count"), 900)
+out = ollama(FakeOllama([{"message": {"content": "done"}},
+                         {"done": True, "done_reason": "stop"}]))
+check("quiet when it finished", "length limit" in out, False)
 
 print("\n== the page names its build ==")
 html = client.get("/app").get_data(as_text=True)
