@@ -717,6 +717,90 @@ def save_credits(owner_id, credits):
         conn.commit()
 
 
+def debit(owner_id: str, amount: int) -> int | None:
+    """Take `amount` from a balance that can afford it. -> the new
+    balance, or None if it could not and NOTHING was taken.
+
+    THE CHECK AND THE TAKE ARE ONE STATEMENT. app.py used to read the
+    balance, compare, and write it back - under a Python lock for
+    signed-in users, on a fresh copy per request for guests - so two
+    requests could both read 20, both pass, and both write. And when
+    the balance was short, spend_credits returned False without
+    deducting anything, which the callers ignored: a person with a
+    balance in the teens was served long replies free, indefinitely.
+
+    For a cost known in advance (an image, a code run). The debit is
+    the pre-check; a None here is the 402.
+    """
+    amount = max(0, int(amount))
+    conn = _connect()
+    with _lock:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            cur = conn.execute(
+                "UPDATE credits SET balance = balance - ? "
+                "WHERE owner_id = ? AND balance >= ?",
+                (amount, owner_id, amount))
+            if cur.rowcount == 0:
+                conn.execute("ROLLBACK")
+                return None
+            row = conn.execute("SELECT balance FROM credits WHERE owner_id = ?",
+                               (owner_id,)).fetchone()
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+    return int(row["balance"]) if row else None
+
+
+def debit_to_floor(owner_id: str, amount: int) -> tuple[int, int]:
+    """Take up to `amount`, never below zero. -> (charged, new_balance).
+
+    For a cost known only afterwards - a streamed reply is metered on
+    what it generated, and the stream can be abandoned half-way, so it
+    cannot be reserved up front without refunding on every exit path.
+    A person with 20 credits and a 60-credit reply pays 20 and lands on
+    zero: never free, never negative, and two tabs at once can at
+    worst each pay down to zero once.
+    """
+    amount = max(0, int(amount))
+    conn = _connect()
+    with _lock:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute("SELECT balance FROM credits WHERE owner_id = ?",
+                               (owner_id,)).fetchone()
+            if row is None:
+                conn.execute("ROLLBACK")
+                return 0, 0
+            balance = int(row["balance"])
+            charged = min(amount, max(0, balance))
+            if charged:
+                conn.execute("UPDATE credits SET balance = balance - ? "
+                             "WHERE owner_id = ?", (charged, owner_id))
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+    return charged, balance - charged
+
+
+def credit(owner_id: str, amount: int) -> int | None:
+    """Give `amount` back - a generation that failed after it was paid
+    for. -> the new balance, or None if there is no such account."""
+    amount = max(0, int(amount))
+    conn = _connect()
+    with _lock:
+        cur = conn.execute("UPDATE credits SET balance = balance + ? "
+                           "WHERE owner_id = ?", (amount, owner_id))
+        conn.commit()
+        if cur.rowcount == 0:
+            return None
+        row = conn.execute("SELECT balance FROM credits WHERE owner_id = ?",
+                           (owner_id,)).fetchone()
+    return int(row["balance"]) if row else None
+
+
 # ----------------------------------------------------------------------
 # Users (+ their own credits row)
 # ----------------------------------------------------------------------
@@ -789,13 +873,17 @@ def save_users(users):
                 "to be prevented." % (email, seen[email], uid))
         seen[email] = uid
 
+    # CREDITS ARE NOT WRITTEN HERE ANY MORE. This used to delete and
+    # reinsert every user's credits row on every call - and it was
+    # called on every spend, every refill and every /api/credits - so
+    # the in-memory copy overwrote the table each time, which is what
+    # made the table's own arithmetic (debit, debit_to_floor) impossible
+    # to trust. The credits row is authoritative now; save_credits()
+    # writes it, and the in-memory copy is refreshed from what the
+    # table says after each debit.
     conn = _connect()
     with _lock:
         conn.execute("DELETE FROM users")
-        # Leave every guest's credits row alone - only clear rows that
-        # belonged to a real (now-replaced) user id.
-        conn.execute("DELETE FROM credits WHERE owner_id NOT LIKE 'guest:%' "
-                     "AND owner_id != ?", (_GUEST_OWNER,))
         for uid, u in users.items():
             # email_verified WAS MISSING HERE, and this function
             # deletes every row before reinserting it - so verifying an
@@ -821,12 +909,6 @@ def save_users(users):
                  1 if u.get("email_verified") else 0,
                  u.get("paddle_customer_id"), u.get("paddle_subscription_id"),
                  u.get("subscription_updated_at")),
-            )
-            c = u["credits"]
-            conn.execute(
-                "INSERT INTO credits (owner_id, balance, starting, plan, last_refill) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (uid, c["balance"], c["starting"], c["plan"], c["last_refill"]),
             )
         conn.commit()
 
@@ -1926,6 +2008,28 @@ def video_used(owner_id, month):
         "SELECT used FROM video_quota WHERE owner_id=? AND month=?",
         (owner_id, month)).fetchone()
     return row["used"] if row else 0
+
+
+def video_try_consume(owner_id: str, month: str, limit: int) -> bool:
+    """Take one generation if the limit allows. -> whether it did.
+
+    video_consume() below is atomic on its own, but the CHECK was not:
+    app.py read the count, compared it to the limit, and then consumed
+    - so two requests arriving together both read 1, both passed, and
+    both generated, on a quota that costs money per clip. Here the
+    comparison is in the statement, so only one of them can win.
+    """
+    if limit <= 0:
+        return False
+    conn = _connect()
+    with _lock:
+        cur = conn.execute(
+            "INSERT INTO video_quota (owner_id, month, used) VALUES (?,?,1) "
+            "ON CONFLICT(owner_id, month) DO UPDATE SET used = used + 1 "
+            "WHERE used < ?",
+            (owner_id, month, int(limit)))
+        conn.commit()
+    return (cur.rowcount or 0) > 0
 
 
 def video_consume(owner_id, month):

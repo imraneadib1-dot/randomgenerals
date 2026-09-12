@@ -1048,7 +1048,11 @@ def plan_perks():
     return {"free": free_list, "pro": pro_list}
 
 DATA_LOCK = threading.Lock()
-CREDITS_LOCK = threading.Lock()
+# An RLock: the guest save callback from current_account() takes this
+# lock itself, and spend_credits calls that callback while holding it.
+# With a plain Lock that is a deadlock on the one path nobody tested -
+# a guest whose balance had run short.
+CREDITS_LOCK = threading.RLock()
 # RLock, not Lock. _find_or_create_user() has to hold this across the
 # "is this email taken" check AND the save that follows, and save_users()
 # takes the same lock - which a plain Lock would deadlock on.
@@ -1408,7 +1412,12 @@ def current_account():
     save callback."""
     uid = session.get("user_id")
     if uid and uid in USERS:
-        return USERS[uid]["credits"], (lambda: save_users())
+        # The credits ROW is what the atomic debits act on, so the
+        # in-memory copy is a cache of it, saved on its own. save_users
+        # used to rewrite every credits row from memory on every call,
+        # which overwrote whatever the table's own arithmetic had done.
+        user_credits = USERS[uid]["credits"]
+        return user_credits, (lambda: db.save_credits(uid, user_credits))
 
     gid = current_owner_id()
     credits = db.load_credits(gid)
@@ -1460,21 +1469,67 @@ def credits_view(credits):
     return view
 
 
-def spend_credits(amount):
-    """Deduct credits from the current account (user or guest) if there's
-    enough balance, refilling first if it's due. Returns True on success."""
+def spend_credits(amount: int) -> int:
+    """Charge the current account for work already done. -> what was
+    actually charged, which may be less than asked.
+
+    Metered after the fact - a reply's cost is known only once it has
+    streamed - so this takes what it can down to zero (db.debit_to_floor)
+    and never refuses. It USED to refuse: with a balance below the
+    cost it returned False without deducting anything, and every
+    caller ignored the return, so a person whose balance had drifted
+    into the teens was served long replies free, indefinitely.
+
+    The debit happens in the table, in one statement, so two tabs
+    finishing at once cannot both read the old balance and both write.
+    The in-memory copy is refreshed from what the table says.
+    """
+    owner = current_owner_id()
     credits, save = current_account()
     with CREDITS_LOCK:
         apply_refill(credits)
-        if credits["balance"] < amount:
-            save()
-            return False
-        credits["balance"] -= amount
+    save()              # the refill, and for a new guest the row itself
+    charged, new_balance = db.debit_to_floor(owner, int(amount))
+    credits["balance"] = new_balance
+    if charged:
+        # Counters for the usage chart. Written here rather than at the
+        # call sites so no future spender can forget to record itself.
+        db.note_usage(owner, charged)
+    return charged
+
+
+def charge_up_front(cost: int):
+    """For work whose price is known before it starts - an image, a code
+    run. -> (ok, credits) where `credits` is the account after refill,
+    for the 402 body when `ok` is False.
+
+    The debit IS the check. The old shape read the balance, compared,
+    generated, and charged afterwards, so two requests arriving together
+    both passed the comparison; and a generation that failed after the
+    charge was not always refunded. Callers refund with refund_charge()
+    when the work does not happen.
+    """
+    owner = current_owner_id()
+    credits, save = current_account()
+    with CREDITS_LOCK:
+        apply_refill(credits)
     save()
-    # Counters for the usage chart. Written here rather than at the call
-    # sites so no future spender can forget to record itself.
-    db.note_usage(current_owner_id(), amount)
-    return True
+    new_balance = db.debit(owner, int(cost))
+    if new_balance is None:
+        return False, credits
+    credits["balance"] = new_balance
+    db.note_usage(owner, int(cost))
+    return True, credits
+
+
+def refund_charge(cost: int) -> None:
+    """Give back what charge_up_front took, when the work did not happen."""
+    owner = current_owner_id()
+    new_balance = db.credit(owner, int(cost))
+    credits, _save = current_account()
+    if new_balance is not None:
+        credits["balance"] = new_balance
+    db.note_usage(owner, -int(cost), messages=0)
 
 
 @app.template_global()
@@ -2329,6 +2384,7 @@ def _create_user(email, password_hash="", google_id=None):
         },
     }
     save_users()
+    db.save_credits(uid, USERS[uid]["credits"])
     return uid
 
 
@@ -2744,6 +2800,9 @@ def _apply_plan(user, plan):
     user["credits"]["balance"] = PLANS[plan]["cap"]
     user["credits"]["starting"] = PLANS[plan]["cap"]
     user["credits"]["last_refill"] = now_iso()
+    # The credits row is written here, by name, because save_users() no
+    # longer carries it - see db.save_users.
+    db.save_credits(user["id"], user["credits"])
     if plan == "free":
         user["stripe_subscription_id"] = None
         user["subscription_status"] = None
@@ -6089,10 +6148,8 @@ def generate_image_route():
     if blocked is not None:
         return jsonify({"error": blocked}), 400
 
-    account_credits, save_account = current_account()
-    apply_refill(account_credits)
-    save_account()
-    if account_credits["balance"] < cost:
+    ok, account_credits = charge_up_front(cost)
+    if not ok:
         return jsonify({
             "error": "Out of credits for image generation. They'll refill "
                      "automatically, or upgrade to Pro in Settings.",
@@ -6117,6 +6174,8 @@ def generate_image_route():
         enhance=payload.get("enhance") is not False)
 
     if error:
+        # Paid for up front; nothing was made. Give it back.
+        refund_charge(cost)
         thread["updated"] = now_iso()
         save_thread(thread)
         return jsonify({"error": error}), 502
@@ -6132,12 +6191,10 @@ def generate_image_route():
         })
         thread["updated"] = now_iso()
     save_thread(thread)
-    spend_credits(cost)
 
-    # Not echoing a `credits` field here - spend_credits() re-fetches its
-    # own account copy (a fresh dict per call for guests, see
-    # current_account()), so account_credits above is stale by now. The
-    # frontend re-fetches /api/credits itself right after, same as it
+    # Charged up front (charge_up_front above), not here. Not echoing a
+    # `credits` field either: the frontend re-fetches /api/credits
+    # itself right after, same as it
     # does following a normal chat reply.
     return jsonify({"url": url})
 
@@ -6486,19 +6543,19 @@ def video_generate():
     owner = current_owner_id()
     month = _video_period_key(plan)
     limit = features.video_quota_for(plan)
-    if db.video_used(owner, month) >= limit:
+    # Counted BEFORE the call, and the comparison to the limit is inside
+    # the same statement as the count (db.video_try_consume). It used to
+    # be a read, a compare, and then a consume - so two requests arriving
+    # together both read 1, both passed, and both generated, and the
+    # overage is money rather than a rate limit. Refunded below if
+    # PixVerse never accepted the job.
+    if not db.video_try_consume(owner, month, limit):
         period = features.video_period_for(plan)
         return jsonify({
             "error": "You've used all %d video generations for this %s." % (
                 limit, period),
             "quota": _video_quota_view(owner, plan, signed_in),
         }), 402
-
-    # Counted BEFORE the call, not after. Two requests arriving together
-    # would otherwise both pass the check above and both generate, and
-    # the overage is money rather than a rate limit. Refunded below if
-    # PixVerse never accepted the job.
-    db.video_consume(owner, month)
 
     seconds = pixverse.clamp_seconds(payload.get("seconds"))
     if backend_name == "pixverse":
@@ -7267,8 +7324,7 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                     cost = (usage_based_cost(usage.get("eval_count"), mode)
                             + tools_used.cost)
                     try:
-                        if spend_credits(cost):
-                            charged = cost
+                        charged = spend_credits(cost)
                     except Exception as e:              # noqa: BLE001
                         # Charging runs before the save below so the
                         # amount can be recorded on the turn. A failure
