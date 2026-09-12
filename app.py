@@ -41,6 +41,7 @@ import features  # noqa: E402  per-tier feature flags - see features.py
 import stats  # noqa: E402  owner-only usage figures - see stats.py
 import dashboard  # noqa: E402  visitors, money, requests - see dashboard.py
 import providers  # noqa: E402  how every channel fails - see providers.py
+from ratelimit import Limiter, limited  # noqa: E402  per-caller limits
 import groq_api  # noqa: E402  fast open-weight models - see groq_api.py
 import openai_api  # noqa: E402  OpenAI-compatible API - see openai_api.py
 import connectors  # noqa: E402  pasted links, turned into tools
@@ -331,6 +332,46 @@ def _client_ip():
             or (request.headers.get("X-Forwarded-For", "").split(",")[0]
                 .strip())
             or request.remote_addr or "")
+
+
+# PER-CALLER LIMITS
+#
+# Nothing limited how often one caller could hit a generation route,
+# sign-in, or sign-up. The only "rate limit" was Groq's per-minute token
+# budget - shared by everyone on the site - so one script looping
+# /api/chat drained it for every other visitor. See ratelimit.py for
+# the bucket, and for why in-process state is correct at --workers 1.
+#
+# Generation is keyed by account for signed-in users and by address for
+# guests: a guest id comes from a cookie, and a cookie can be discarded
+# per request. Sign-in and sign-up are keyed by address AND by the
+# email being tried, so neither a single attacker nor a spread-out one
+# gets unlimited guesses at one account.
+LIMIT_CHAT = Limiter(rate=20, per=60, burst=5)
+LIMIT_IMAGE = Limiter(rate=6, per=60, burst=3)
+LIMIT_VIDEO = Limiter(rate=3, per=60, burst=2)
+LIMIT_SEARCH = Limiter(rate=20, per=60, burst=10)
+LIMIT_RUN = Limiter(rate=12, per=60, burst=4)
+LIMIT_DIAGRAM = Limiter(rate=12, per=60, burst=4)
+LIMIT_LOGIN_IP = Limiter(rate=10, per=600, burst=10)
+LIMIT_LOGIN_EMAIL = Limiter(rate=5, per=600, burst=5)
+LIMIT_SIGNUP_IP = Limiter(rate=5, per=3600, burst=5)
+LIMIT_VERIFY_SEND = Limiter(rate=1, per=60, burst=1)
+LIMIT_RESET_IP = Limiter(rate=10, per=3600, burst=10)
+
+
+def _limit_key_account() -> str:
+    uid = session.get("user_id")
+    return ("user:%s" % uid) if uid else ("ip:%s" % _client_ip())
+
+
+def _limit_key_ip() -> str:
+    return "ip:%s" % _client_ip()
+
+
+def _limit_key_email() -> str:
+    payload = request.get_json(force=True, silent=True) or {}
+    return "email:%s" % (payload.get("email") or "").strip().lower()
 
 
 @app.before_request
@@ -2444,6 +2485,7 @@ def auth_me():
 
 
 @app.route("/api/auth/signup", methods=["POST"])
+@limited("signup", LIMIT_SIGNUP_IP, key=_limit_key_ip)
 def auth_signup():
     payload = request.get_json(force=True, silent=True) or {}
     email = (payload.get("email") or "").strip().lower()
@@ -2479,6 +2521,8 @@ def auth_signup():
 
 
 @app.route("/api/auth/login", methods=["POST"])
+@limited("login-ip", LIMIT_LOGIN_IP, key=_limit_key_ip)
+@limited("login-email", LIMIT_LOGIN_EMAIL, key=_limit_key_email)
 def auth_login():
     payload = request.get_json(force=True, silent=True) or {}
     email = (payload.get("email") or "").strip().lower()
@@ -2591,6 +2635,7 @@ def _issue_code(email, name=""):
 
 
 @app.route("/api/auth/verify/send", methods=["POST"])
+@limited("verify-send", LIMIT_VERIFY_SEND, key=_limit_key_account)
 def verify_send():
     """Send a fresh code to the signed-in account's address."""
     uid = session.get("user_id")
@@ -2646,6 +2691,16 @@ def verify_confirm():
     # Constant-time compare. A six-digit code is small enough that a
     # timing signal on the first differing character is worth denying.
     if not hmac.compare_digest(str(row["code"]), code):
+        # A guessing budget, the same one password resets have. Six
+        # digits is a million combinations - a lot for a person, an
+        # afternoon for a script - and this route had no counter at
+        # all, so the code lived out its full fifteen minutes however
+        # many wrong tries arrived.
+        if db.bump_verification_attempts(email) >= RESET_MAX_ATTEMPTS:
+            db.delete_verification_code(email)
+            return jsonify({
+                "error": "Too many wrong tries. Send a new code.",
+            }), 400
         return jsonify({"error": "That code is not right."}), 400
 
     db.delete_verification_code(email)
@@ -3823,6 +3878,7 @@ def account_profile():
 # its own cooldown.
 # ----------------------------------------------------------------------
 @app.route("/api/auth/reset/request", methods=["POST"])
+@limited("reset-ip", LIMIT_RESET_IP, key=_limit_key_ip)
 def reset_request():
     """Mail a reset code. Always answers the same way.
 
@@ -5902,6 +5958,7 @@ def _dispatch_tool(name, raw_args, connector_map):
 
 
 @app.route("/api/web-search", methods=["POST"])
+@limited("search", LIMIT_SEARCH, key=_limit_key_account)
 def web_search_route():
     """Runs a live web search and hands the results back as plain JSON -
     the frontend renders them as source chips *and* sends the same list
@@ -6162,6 +6219,7 @@ def _image_model_name(backend):
 
 
 @app.route("/api/generate-image", methods=["POST"])
+@limited("image", LIMIT_IMAGE, key=_limit_key_account)
 def generate_image_route():
     payload = request.get_json(force=True, silent=True) or {}
     tid = payload.get("thread_id")
@@ -6443,6 +6501,7 @@ def _clean_mermaid(text):
 
 
 @app.route("/api/diagram", methods=["POST"])
+@limited("diagram", LIMIT_DIAGRAM, key=_limit_key_account)
 def diagram_route():
     payload = request.get_json(force=True, silent=True) or {}
     prompt = (payload.get("prompt") or "").strip()
@@ -6552,6 +6611,7 @@ def video_status():
 
 
 @app.route("/api/video/generate", methods=["POST"])
+@limited("video", LIMIT_VIDEO, key=_limit_key_account)
 def video_generate():
     payload = request.get_json(force=True, silent=True) or {}
     prompt = (payload.get("prompt") or "").strip()
@@ -6682,6 +6742,7 @@ def video_job(job_id):
 
 # ----------------------------------------------------------------------
 @app.route("/api/run-code", methods=["POST"])
+@limited("run", LIMIT_RUN, key=_limit_key_account)
 def run_code_route():
     if not session.get("user_id"):
         return jsonify({"error": "Sign in to run code."}), 401
@@ -7428,6 +7489,7 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
 
 
 @app.route("/api/chat", methods=["POST"])
+@limited("chat", LIMIT_CHAT, key=_limit_key_account)
 def chat():
     payload = request.get_json(force=True, silent=True) or {}
     tid = payload.get("thread_id")
@@ -7519,6 +7581,7 @@ def chat():
 
 
 @app.route("/api/threads/<tid>/regenerate", methods=["POST"])
+@limited("chat", LIMIT_CHAT, key=_limit_key_account)
 def regenerate(tid):
     """Drops the last reply and asks the same question again - same
     history, same attachments/sources it originally had, fresh output."""

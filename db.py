@@ -249,7 +249,9 @@ CREATE TABLE IF NOT EXISTS password_resets (
 CREATE TABLE IF NOT EXISTS verification_codes (
     email       TEXT PRIMARY KEY,
     code        TEXT NOT NULL,
-    expires_at  TEXT NOT NULL
+    expires_at  TEXT NOT NULL,
+    -- Guessing budget, as password_resets has. This table had none.
+    attempts    INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS memories (
@@ -495,6 +497,13 @@ def _migrate_columns(conn):
             conn.execute(
                 f"ALTER TABLE user_settings ADD COLUMN {col} {ddl}")
             conn.commit()
+
+    verify_cols = {row["name"] for row in
+                   conn.execute("PRAGMA table_info(verification_codes)")}
+    if verify_cols and "attempts" not in verify_cols:
+        conn.execute("ALTER TABLE verification_codes ADD COLUMN attempts "
+                     "INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
 
     thread_cols = {row["name"] for row in conn.execute("PRAGMA table_info(threads)")}
     if "owner_id" not in thread_cols:
@@ -1967,13 +1976,25 @@ def save_verification_code(email, code, expires_at):
     conn = _connect()
     with _lock:
         conn.execute(
-            "INSERT INTO verification_codes (email, code, expires_at) "
-            "VALUES (?, ?, ?) "
+            "INSERT INTO verification_codes (email, code, expires_at, attempts) "
+            "VALUES (?, ?, ?, 0) "
             "ON CONFLICT(email) DO UPDATE SET code=excluded.code, "
-            "expires_at=excluded.expires_at",
+            "expires_at=excluded.expires_at, attempts=0",
             (email, code, expires_at),
         )
         conn.commit()
+
+
+def bump_verification_attempts(email):
+    """One more wrong guess. -> the new count."""
+    conn = _connect()
+    with _lock:
+        conn.execute("UPDATE verification_codes SET attempts = attempts + 1 "
+                     "WHERE email = ?", (email,))
+        conn.commit()
+        row = conn.execute("SELECT attempts FROM verification_codes "
+                           "WHERE email = ?", (email,)).fetchone()
+    return int(row["attempts"]) if row else 0
 
 
 def get_verification_code(email):

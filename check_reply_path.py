@@ -43,6 +43,13 @@ sys.path.insert(0, os.path.abspath("."))
 import app as appmod                                      # noqa: E402
 import db                                                 # noqa: E402
 
+# This check fires far more requests from one account than a person
+# would, and it is not about the per-caller limits - check_ratelimit.py
+# is. Lifted here so a 429 cannot masquerade as a reply-path failure.
+for _limiter in (appmod.LIMIT_CHAT, appmod.LIMIT_IMAGE, appmod.LIMIT_RUN,
+                 appmod.LIMIT_SEARCH, appmod.LIMIT_DIAGRAM):
+    _limiter.rate = _limiter.burst = 10 ** 6
+
 FAILED = []
 SEP = "\x1e"
 
