@@ -510,6 +510,87 @@ def parse_event(payload):
     return state
 
 
+def _subscription_call(method, path, body=None):
+    """One authenticated call that returns a subscription. -> (state, error)."""
+    if not configured():
+        return None, config_problem()
+    try:
+        r = requests.request(method, f"{api_base()}{path}", headers=_headers(),
+                             json=body, timeout=20)
+    except requests.exceptions.RequestException as e:
+        return None, f"Could not reach Paddle: {e}"
+    if r.status_code == 404:
+        return None, "not found"
+    if r.status_code >= 400:
+        detail = ""
+        try:
+            err = r.json().get("error", {})
+            detail = err.get("detail") or err.get("code") or ""
+        except ValueError:
+            detail = r.text[:200]
+        return None, f"Paddle refused ({r.status_code}): {detail}"
+    try:
+        return subscription_state(r.json()["data"]), None
+    except (ValueError, KeyError, TypeError):
+        return None, "Unexpected response from Paddle."
+
+
+def cancel_subscription(sub_id, immediately=False):
+    """Cancel at Paddle. -> (state, error).
+
+    THE APP HAD NO WAY TO DO THIS. "Downgrade to Free" set the local
+    plan to free and stopped there, so the customer lost Pro that
+    minute and Paddle carried on charging them every month for a
+    subscription this app no longer showed. Cancelling has to happen
+    where the billing happens.
+
+    `next_billing_period` (the default) keeps Pro until the period the
+    customer already paid for runs out - the honest reading of
+    "cancel". `immediately` is for deleting the account, where there is
+    nobody left to keep it for.
+    """
+    if not sub_id:
+        return None, "no subscription id"
+    return _subscription_call(
+        "POST", f"/subscriptions/{sub_id}/cancel",
+        {"effective_from": "immediately" if immediately
+         else "next_billing_period"})
+
+
+def resume_subscription(sub_id):
+    """Undo a scheduled cancellation. -> (state, error). Clearing
+    scheduled_change is how Paddle expresses 'never mind'."""
+    if not sub_id:
+        return None, "no subscription id"
+    return _subscription_call("PATCH", f"/subscriptions/{sub_id}",
+                              {"scheduled_change": None})
+
+
+def portal_session(customer_id):
+    """A link to Paddle's own customer portal. -> (url, error).
+
+    Card updates, invoices, and the receipts a customer may need for
+    their own accounts, on Paddle's page - the same idea as Stripe's
+    billing portal, which was the only one this app knew how to open.
+    """
+    if not configured():
+        return None, config_problem()
+    if not customer_id:
+        return None, "no customer id"
+    try:
+        r = requests.post(f"{api_base()}/customers/{customer_id}/portal-sessions",
+                          headers=_headers(), json={}, timeout=20)
+    except requests.exceptions.RequestException as e:
+        return None, f"Could not reach Paddle: {e}"
+    if r.status_code >= 400:
+        return None, f"Paddle refused ({r.status_code})"
+    try:
+        urls = r.json()["data"]["urls"]
+        return urls["general"]["overview"], None
+    except (ValueError, KeyError, TypeError):
+        return None, "Unexpected response from Paddle."
+
+
 def get_subscription(sub_id):
     """What Paddle says a subscription is right now. -> (state, error).
 

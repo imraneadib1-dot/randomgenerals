@@ -2005,6 +2005,12 @@ const aboutStatusText = document.getElementById("aboutStatusText");
 const aboutModelName = document.getElementById("aboutModelName");
 
 let currentUser = null;
+// What /api/billing/subscription last said. The Free/Cancel button
+// reads it to know whether it is offering to cancel, to keep, or to
+// step down a plan that has no subscription behind it. Declared here,
+// next to currentUser, for the same temporal-dead-zone reason as the
+// declarations at the top of the file.
+let subscriptionState = null;
 
 function openSettings() {
   settingsBackdrop.hidden = false;
@@ -2337,8 +2343,7 @@ function refreshAuthUI() {
       currentUser.plan === "pro" ? "Pro plan" : "Free plan";
     planNote.textContent = `Signed in as ${currentUser.email}.`;
     planFreeBtn.disabled = currentUser.plan !== "pro";
-    planFreeBtn.textContent =
-      currentUser.plan === "pro" ? "Downgrade to Free" : "Current plan";
+    planFreeBtn.textContent = freeButtonLabel();
     planProBtn.hidden = currentUser.plan === "pro";
   } else {
     planNote.textContent = "Sign in to manage your plan.";
@@ -2431,9 +2436,62 @@ async function changePlan(plan) {
   }
 }
 planProBtn.addEventListener("click", () => changePlan("pro"));
-planFreeBtn.addEventListener("click", () => {
-  if (currentUser && currentUser.plan === "pro") changePlan("free");
-});
+planFreeBtn.addEventListener("click", () => leaveOrKeepPro());
+
+function freeButtonLabel() {
+  if (!currentUser || currentUser.plan !== "pro") return "Current plan";
+  if (subscriptionState && subscriptionState.has_billing_account) {
+    return subscriptionState.cancel_at_period_end
+      ? "Keep subscription"
+      : "Cancel subscription";
+  }
+  return "Downgrade to Free";
+}
+
+/* Leaving Pro is a cancellation at the payment provider, not a local
+   plan change. It used to be the latter: the plan flipped to free and
+   Paddle kept charging every month for a subscription the app no longer
+   showed. Pro stays until the paid period ends, and the same button
+   then offers to keep it. */
+async function leaveOrKeepPro() {
+  if (!currentUser || currentUser.plan !== "pro") return;
+  setError(planError, "");
+  const keeping = !!(subscriptionState && subscriptionState.cancel_at_period_end);
+  if (!keeping && subscriptionState && subscriptionState.has_billing_account) {
+    const until = subscriptionState.current_period_end
+      ? new Date(subscriptionState.current_period_end).toLocaleDateString(
+          undefined, { year: "numeric", month: "long", day: "numeric" })
+      : "the end of the paid period";
+    if (!confirm(`Cancel Pro? You keep it until ${until}, and you can change your mind before then.`)) {
+      return;
+    }
+  }
+  planFreeBtn.disabled = true;
+  try {
+    const res = await fetch(keeping ? "/api/billing/resume" : "/api/billing/cancel", {
+      method: "POST",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(planError, [data.error, data.detail].filter(Boolean).join(" ")
+        || "Could not change the subscription.");
+      return;
+    }
+    if (data.user) currentUser = data.user;
+    if (data.credits) renderCredits(data.credits);
+    await loadSubscription();
+    refreshAuthUI();
+    if (data.cancel_at_period_end) {
+      planNote.textContent = "Cancelled — Pro stays until the end of the paid period.";
+    } else if (keeping) {
+      planNote.textContent = "Kept — your subscription will renew as before.";
+    }
+  } catch (err) {
+    setError(planError, "Could not reach the server.");
+  } finally {
+    planFreeBtn.disabled = !(currentUser && currentUser.plan === "pro");
+  }
+}
 
 let billingLive = false;
 
@@ -2723,8 +2781,10 @@ async function loadSubscription() {
       return;
     }
     const s = await res.json();
+    subscriptionState = s;
     subDashboard.hidden = false;
     subPlanValue.textContent = `${s.plan_label} · ${s.price}`;
+    if (currentUser) planFreeBtn.textContent = freeButtonLabel();
 
     // Who this account is, not only what it is subscribed to. This panel
     // is where someone comes to check what they are being charged for,

@@ -221,6 +221,95 @@ check("an unreachable Paddle is reported, not fatal",
       any("sub_01" in e for e in result["errors"]), True)
 pb.get_subscription = pb_real_get
 
+print("\n== leaving Pro cancels at Paddle, and Pro stays until the period ends ==")
+paddle_calls = []
+
+
+def fake_call(method, path, body=None):
+    """Stands in for Paddle's API: records the call, answers with the
+    subscription in the state the call would leave it in."""
+    paddle_calls.append((method, path, body))
+    sub_id = path.split("/")[2]
+    if path.endswith("/cancel"):
+        if body and body.get("effective_from") == "immediately":
+            data = {"id": sub_id, "customer_id": "ctm_01", "status": "canceled"}
+        else:
+            data = {"id": sub_id, "customer_id": "ctm_01", "status": "active",
+                    "scheduled_change": {"action": "cancel"},
+                    "current_billing_period": {"ends_at": "2026-10-12T00:00:00Z"}}
+    else:                                    # PATCH: scheduled_change cleared
+        data = {"id": sub_id, "customer_id": "ctm_01", "status": "active",
+                "current_billing_period": {"ends_at": "2026-10-12T00:00:00Z"}}
+    return pb.subscription_state(data), None
+
+
+pb._subscription_call = fake_call
+# Sign in as the first payer, who is Pro with sub_01 and no scheduled
+# cancel any more (the reconciler above only touched sub_02).
+deliver(subscription_event("subscription.updated", uid, "active",
+                           "2026-09-10T10:00:00Z"))
+with client.session_transaction() as s:
+    s["user_id"] = uid
+r = client.post("/api/subscribe", json={"plan": "free"})
+check("accepted", r.status_code, 200)
+check("Paddle was asked to cancel at the end of the period",
+      paddle_calls[-1][:2] + (paddle_calls[-1][2].get("effective_from"),),
+      ("POST", "/subscriptions/sub_01/cancel", "next_billing_period"))
+check("the account is STILL Pro", user()["plan"], "pro")
+check("marked as cancelling", user()["cancel_at_period_end"], True)
+check("and the response says so", r.get_json().get("cancel_at_period_end"), True)
+
+r = client.post("/api/billing/resume")
+check("changing one's mind is accepted", r.status_code, 200)
+check("as a PATCH clearing the scheduled change",
+      paddle_calls[-1][:2] + (paddle_calls[-1][2].get("scheduled_change"),),
+      ("PATCH", "/subscriptions/sub_01", None))
+check("no longer cancelling", user()["cancel_at_period_end"], False)
+
+r = client.post("/api/billing/cancel")
+check("the dedicated cancel route does the same", r.status_code, 200)
+check("scheduled again", user()["cancel_at_period_end"], True)
+
+print("\n== the billing portal opens Paddle's ==")
+real_post = pb.requests.post
+
+
+class FakePortal:
+    status_code = 200
+
+    def json(self):
+        return {"data": {"urls": {"general": {
+            "overview": "https://customer-portal.paddle.com/cpl_x"}}}}
+
+
+pb.requests.post = lambda *a, **k: FakePortal()
+r = client.post("/api/billing/portal")
+pb.requests.post = real_post
+check("a Paddle customer gets a portal link", r.status_code, 200)
+check("to Paddle's portal",
+      (r.get_json().get("portal_url") or "").startswith(
+          "https://customer-portal.paddle.com/"), True)
+
+print("\n== deleting the account cancels immediately first ==")
+paddle_calls.clear()
+r = client.post("/api/account/delete", json={"confirm_email": "payer@example.com"})
+check("the delete goes through", r.status_code, 200)
+check("after cancelling NOW at Paddle",
+      paddle_calls and paddle_calls[-1][2].get("effective_from"), "immediately")
+check("the account is gone", uid in appmod.USERS, False)
+
+uid3 = appmod._create_user("payer3@example.com", password_hash="x")
+deliver(subscription_event("subscription.activated", uid3, "active",
+                           "2026-09-10T10:00:00Z", sub_id="sub_03",
+                           customer_id="ctm_03"))
+pb._subscription_call = lambda m, p, b=None: (None, "Paddle refused (503)")
+with client.session_transaction() as s:
+    s["user_id"] = uid3
+r = client.post("/api/account/delete", json={"confirm_email": "payer3@example.com"})
+check("if Paddle will not cancel, the account is NOT deleted", r.status_code, 502)
+check("and still exists", uid3 in appmod.USERS, True)
+check("still Pro", appmod.USERS[uid3]["plan"], "pro")
+
 print("")
 if FAILED:
     print("%d FAILED:" % len(FAILED))

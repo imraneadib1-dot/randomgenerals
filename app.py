@@ -2649,10 +2649,26 @@ def delete_account():
             "error": "Type your email address exactly to confirm.",
         }), 400
 
-    # A live subscription is the caller's to cancel first: deleting the
-    # account here would leave Paddle billing a customer this app can
-    # no longer recognise or refund.
-    if (user.get("subscription_status") or "") in ("active", "trialing"):
+    # A live Paddle subscription is cancelled NOW, at Paddle, before the
+    # row goes: deleting first would leave Paddle billing a customer
+    # this app could no longer recognise or refund. If Paddle will not
+    # cancel it, the account stays - and says why - because the other
+    # order is exactly the outcome this exists to prevent. (The old
+    # guard merely refused while the status was active, and "Downgrade
+    # to Free" nulled the status locally without cancelling anything,
+    # so the two together deleted a still-billing customer.)
+    if _paddle_subscription_live(user):
+        _state, err = paddle_billing.cancel_subscription(
+            user["paddle_subscription_id"], immediately=True)
+        if err:
+            return jsonify({
+                "error": "Your Pro subscription could not be cancelled at "
+                         "Paddle just now, so the account was not deleted. "
+                         "Try again in a moment.",
+                "detail": err,
+            }), 502
+    elif (user.get("subscription_status") or "") in ("active", "trialing"):
+        # A live subscription this app cannot cancel itself (Stripe).
         return jsonify({
             "error": "Cancel your Pro subscription first, so you are "
                      "not billed for an account that no longer exists.",
@@ -2878,9 +2894,86 @@ def subscribe():
                 "setup_url": "https://dashboard.stripe.com/apikeys",
             }), 503
 
+    if plan == "free" and _paddle_subscription_live(user):
+        # A PAYING CUSTOMER LEAVING IS A CANCELLATION AT PADDLE, not a
+        # local plan change. This used to set plan=free and stop: they
+        # lost Pro that minute and Paddle kept charging them monthly
+        # for a subscription the app no longer showed them.
+        return _cancel_paddle(user)
+
     _apply_plan(user, plan)
     save_users()
     return jsonify({"user": public_user(user), "credits": credits_view(user["credits"])})
+
+
+def _paddle_subscription_live(user: dict) -> bool:
+    """Is there a Paddle subscription that is still billing, or would
+    be? Includes one scheduled to cancel: it is still theirs to keep."""
+    return bool(paddle_billing.configured()
+                and user.get("paddle_subscription_id")
+                and (user.get("subscription_status") or "")
+                in paddle_billing.ACTIVE_STATUSES)
+
+
+def _cancel_paddle(user: dict, immediately: bool = False):
+    """Cancel at Paddle and apply what Paddle says back. -> a response."""
+    state, err = paddle_billing.cancel_subscription(
+        user["paddle_subscription_id"], immediately=immediately)
+    if err:
+        # 502: the request was right and the provider could not act on
+        # it. The person keeps what they have; nothing is half-done.
+        return jsonify({"error": "Paddle could not cancel the subscription "
+                                 "just now. Try again in a moment.",
+                        "detail": err}), 502
+    state["occurred_at"] = state.get("occurred_at") or now_iso()
+    _apply_subscription_state(user, state, force=True)
+    return jsonify({"user": public_user(user),
+                    "credits": credits_view(user["credits"]),
+                    "cancel_at_period_end": bool(user.get("cancel_at_period_end")),
+                    "current_period_end": user.get("current_period_end"),
+                    "status": user.get("subscription_status")})
+
+
+@app.route("/api/billing/cancel", methods=["POST"])
+def billing_cancel():
+    """Cancel at the end of the paid period. Pro stays until then."""
+    uid = session.get("user_id")
+    user = USERS.get(uid) if uid else None
+    if not user:
+        return jsonify({"error": "Sign in first."}), 401
+    if _paddle_subscription_live(user):
+        return _cancel_paddle(user)
+    if user["plan"] == "pro":
+        # Pro without a Paddle subscription - a mock upgrade or a plan
+        # granted by hand. Nothing to cancel anywhere; just step down.
+        _apply_plan(user, "free")
+        save_users()
+        return jsonify({"user": public_user(user),
+                        "credits": credits_view(user["credits"])})
+    return jsonify({"error": "There is no subscription to cancel."}), 400
+
+
+@app.route("/api/billing/resume", methods=["POST"])
+def billing_resume():
+    """Keep a subscription that was scheduled to cancel."""
+    uid = session.get("user_id")
+    user = USERS.get(uid) if uid else None
+    if not user:
+        return jsonify({"error": "Sign in first."}), 401
+    if not (_paddle_subscription_live(user) and user.get("cancel_at_period_end")):
+        return jsonify({"error": "There is no cancellation to undo."}), 400
+    state, err = paddle_billing.resume_subscription(user["paddle_subscription_id"])
+    if err:
+        return jsonify({"error": "Paddle could not resume the subscription "
+                                 "just now. Try again in a moment.",
+                        "detail": err}), 502
+    state["occurred_at"] = state.get("occurred_at") or now_iso()
+    _apply_subscription_state(user, state, force=True)
+    return jsonify({"user": public_user(user),
+                    "credits": credits_view(user["credits"]),
+                    "cancel_at_period_end": bool(user.get("cancel_at_period_end")),
+                    "current_period_end": user.get("current_period_end"),
+                    "status": user.get("subscription_status")})
 
 
 @app.route("/api/billing/portal", methods=["POST"])
@@ -2893,6 +2986,17 @@ def billing_portal():
     uid = session.get("user_id")
     if not uid or uid not in USERS:
         return jsonify({"error": "Sign in first."}), 401
+
+    # Paddle's portal for a Paddle customer. This route knew only
+    # Stripe's, so on the deployment that actually takes money the
+    # "Manage payment" button answered 503 to every paying customer.
+    if paddle_billing.configured() and USERS[uid].get("paddle_customer_id"):
+        url, err = paddle_billing.portal_session(USERS[uid]["paddle_customer_id"])
+        if err:
+            return jsonify({"error": "Could not open the billing portal.",
+                            "detail": err}), 502
+        return jsonify({"portal_url": url})
+
     if not billing_live():
         return jsonify({"error": "Billing isn't configured on this server."}), 503
 
@@ -3109,9 +3213,15 @@ def paddle_webhook():
                     "applied": applied})
 
 
-def _apply_subscription_state(user: dict, state: dict) -> bool:
+def _apply_subscription_state(user: dict, state: dict,
+                              force: bool = False) -> bool:
     """The one place a subscription's state reaches an account.
     -> True if applied, False if it was older than what is stored.
+
+    `force` is for a state this app just asked Paddle for - the
+    response to its own cancel or resume. That is the truth as of now
+    by definition, and a stamp comparison against it would only ever
+    lose to clock skew between Paddle and this server.
 
     Paddle delivers at least once and in no promised order. Before
     this, events were applied as they arrived, so a redelivered or
@@ -3123,7 +3233,8 @@ def _apply_subscription_state(user: dict, state: dict) -> bool:
     """
     newer = state.get("occurred_at") or ""
     known = user.get("subscription_updated_at") or ""
-    if newer and known and _paddle_time(newer) < _paddle_time(known):
+    if (not force and newer and known
+            and _paddle_time(newer) < _paddle_time(known)):
         return False
 
     if state.get("active"):
