@@ -1,5 +1,5 @@
 import { state } from "./state.js";
-import { del as deleteJSON, explain, getJSON } from "./api.js";
+import { del as deleteJSON, explain, getJSON, patchJSON } from "./api.js";
 import { confirmDialog } from "./confirm.js";
 import { toast } from "./toast.js";
 import { readPref, writePref } from "./appearance.js";
@@ -41,28 +41,85 @@ export async function deleteAllConversations(say) {
   return n;
 }
 
+/* ---- remembering the open conversation --------------------------------
+   currentThreadId was a variable and nothing else, so a reload landed
+   on the empty state every time, and switching bays and back forgot
+   the conversation you were in. Per bay, in sessionStorage: it follows
+   the tab, not the account, which is the right scope for "where was I"
+   - and it is only ever a hint, checked against the list the server
+   actually returns. */
+function rememberThread(bay, tid) {
+  try {
+    if (tid) sessionStorage.setItem("thread:" + bay, tid);
+    else sessionStorage.removeItem("thread:" + bay);
+  } catch (_) { /* storage can be off; then the app simply forgets */ }
+}
+function rememberedThread(bay) {
+  try { return sessionStorage.getItem("thread:" + bay); } catch (_) { return null; }
+}
+
+/* The ids drawn last time, so only a genuinely new row animates in.
+   The list used to be wiped and rebuilt after every reply, with every
+   row fading in again - a sidebar that blinked at you once a message. */
+let drawnIds = new Set();
+
+function skeleton() {
+  // Three placeholder rows while the first list loads - only when there
+  // is nothing to show yet, so a refresh never flashes over real rows.
+  if (threadList.children.length) return;
+  for (let i = 0; i < 3; i++) {
+    const row = document.createElement("div");
+    row.className = "thread-skeleton";
+    row.setAttribute("aria-hidden", "true");
+    threadList.appendChild(row);
+  }
+}
+
 export async function loadThreadList() {
+  skeleton();
   let data;
   try {
     data = await getJSON(`/api/threads?mode=${state.currentBay}`);
   } catch (err) {
     // Fired from eight places without an await, so a failure here was
     // an unhandled rejection and a list that silently stopped updating.
+    threadList.querySelectorAll(".thread-skeleton").forEach((n) => n.remove());
     toast(explain(err, "Could not load your conversations."),
           { kind: "error", id: "threads" });
     return;
   }
   threadList.innerHTML = "";
+  threadList.setAttribute("role", "listbox");
+  threadList.setAttribute("aria-label", "Conversations");
 
   // Nothing to clear, nothing to offer. A destructive button that does
   // nothing is still a button people have to think about.
   const clearBtn = document.getElementById("clearThreads");
   if (clearBtn) clearBtn.hidden = !data.threads.length;
 
+  // Where was I? Restored only when nothing is open, and only if the
+  // remembered conversation is still in the list. A conversation that
+  // is open - including one just created by sending, which never went
+  // through openThread - is remembered here, on every refresh.
+  if (state.currentThreadId) rememberThread(state.currentBay, state.currentThreadId);
+  const wanted = state.currentThreadId ? null : rememberedThread(state.currentBay);
+  const restore = wanted && data.threads.some((t) => t.id === wanted) ? wanted : null;
+
+  const nextIds = new Set();
   data.threads.forEach((t) => {
+    nextIds.add(t.id);
+    const active = t.id === state.currentThreadId || t.id === restore;
     const item = document.createElement("div");
-    item.className =
-      "thread-item" + (t.id === state.currentThreadId ? " active" : "");
+    item.className = "thread-item" + (active ? " active" : "")
+      + (drawnIds.has(t.id) ? "" : " is-new");
+    item.dataset.id = t.id;
+    // A listbox of options with a roving tabindex: Tab reaches the list
+    // once, the arrows move within it. The rows were divs with an
+    // onclick and no tabindex - unreachable from a keyboard - and the
+    // delete button inside was focusable but invisible until hovered.
+    item.setAttribute("role", "option");
+    item.setAttribute("aria-selected", active ? "true" : "false");
+    item.tabIndex = active ? 0 : -1;
 
     const main = document.createElement("div");
     main.className = "thread-main";
@@ -79,48 +136,132 @@ export async function loadThreadList() {
     main.appendChild(meta);
 
     const del = document.createElement("button");
+    del.type = "button";
     del.className = "thread-delete";
     del.textContent = "✕";
     del.title = "Delete";
-    del.onclick = async (e) => {
-      e.stopPropagation();
-      // A confirmation, because there is no undo. "Clear all" always
-      // asked; deleting one did not, and the button sat a few pixels
-      // from the row it belonged to.
-      const ok = await confirmDialog({
-        title: "Delete this conversation?",
-        body: t.title ? `"${t.title}" will be gone for good.` : "It will be gone for good.",
-        confirmLabel: "Delete", danger: true,
-      });
-      if (!ok) return;
-      try {
-        await deleteJSON(`/api/threads/${t.id}`);
-      } catch (err) {
-        toast(explain(err, "Could not delete it."), { kind: "error" });
-        return;
-      }
-      if (t.id === state.currentThreadId) {
-        state.currentThreadId = null;
-        showEmptyState();
-      }
-      loadThreadList();
-    };
+    del.setAttribute("aria-label", "Delete " + (t.title || "conversation"));
+    del.tabIndex = -1;
+    del.onclick = (e) => { e.stopPropagation(); removeThread(t); };
 
     item.appendChild(main);
     item.appendChild(del);
     item.onclick = () => openThread(t.id);
+    item.ondblclick = (e) => { e.preventDefault(); renameThread(item, t); };
+    item.onkeydown = (e) => onThreadKey(e, item, t);
     threadList.appendChild(item);
   });
+  drawnIds = nextIds;
 
   if (data.threads.length === 0) {
     threadList.innerHTML =
       '<div class="thread-empty">No conversations yet</div>';
   }
+  // Nothing active yet and no first row focusable would strand the
+  // keyboard; the first row takes the tab stop.
+  if (!threadList.querySelector('.thread-item[tabindex="0"]')) {
+    const first = /** @type {HTMLElement|null} */ (threadList.querySelector(".thread-item"));
+    if (first) first.tabIndex = 0;
+  }
+  if (restore) openThread(restore);
+}
+
+async function removeThread(t) {
+  // A confirmation, because there is no undo. "Clear all" always
+  // asked; deleting one did not, and the button sat a few pixels from
+  // the row it belonged to.
+  const ok = await confirmDialog({
+    title: "Delete this conversation?",
+    body: t.title ? `"${t.title}" will be gone for good.` : "It will be gone for good.",
+    confirmLabel: "Delete", danger: true,
+  });
+  if (!ok) return;
+  try {
+    await deleteJSON(`/api/threads/${t.id}`);
+  } catch (err) {
+    toast(explain(err, "Could not delete it."), { kind: "error" });
+    return;
+  }
+  if (t.id === state.currentThreadId) {
+    state.currentThreadId = null;
+    rememberThread(state.currentBay, null);
+    showEmptyState();
+  }
+  loadThreadList();
+}
+
+/* F2 or a double-click turns the title into a field; Enter saves,
+   Escape puts it back. Titles were whatever the first message said,
+   cut at forty characters, and could never be changed. */
+function renameThread(item, t) {
+  const title = item.querySelector(".thread-title");
+  if (!title || item.querySelector(".thread-rename")) return;
+  const input = document.createElement("input");
+  input.className = "thread-rename";
+  input.value = t.title || "";
+  input.maxLength = 80;
+  input.setAttribute("aria-label", "Conversation title");
+  title.replaceWith(input);
+  input.focus();
+  input.select();
+  let settled = false;
+  const finish = async (save) => {
+    if (settled) return;
+    settled = true;
+    const value = input.value.trim();
+    input.replaceWith(title);
+    if (!save || !value || value === t.title) { item.focus(); return; }
+    try {
+      await patchJSON(`/api/threads/${t.id}`, { title: value });
+      t.title = value;
+      title.textContent = value;
+      if (t.id === state.currentThreadId) topbarTitle.textContent = value;
+    } catch (err) {
+      toast(explain(err, "Could not rename it."), { kind: "error" });
+    }
+    item.focus();
+  };
+  input.onkeydown = (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter") { e.preventDefault(); finish(true); }
+    else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+  };
+  input.onblur = () => finish(true);
+  input.onclick = (e) => e.stopPropagation();
+}
+
+function onThreadKey(e, item, t) {
+  const rows = /** @type {HTMLElement[]} */ ([...threadList.querySelectorAll(".thread-item")]);
+  const i = rows.indexOf(item);
+  const go = (n) => {
+    const row = rows[Math.max(0, Math.min(rows.length - 1, n))];
+    if (!row) return;
+    rows.forEach((r) => (r.tabIndex = -1));
+    row.tabIndex = 0;
+    row.focus();
+  };
+  switch (e.key) {
+    case "ArrowDown": e.preventDefault(); go(i + 1); break;
+    case "ArrowUp": e.preventDefault(); go(i - 1); break;
+    case "Home": e.preventDefault(); go(0); break;
+    case "End": e.preventDefault(); go(rows.length - 1); break;
+    case "Enter": case " ": e.preventDefault(); openThread(t.id); break;
+    case "Delete": case "Backspace": e.preventDefault(); removeThread(t); break;
+    case "F2": e.preventDefault(); renameThread(item, t); break;
+    default: break;
+  }
 }
 
 export async function openThread(tid) {
   state.currentThreadId = tid;
+  rememberThread(state.currentBay, tid);
   sidebar.classList.remove("open");
+  threadList.querySelectorAll(".thread-item").forEach((/** @type {HTMLElement} */ row) => {
+    const on = row.dataset.id === tid;
+    row.classList.toggle("active", on);
+    row.setAttribute("aria-selected", on ? "true" : "false");
+    row.tabIndex = on ? 0 : -1;
+  });
   let thread;
   try {
     thread = await getJSON(`/api/threads/${tid}`);

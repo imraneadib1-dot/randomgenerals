@@ -749,7 +749,37 @@ html.time-night .night-moon {
   white-space: nowrap;
   overflow: hidden;
   border: 1px solid transparent;
-  animation: itemIn 0.25s ease both;
+}
+/* Only a row that was not there last time animates in. Every row used
+   to, on every rebuild - and the list is rebuilt after every reply. */
+.thread-item.is-new { animation: itemIn 0.25s ease both; }
+.thread-item:focus-visible {
+  outline: 2px solid var(--accent-ink, var(--bay));
+  outline-offset: -2px;
+}
+.thread-item:focus-within .thread-delete { opacity: 1; }
+.thread-rename {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 1px 6px;
+  width: 100%;
+  min-width: 0;
+}
+.thread-skeleton {
+  height: 38px;
+  margin: 0 0 4px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, var(--surface) 25%, var(--surface-raised) 50%, var(--surface) 75%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.2s ease-in-out infinite;
+}
+@keyframes skeletonShimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
 }
 
 @keyframes itemIn {

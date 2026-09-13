@@ -5675,6 +5675,23 @@ def get_thread(tid):
     return jsonify(thread)
 
 
+@app.route("/api/threads/<tid>", methods=["PATCH"])
+def rename_thread(tid):
+    """A title of the person's choosing. Titles were the first forty
+    characters of the first message and could never be changed."""
+    thread = THREADS.get(tid)
+    if not thread or thread.get("owner_id") != current_owner_id():
+        return jsonify({"error": "Not found"}), 404
+    payload = request.get_json(force=True, silent=True) or {}
+    title = str(payload.get("title") or "").strip()
+    if not title or len(title) > 80:
+        return jsonify({"error": "A title is 1 to 80 characters."}), 400
+    with DATA_LOCK:
+        thread["title"] = title
+    save_thread(thread)
+    return jsonify({"ok": True, "title": title})
+
+
 @app.route("/api/threads/<tid>", methods=["DELETE"])
 def delete_thread(tid):
     thread = THREADS.get(tid)

@@ -7,6 +7,8 @@ import { bootLabel, bootScreen, emptyState } from "./dom.js";
 import { loadProviders } from "./providers.js";
 import { patchSettingsDebounced } from "./settings.js";
 import { loadThreadList } from "./sidebar.js";
+import { BAY_ORDER } from "./shell.js";
+import { selectBay } from "./bays.js";
 
 /** Name the fourth tab after what that bay is currently doing.
  *
@@ -48,6 +50,18 @@ export async function boot() {
     const minHold = new Promise((resolve) => setTimeout(resolve, 650));
     if (bootLabel) bootLabel.textContent = "reaching the local model…";
     initAppearance();
+    // ?bay=code from the installed app's shortcuts (manifest.webmanifest)
+    // was never read; the shortcut opened the default bay. Honoured here,
+    // before anything loads for the wrong one, and then taken off the
+    // URL so a reload does not force it again.
+    const params = new URLSearchParams(window.location.search);
+    const askedBay = params.get("bay");
+    if (askedBay && BAY_ORDER.includes(askedBay) && askedBay !== state.currentBay) {
+      selectBay(askedBay);
+      params.delete("bay");
+      window.history.replaceState({}, "", window.location.pathname
+        + (params.toString() ? "?" + params : ""));
+    }
     handleCheckoutReturn();
     handleAuthReturn();
     handleSearchHandoff();

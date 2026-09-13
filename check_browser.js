@@ -142,6 +142,53 @@ function check(label, ok, detail) {
   const threads = await page.evaluate(() => document.querySelectorAll(".thread-item").length);
   check("the thread appeared in the sidebar", threads >= 1, String(threads));
 
+  console.log("== the sidebar works from the keyboard ==");
+  const roles = await page.evaluate(() => ({
+    listbox: document.getElementById("threadList").getAttribute("role"),
+    option: document.querySelector(".thread-item").getAttribute("role"),
+    tab: document.querySelector(".thread-item").tabIndex,
+  }));
+  check("the list is a listbox of options", roles.listbox === "listbox" && roles.option === "option");
+  check("the open conversation is the tab stop", roles.tab === 0, String(roles.tab));
+  await page.focus(".thread-item");
+  await page.keyboard.press("F2");
+  const renaming = await page.evaluate(() => !!document.querySelector(".thread-rename"));
+  check("F2 opens a rename field", renaming);
+  await page.fill(".thread-rename", "Renamed from the keyboard");
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => !document.querySelector(".thread-rename"), null, { timeout: 5000 }).catch(() => {});
+  await page.waitForFunction(() => /Renamed from the keyboard/.test(document.querySelector(".thread-title").textContent), null, { timeout: 5000 }).catch(() => {});
+  const titles = await page.evaluate(() => ({
+    row: document.querySelector(".thread-title").textContent,
+    header: document.getElementById("topbarTitle").textContent,
+  }));
+  check("Enter saves the new title", titles.row === "Renamed from the keyboard", titles.row);
+  check("and the header shows it", titles.header === "Renamed from the keyboard", titles.header);
+
+  console.log("== a reload remembers where you were ==");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() => document.querySelectorAll(".msg.assistant").length > 0, null, { timeout: 15000 }).catch(() => {});
+  const after = await page.evaluate(() => ({
+    replies: document.querySelectorAll(".msg.assistant").length,
+    title: document.getElementById("topbarTitle").textContent,
+    active: !!document.querySelector(".thread-item.active"),
+  }));
+  check("the conversation is open again", after.replies === 1, String(after.replies));
+  check("under its title", after.title === "Renamed from the keyboard", after.title);
+  check("and marked in the list", after.active);
+  check("still no errors", errors.length === 0, errors.slice(-3).join(" | "));
+
+  console.log("== ?bay= from the installed app's shortcut is honoured ==");
+  await page.goto(URL + "?bay=code", { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() => document.querySelector('[data-bay="code"]').getAttribute("aria-selected") === "true",
+    null, { timeout: 10000 }).catch(() => {});
+  const sel = await page.evaluate(() => document.querySelector('[data-bay="code"]').getAttribute("aria-selected"));
+  check("the code bay is selected", sel === "true", sel);
+  check("and the parameter is gone from the URL",
+    await page.evaluate(() => !location.search.includes("bay=")));
+  await page.goto(URL, { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() => document.querySelectorAll(".thread-item").length > 0, null, { timeout: 10000 }).catch(() => {});
+
   console.log("== deleting asks first, on a real dialog ==");
   await page.hover(".thread-item");
   await page.click(".thread-item .thread-delete");
