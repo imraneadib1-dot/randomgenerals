@@ -76,10 +76,15 @@ export function renderStarters() {
 
   const wrap = document.createElement("div");
   wrap.className = "starters";
-  list.forEach((text) => {
+  list.forEach((text, i) => {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = text;
+    // Its place in the row, for the stagger in .starters button. Done
+    // here rather than with :nth-child so the delay comes from the data
+    // rather than from a CSS rule that has to be extended every time a
+    // bay gains a fifth suggestion.
+    b.style.setProperty("--i", String(i));
     b.addEventListener("click", () => {
       // Fills the box rather than sending. A starter is a suggestion,
       // and sending it outright takes the edit away from someone who
