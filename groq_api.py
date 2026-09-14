@@ -32,6 +32,8 @@ import time
 
 import requests
 
+import attachments  # the data-URL helper images travel in
+
 API_ROOT = "https://api.groq.com/openai/v1"
 
 # Cached for an hour. The list changes rarely and a request per page load
@@ -93,6 +95,20 @@ _NON_CHAT = ("whisper", "guard", "embed", "tts", "playai",
 EXPOSED_MODELS = (
     "openai/gpt-oss-120b",     # chat, and the free channel's whole offer
 )
+
+# THE MODELS THAT CAN SEE.
+#
+# This module used to say Groq served no multimodal model, and app.py
+# repeated it, so every attached image left for OpenRouter's free tier
+# or was answered blind. Groq's own vision page
+# (console.groq.com/docs/vision) lists exactly these two - and the
+# first is already on PREFERRED above. A picture costs a flat 2,048
+# tokens against the per-minute budget, and each model caps how many
+# ride in one request; both facts are honoured in _with_images and
+# fit_to_budget rather than discovered as a 400.
+VISION_MODELS = ("qwen/qwen3.8-27b", "qwen/qwen3.6-27b")
+VISION_MAX_IMAGES = {"qwen/qwen3.8-27b": 3, "qwen/qwen3.6-27b": 5}
+IMAGE_TOKENS = 2048
 
 # THE LIMIT THAT ACTUALLY BINDS
 #
@@ -188,7 +204,7 @@ def estimate_tokens(messages):
                 if part.get("type") == "text":
                     total += len(part.get("text") or "") / CHARS_PER_TOKEN
                 else:
-                    total += 800
+                    total += IMAGE_TOKENS
         # Per-message role and delimiter overhead.
         total += 4
     return int(total)
@@ -239,6 +255,35 @@ def fit_to_budget(messages, want_reply_tokens):
     # code it was never shown the end of.
     if prompt + reply > room:
         reply = 512
+        # PICTURES FIRST. Three images are 6,144 tokens on an 8,000
+        # budget; no amount of history-trimming makes that fit. The
+        # trailing images go, one at a time, until the request fits or
+        # one remains - and the model is told how many it was not shown,
+        # for the same reason a truncated file is announced below.
+        last = kept[-1] if kept else None
+        if last and isinstance(last.get("content"), list):
+            parts = list(last["content"])
+            dropped = 0
+            while prompt + reply > room and sum(
+                    1 for q in parts if q.get("type") != "text") > 1:
+                idx = max(i for i, q in enumerate(parts)
+                          if q.get("type") != "text")
+                parts.pop(idx)
+                dropped += 1
+                kept[-1] = dict(last, content=parts)
+                prompt = estimate_tokens(kept)
+            if dropped:
+                note = ("\n\n[%d more image(s) were attached but did not "
+                        "fit in one request. Say so rather than guessing "
+                        "at them.]" % dropped)
+                texts = [i for i, q in enumerate(parts) if q.get("type") == "text"]
+                if texts:
+                    i = texts[0]
+                    parts[i] = dict(parts[i], text=(parts[i].get("text") or "") + note)
+                else:
+                    parts.insert(0, {"type": "text", "text": note.strip()})
+                kept[-1] = dict(last, content=parts)
+                prompt = estimate_tokens(kept)
         # Budget for the offending message alone: the room, less the
         # reply we still intend to produce, less everything else in the
         # request. Computed against the OTHERS rather than the total,
@@ -411,7 +456,7 @@ def models():
         shortlist = [m for m in usable if m in EXPOSED_MODELS]
         out = sorted(shortlist) if shortlist else sorted(usable)
         _models_cache.update({"at": now, "models": out or FALLBACK_MODELS,
-                              "error": ""})
+                              "all": sorted(usable), "error": ""})
         return _models_cache["models"]
     except requests.exceptions.RequestException as e:
         out = cached["models"] or FALLBACK_MODELS
@@ -455,6 +500,50 @@ def complete(system, user, max_tokens=300, temperature=0.7,
         return (choices[0].get("message", {}).get("content") or "").strip()
     except (requests.exceptions.RequestException, ValueError, KeyError):
         return ""
+
+
+def catalogue():
+    """Every chat-capable model the key can reach, before the picker's
+    shortlist is applied. models() is what the picker shows; this is
+    what a request may name - the vision route picks from here."""
+    models()
+    return list(_models_cache.get("all") or _models_cache["models"] or [])
+
+
+def vision_models():
+    """The multimodal models this key actually has. Empty when Groq is
+    not configured, so the route falls through to the next provider."""
+    if not configured():
+        return []
+    have = set(catalogue())
+    return [m for m in VISION_MODELS if m in have]
+
+
+def _with_images(messages, images, model):
+    """Attach base64 images to the last user turn, OpenAI-style: the
+    text becomes one part and each image another, as a data URL that
+    names its real type. Capped at what the model accepts per request;
+    the rest are announced rather than silently dropped."""
+    if not images or model not in VISION_MODELS:
+        return messages
+    cap = VISION_MAX_IMAGES.get(model, 1)
+    keep, extra = list(images[:cap]), max(0, len(images) - cap)
+    out = list(messages)
+    for i in range(len(out) - 1, -1, -1):
+        if out[i].get("role") != "user":
+            continue
+        text = out[i].get("content") or ""
+        if extra:
+            text += ("\n\n[%d more image(s) were attached than this model "
+                     "takes in one message. Say so rather than guessing at "
+                     "them.]" % extra)
+        parts = [{"type": "text", "text": text}] if text else []
+        for b64 in keep:
+            parts.append({"type": "image_url",
+                          "image_url": {"url": attachments.data_url(b64)}})
+        out[i] = {"role": "user", "content": parts}
+        break
+    return out
 
 
 def _to_messages(history):
@@ -560,27 +649,22 @@ def chat_once(model, history, tools=None, options=None, timeout=120):
     return message, None
 
 
-def stream_chat(model, history, options=None, images=None, usage=None):
-    """Stream a reply. Yields text pieces.
-
-    `images` is accepted and ignored: these are text models, and silently
-    dropping an attachment is better than refusing the whole message,
-    since the caller has already decided vision is unavailable on this
-    channel.
-    """
-    if not configured():
-        yield "[Groq is not configured - set GROQ_API_KEY.]"
-        return
-
+def _request_body(model, history, options=None, images=None):
+    """The JSON for one streamed request: model resolution, options,
+    images, and the budget fit. Its own function so a check can read
+    exactly what would be sent, without a network."""
     available = models()
-    chosen = model if model in available else None
+    # A vision model is not on the picker's shortlist but is in the
+    # catalogue; a request may name anything the key can reach.
+    allowed = set(available) | set(catalogue())
+    chosen = model if model in allowed else None
     if chosen is None:
         chosen = next((m for m in PREFERRED if m in available),
                       available[0] if available else PREFERRED[0])
 
     body = {
         "model": chosen,
-        "messages": _to_messages(history),
+        "messages": _with_images(_to_messages(history), images, chosen),
         "stream": True,
     }
     # Tools travel with the request when the caller supplies them. The
@@ -630,6 +714,23 @@ def stream_chat(model, history, options=None, images=None, usage=None):
         effort = opts.get("reasoning_effort", DEFAULT_EFFORT)
         if effort in VALID_EFFORTS:
             body["reasoning_effort"] = effort
+
+    return body
+
+
+def stream_chat(model, history, options=None, images=None, usage=None):
+    """Stream a reply. Yields text pieces.
+
+    `images` ride with the last user turn when `model` is one of
+    VISION_MODELS (see _with_images); on a text model they are dropped
+    here rather than refused, because the caller only sends them to a
+    model app.py believes can see.
+    """
+    if not configured():
+        yield "[Groq is not configured - set GROQ_API_KEY.]"
+        return
+
+    body = _request_body(model, history, options, images)
 
     # Whether any content has reached the caller yet. It decides what a
     # failure is allowed to do: before the first token the whole request

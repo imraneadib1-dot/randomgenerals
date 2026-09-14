@@ -183,6 +183,27 @@ def save_and_extract(file_storage):
     }
 
 
+# The first bytes of each format, as they appear once base64-encoded.
+# A data URL has to name the type it carries; "image/png" on a JPEG is
+# accepted by some multimodal endpoints and refused by others, and the
+# refusal is a 400 on the whole message.
+_B64_MAGIC = (
+    ("iVBORw0KGgo", "image/png"),
+    ("/9j/", "image/jpeg"),
+    ("R0lGOD", "image/gif"),
+    ("UklGR", "image/webp"),
+)
+
+
+def data_url(b64):
+    """A base64 image -> the data URL a multimodal chat API expects,
+    with the type read off the bytes rather than assumed."""
+    for prefix, mime in _B64_MAGIC:
+        if b64.startswith(prefix):
+            return "data:%s;base64,%s" % (mime, b64)
+    return "data:image/png;base64," + b64
+
+
 def encode_image_base64(url):
     """Reads a previously-saved upload back off disk (from its /static/...
     URL) and returns it base64-encoded, the form Ollama's `images` field

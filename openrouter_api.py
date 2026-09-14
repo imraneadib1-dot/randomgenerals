@@ -44,6 +44,8 @@ import time
 
 import requests
 
+import attachments  # the data-URL helper images travel in
+
 import db
 import groq_api
 from providers import RateLimited, Unreachable
@@ -335,9 +337,9 @@ def _with_images(messages, images):
     """Attach base64 images to the last user turn, OpenAI-style.
 
     The text becomes one part and each image another, which is the
-    shape every multimodal model on OpenRouter reads. Done here rather
-    than in _to_messages because only this channel does it - Groq's
-    models are text-only and Ollama takes images in its own field.
+    shape every multimodal model on OpenRouter reads (and, since Groq
+    grew a vision model, groq_api._with_images does the same there).
+    Ollama takes images in its own field.
     """
     if not images:
         return messages
@@ -349,7 +351,7 @@ def _with_images(messages, images):
         parts = [{"type": "text", "text": text}] if text else []
         for b64 in images:
             parts.append({"type": "image_url",
-                          "image_url": {"url": "data:image/png;base64," + b64}})
+                          "image_url": {"url": attachments.data_url(b64)}})
         out[i] = {"role": "user", "content": parts}
         break
     return out

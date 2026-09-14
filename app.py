@@ -4988,6 +4988,16 @@ BAY_ROUTES = {
         # the server these are the only entries that can ever match -
         # while a laptop running Ollama still falls through to gemma3:4b
         # below and keeps working offline.
+        #
+        # Groq before OpenRouter: it is the channel this deployment
+        # actually runs on, its qwen models can see (console.groq.com/
+        # docs/vision), and it answers in a second. The OpenRouter
+        # entries are :free models, which are the first thing to be
+        # rate-limited on a busy afternoon - which is how "the AI can't
+        # read images" was true here for as long as they were the only
+        # hosted route.
+        ("groq", "qwen3.8-27b"),
+        ("groq", "qwen3.6-27b"),
         ("openrouter", "gemma-4-31b-it:free"),
         ("openrouter", "minimax-m3:free"),
         ("ollama", "gemma3:4b"),
@@ -5076,7 +5086,16 @@ def _vision_route():
     rather than pretending the attachment was never there.
     """
     for provider_id, pattern in BAY_ROUTES["vision"]:
-        if provider_id == "openrouter":
+        if provider_id == "groq":
+            # Vision is Pro-only (see _stream_reply), so the budget
+            # question is asked with Pro's priority.
+            if not (groq_api.configured() and _groq_has_room(features.PRO)):
+                continue
+            match = next((m for m in groq_api.vision_models()
+                          if pattern in m.lower()), None)
+            if match:
+                return "groq", match
+        elif provider_id == "openrouter":
             if not (openrouter_api.configured()
                     and openrouter_api.budget_ok()):
                 continue
@@ -5725,12 +5744,12 @@ _VISION_MODEL_HINTS = ("vision", "llava", "moondream", "minicpm-v", "bakllava")
 # as though nothing had been attached.
 _VISION_MODEL_EXACT = (
     "gemma3:4b", "gemma3:12b", "gemma3:27b",
-    # Free, and reachable from a server with no GPU - which is the only
-    # way this deployment can see an image at all. Groq serves no
-    # multimodal model: its whole catalogue here is 14 text models plus
-    # speech, so on Groq alone an attached picture can never be looked
-    # at by anything. Checked against OpenRouter's own
-    # architecture.input_modalities rather than assumed.
+    # Groq's two multimodal models, per its own vision page. This tuple
+    # said for a long time that Groq served no such thing; it did, and
+    # the first of them was on this app's preferred list the whole time.
+    *groq_api.VISION_MODELS,
+    # Free, and reachable from a server with no GPU. Checked against
+    # OpenRouter's own architecture.input_modalities rather than assumed.
     "google/gemma-4-31b-it:free",
     "google/gemma-4-26b-a4b-it:free",
     "minimax/minimax-m3:free",
@@ -7428,9 +7447,19 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # without tools - the same degradation every other part of that
     # channel makes. (Only Groq has that budget; the check used to gate
     # OpenRouter's tools on Groq's headroom.)
+    # A MESSAGE WITH A PICTURE SKIPS THE TOOL LOOP.
+    #
+    # The loop's first turn is chat_once, which carries text only, and
+    # when that turn comes back as a complete answer it IS the reply -
+    # the streamed path, the one that attaches the images, never runs.
+    # So on every plan with tools, every attached image was answered by
+    # a model that had not been shown it, whichever vision route had
+    # been chosen with such care just above. A picture goes straight to
+    # the model that can see it; the tools are back on the next turn.
     if (provider in PROVIDER_TURNS
             and features.FEATURES[plan]["builtin_tools"]
             and wants["tools"]
+            and not images_b64
             and (provider != "groq" or _groq_has_room(plan))):
         tool_specs = tools.available_specs(
             allow_images=(mode != "image"),
@@ -7510,7 +7539,12 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
             # AFTER the first chunk is yielded by the channel as a
             # sentence at the end of the reply, because by then there
             # is nowhere to fail over to.
-            candidates = [(provider, model)] + _failover_chain(provider, mode)
+            candidates = [(provider, model)] + [
+                c for c in _failover_chain(provider, mode)
+                # A picture is not handed to a channel that would answer
+                # it blind; better the honest "busy, try again in 20s"
+                # below than a confident description of nothing.
+                if not images_b64 or is_vision_model(c[1])]
             failures: list[tuple[str, BaseException]] = []
             limited: tuple[str, str] | None = None
             answered = False
