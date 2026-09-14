@@ -279,6 +279,46 @@ CREATE TABLE IF NOT EXISTS video_quota (
     PRIMARY KEY (owner_id, month)
 );
 
+CREATE TABLE IF NOT EXISTS video_jobs (
+    -- One row per generation, from submission to a clip on disk.
+    --
+    -- This used to be a dict in app.py: a restart forgot every running
+    -- job (the provider kept rendering, nobody was left to collect the
+    -- result), and there was no history - the bay showed the last clip
+    -- and nothing before it. The row is the record; the poller in
+    -- videogen.py advances it; the dashboard lists it.
+    id            TEXT PRIMARY KEY,
+    owner_id      TEXT NOT NULL,
+    backend       TEXT NOT NULL,          -- higgsfield | pixverse | huggingface
+    provider_ref  TEXT,                   -- the provider's own job id
+    -- queued -> running -> validating -> done | failed
+    status        TEXT NOT NULL DEFAULT 'queued',
+    prompt        TEXT NOT NULL,          -- what the person typed
+    enhanced      TEXT,                   -- what was sent, if enhanced
+    negative      TEXT,
+    params_json   TEXT NOT NULL DEFAULT '{}',
+    seed          INTEGER,
+    url           TEXT,                   -- what the provider returned
+    local_path    TEXT,                   -- the copy this server keeps
+    width         INTEGER,
+    height        INTEGER,
+    duration      REAL,
+    bytes         INTEGER,
+    error         TEXT,
+    -- Timeline lines for the dashboard's live log, JSON list of
+    -- [iso_time, text]. Appended, never rewritten.
+    log_json      TEXT NOT NULL DEFAULT '[]',
+    created       TEXT NOT NULL,
+    updated       TEXT NOT NULL,
+    finished      TEXT,
+    -- When the poller should look again, so a slow render is not asked
+    -- about every three seconds for fifteen minutes.
+    next_poll     TEXT,
+    polls         INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_video_jobs_owner
+    ON video_jobs(owner_id, created);
+
 CREATE TABLE IF NOT EXISTS openrouter_spend (
     -- One row per UTC day, site-wide. Not per user: the ceiling exists
     -- to protect one bank account, and a per-user cap would still let a
@@ -404,6 +444,26 @@ CREATE TABLE IF NOT EXISTS payments (
     fee      INTEGER NOT NULL DEFAULT 0,
     earnings INTEGER NOT NULL DEFAULT 0,
     created  TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS webhook_events (
+    -- Every webhook delivery this app has acted on, by the provider's
+    -- own event id. Both Paddle and Stripe deliver at least once and
+    -- retry anything that did not answer 2xx, so the same event can
+    -- arrive twice minutes apart, or twice at once from two retries.
+    --
+    -- The payments table already makes a redelivered payment a no-op,
+    -- and the occurred_at rule in app.py makes a redelivered Paddle
+    -- subscription state a no-op. What neither covered was a Stripe
+    -- checkout.session.completed arriving twice: the second one
+    -- re-applied the plan and refilled the credits to the cap. This is
+    -- the general answer - one row per delivery, and a delivery whose
+    -- row already exists is acknowledged and not acted on.
+    provider   TEXT NOT NULL,
+    event_id   TEXT NOT NULL,
+    event_type TEXT NOT NULL DEFAULT '',
+    seen       TEXT NOT NULL,
+    PRIMARY KEY (provider, event_id)
 );
 
 CREATE TABLE IF NOT EXISTS connectors (
@@ -920,6 +980,88 @@ def save_users(users):
                  u.get("subscription_updated_at")),
             )
         conn.commit()
+
+
+def save_user(u):
+    """Write ONE account's row, by upsert. -> None.
+
+    save_users() above rewrites the whole table - a DELETE of every
+    account and a reinsert - and it was what every webhook, profile
+    edit and subscription change called. That is O(accounts) per
+    event, and one bad row anywhere (the duplicate-email case its own
+    comment describes) stops EVERY account from being saved. This
+    touches one row, cannot be blocked by any other, and is the call
+    the billing paths use now. The column list is the same one; add a
+    column to the schema and it must be added here and in save_users
+    and in load_users, or it silently does nothing.
+
+    Credits are deliberately not written here, for the reason given
+    in save_users.
+    """
+    conn = _connect()
+    with _lock:
+        conn.execute(
+            "INSERT INTO users (id, email, password_hash, google_id, "
+            "plan, created, stripe_customer_id, stripe_subscription_id, "
+            "subscription_status, current_period_end, "
+            "cancel_at_period_end, name, birth_year, email_verified, "
+            "paddle_customer_id, paddle_subscription_id, "
+            "subscription_updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET "
+            "  email=excluded.email, password_hash=excluded.password_hash, "
+            "  google_id=excluded.google_id, plan=excluded.plan, "
+            "  created=excluded.created, "
+            "  stripe_customer_id=excluded.stripe_customer_id, "
+            "  stripe_subscription_id=excluded.stripe_subscription_id, "
+            "  subscription_status=excluded.subscription_status, "
+            "  current_period_end=excluded.current_period_end, "
+            "  cancel_at_period_end=excluded.cancel_at_period_end, "
+            "  name=excluded.name, birth_year=excluded.birth_year, "
+            "  email_verified=excluded.email_verified, "
+            "  paddle_customer_id=excluded.paddle_customer_id, "
+            "  paddle_subscription_id=excluded.paddle_subscription_id, "
+            "  subscription_updated_at=excluded.subscription_updated_at",
+            (u["id"], u["email"], u.get("password_hash", ""),
+             u.get("google_id"), u["plan"], u["created"],
+             u.get("stripe_customer_id"), u.get("stripe_subscription_id"),
+             u.get("subscription_status"), u.get("current_period_end"),
+             1 if u.get("cancel_at_period_end") else 0,
+             u.get("name") or "", u.get("birth_year"),
+             1 if u.get("email_verified") else 0,
+             u.get("paddle_customer_id"), u.get("paddle_subscription_id"),
+             u.get("subscription_updated_at")),
+        )
+        conn.commit()
+
+
+def webhook_seen(provider: str, event_id: str, event_type: str = "") -> bool:
+    """Record one webhook delivery. -> True if it had ALREADY been
+    recorded, i.e. this is a redelivery the caller should acknowledge
+    and not act on.
+
+    The insert IS the check: two retries of the same event arriving at
+    once both try to insert the same primary key and exactly one
+    succeeds, which a SELECT-then-INSERT could not promise. An event
+    without an id cannot be deduplicated and is reported as new.
+    Never raises - a dedupe table that could not be written must not
+    stop a payment from being applied; acting twice is the lesser harm.
+    """
+    if not event_id:
+        return False
+    import datetime as _dt
+    now = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    try:
+        conn = _connect()
+        with _lock:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO webhook_events "
+                "(provider, event_id, event_type, seen) VALUES (?, ?, ?, ?)",
+                (provider, str(event_id), event_type or "", now))
+            conn.commit()
+            return cur.rowcount == 0
+    except Exception:                          # noqa: BLE001
+        return False
 
 
 # ----------------------------------------------------------------------
@@ -2029,6 +2171,124 @@ def video_used(owner_id, month):
         "SELECT used FROM video_quota WHERE owner_id=? AND month=?",
         (owner_id, month)).fetchone()
     return row["used"] if row else 0
+
+
+# ------------------------------------------------------------ video jobs
+_VIDEO_JOB_COLS = (
+    "id", "owner_id", "backend", "provider_ref", "status", "prompt",
+    "enhanced", "negative", "params_json", "seed", "url", "local_path",
+    "width", "height", "duration", "bytes", "error", "log_json", "created",
+    "updated", "finished", "next_poll", "polls",
+)
+
+
+def video_job_create(job: dict) -> None:
+    """Insert one job row. `job` carries any subset of the columns."""
+    cols = [c for c in _VIDEO_JOB_COLS if c in job]
+    conn = _connect()
+    with _lock:
+        conn.execute(
+            "INSERT INTO video_jobs (%s) VALUES (%s)"
+            % (", ".join(cols), ", ".join("?" for _ in cols)),
+            [job[c] for c in cols])
+        conn.commit()
+
+
+def video_job_update(job_id: str, **fields) -> None:
+    """Set the given columns on one job. Unknown names are refused
+    loudly rather than silently ignored: a misspelled column here would
+    be a job that never finishes."""
+    bad = [k for k in fields if k not in _VIDEO_JOB_COLS or k == "id"]
+    if bad:
+        raise ValueError("video_job_update: unknown column(s) %s" % bad)
+    if not fields:
+        return
+    conn = _connect()
+    with _lock:
+        conn.execute(
+            "UPDATE video_jobs SET %s WHERE id = ?"
+            % ", ".join("%s = ?" % k for k in fields),
+            list(fields.values()) + [job_id])
+        conn.commit()
+
+
+def video_job_log(job_id: str, when: str, text: str) -> None:
+    """Append one line to the job's timeline, atomically - two threads
+    (the poller and a request) can both write, and read-modify-write
+    from Python would lose one of them."""
+    conn = _connect()
+    with _lock:
+        conn.execute(
+            "UPDATE video_jobs SET log_json = json_insert(log_json, '$[#]', "
+            "json_array(?, ?)), updated = ? WHERE id = ?",
+            (when, text[:300], when, job_id))
+        conn.commit()
+
+
+def _video_row(r) -> dict:
+    d = dict(r)
+    try:
+        d["params"] = json.loads(d.pop("params_json") or "{}")
+    except ValueError:
+        d["params"] = {}
+    try:
+        d["log"] = json.loads(d.pop("log_json") or "[]")
+    except ValueError:
+        d["log"] = []
+    return d
+
+
+def video_job_get(job_id: str) -> dict | None:
+    conn = _connect()
+    r = conn.execute("SELECT * FROM video_jobs WHERE id = ?",
+                     (job_id,)).fetchone()
+    return _video_row(r) if r else None
+
+
+def video_jobs_for(owner_id: str, limit: int = 40) -> list[dict]:
+    """This owner's jobs, newest first - the dashboard's grid."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT * FROM video_jobs WHERE owner_id = ? "
+        "ORDER BY created DESC LIMIT ?", (owner_id, int(limit))).fetchall()
+    return [_video_row(r) for r in rows]
+
+
+def video_jobs_due(now_iso: str) -> list[dict]:
+    """Jobs the poller should ask about: queued or running, with a
+    next_poll that has passed. A row with no next_poll is one the
+    submitting request is still working on (engineering the prompt,
+    talking to the provider) and is left alone - the poller picking
+    it up too would submit it twice."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT * FROM video_jobs WHERE status IN ('queued', 'running') "
+        "AND next_poll IS NOT NULL AND next_poll <= ? ORDER BY created",
+        (now_iso,)).fetchall()
+    return [_video_row(r) for r in rows]
+
+
+def video_job_by_ref(provider_ref: str) -> dict | None:
+    """The job a provider knows by its own id - how a webhook, which
+    carries only the provider's id, finds the row."""
+    conn = _connect()
+    r = conn.execute("SELECT * FROM video_jobs WHERE provider_ref = ? "
+                     "ORDER BY created DESC LIMIT 1", (provider_ref,)).fetchone()
+    return _video_row(r) if r else None
+
+
+def video_job_delete(job_id: str, owner_id: str) -> dict | None:
+    """Remove a job the owner asked to remove. -> the row that went,
+    so the caller can delete its file too."""
+    conn = _connect()
+    with _lock:
+        r = conn.execute("SELECT * FROM video_jobs WHERE id = ? AND owner_id = ?",
+                         (job_id, owner_id)).fetchone()
+        if not r:
+            return None
+        conn.execute("DELETE FROM video_jobs WHERE id = ?", (job_id,))
+        conn.commit()
+    return _video_row(r)
 
 
 def video_try_consume(owner_id: str, month: str, limit: int) -> bool:

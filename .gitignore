@@ -23,6 +23,7 @@ users.json
 # User-uploaded and AI-generated files - not source, and can grow large.
 static/uploads/
 static/generated/
+static/video/generated/
 
 # Python
 __pycache__/

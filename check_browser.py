@@ -37,6 +37,14 @@ os.environ["SECRET_KEY"] = "test-only"
 os.environ["OLLAMA_URL"] = "http://127.0.0.1:1"
 os.environ["GROQ_API_KEY"] = ""
 os.environ["OPENROUTER_API_KEY"] = ""
+# A video backend, played by fake_higgsfield.py, so the studio has
+# something to drive. The guest half of the check sees the diagram
+# bay (video needs an account); the signed-in half sees the studio.
+os.environ["HIGGSFIELD_API_KEY_ID"] = "test-id"
+os.environ["HIGGSFIELD_API_KEY_SECRET"] = "test-secret"
+os.environ["PUBLIC_SITE_URL"] = "http://127.0.0.1"       # no webhooks
+for _k in ("PIXVERSE_API_KEY", "HF_TOKEN", "TRIPO_API_KEY"):
+    os.environ.pop(_k, None)
 
 sys.path.insert(0, HERE)
 
@@ -47,7 +55,26 @@ if not shutil.which("node"):
     print("  (skipped: node is not on PATH)")
     sys.exit(0)
 
+from fake_higgsfield import serve                         # noqa: E402
+serve()
+import videogen                                           # noqa: E402
+# Clips land where the real app keeps them (the page has to be able
+# to play them); every job this check makes is deleted at the end.
+videogen.POLL_INTERVALS = (1, 1, 1, 1, 1, 1)
+videogen.POLL_TICK_SECONDS = 1
 import app as appmod                                      # noqa: E402
+from werkzeug.security import generate_password_hash      # noqa: E402
+
+# Someone who can use the studio: a Pro account with a known password
+# that check_browser.js signs in with half way through.
+_uid = appmod._create_user("studio@check.example",
+                           password_hash=generate_password_hash("studio-pass"))
+appmod._apply_plan(appmod.USERS[_uid], "pro")
+appmod._video_turn = lambda system, user: (
+    '{"subject": "a red fox", "action": "trots through snow", '
+    '"setting": "birch forest at dawn", "camera": "slow dolly-in, 35mm", '
+    '"lighting": "low golden sun", "style": "Kodak 250D, muted", '
+    '"negative": "text, flicker"}')
 
 # A channel that answers. The routing asks whether the local model is
 # up before using it; it is not, so answer yes and stream a fake.
@@ -97,5 +124,8 @@ for _ in range(50):
 print("== the browser ==")
 code = subprocess.call(["node", os.path.join(HERE, "check_browser.js"), url],
                        cwd=HERE, shell=(os.name == "nt"))
+import db                                                 # noqa: E402
+for _job in db.video_jobs_for(_uid, limit=100):
+    videogen.remove_file(_job)
 shutil.rmtree(WORK, ignore_errors=True)
 sys.exit(code)

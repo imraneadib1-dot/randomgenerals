@@ -87,12 +87,36 @@ def clamp_seconds(value):
     return max(MIN_SECONDS, min(MAX_SECONDS, n))
 
 
+def capabilities():
+    """What videogen may ask this provider for. Anything outside
+    these is clamped by videogen.parse_spec before start() sees it."""
+    return {
+        "kind": "video",
+        "label": "PixVerse",
+        "models": list(MODELS),
+        "default_model": DEFAULT_MODEL,
+        "seconds": (MIN_SECONDS, MAX_SECONDS),
+        "default_seconds": DEFAULT_SECONDS,
+        "ratios": list(RATIOS),
+        "resolutions": list(QUALITIES),
+        "default_resolution": "720p",
+        "negative": True,
+        "seed": True,
+        "motion": True,
+        "image_to_video": False,
+        "fps": 24,
+    }
+
+
 def start(prompt, seconds=DEFAULT_SECONDS, quality="720p",
-          ratio="16:9", model=DEFAULT_MODEL, seed=None):
+          ratio="16:9", model=DEFAULT_MODEL, seed=None, negative="",
+          motion="medium", **_unused):
     """Queue a generation. -> (video_id, error).
 
     Returns as soon as PixVerse accepts the job; the clip does not exist
-    yet. Callers poll result() for it.
+    yet. Callers poll result() for it. Parameters this API has no
+    equivalent for (an input image) are accepted and ignored, so the
+    engine can call every provider the same way.
     """
     if not configured():
         return None, "Video generation is not configured on this server."
@@ -112,6 +136,12 @@ def start(prompt, seconds=DEFAULT_SECONDS, quality="720p",
     }
     if seed is not None:
         body["seed"] = int(seed) % 2147483647
+    if negative:
+        body["negative_prompt"] = str(negative)[:2000]
+    # PixVerse's two motion modes: "normal", and "fast" for scenes
+    # with a lot happening. There is no "less"; low motion is a matter
+    # for the prompt, which the engine's enhancer already states.
+    body["motion_mode"] = "fast" if motion == "high" else "normal"
 
     try:
         r = requests.post(API_ROOT + "/video/text/generate", json=body,

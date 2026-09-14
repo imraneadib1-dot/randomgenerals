@@ -76,12 +76,20 @@ echo "== python syntax, before restarting anything =="
 # A syntax error here has taken this site down before. Better to find it
 # with the old process still serving than after it has been killed.
 if command -v python3 >/dev/null; then
-    if ! python3 -m compileall -q app.py db.py >/dev/null 2>&1; then
-        echo "  app.py or db.py does not compile - NOT restarting."
-        python3 -m compileall app.py db.py 2>&1 | tail -5 | sed 's/^/  /'
+    MODULES="app.py db.py videogen.py higgsfield_api.py paddle_billing.py features.py ratelimit.py providers.py"
+    if ! python3 -m compileall -q $MODULES >/dev/null 2>&1; then
+        echo "  a module does not compile - NOT restarting."
+        python3 -m compileall $MODULES 2>&1 | tail -5 | sed 's/^/  /'
         exit 1
     fi
     echo "  ok"
+    # Result checking (videogen.probe) reads the real resolution and
+    # duration of every clip with ffprobe. Without it the check stops at
+    # the container signature - the site works, it just checks less.
+    if ! command -v ffprobe >/dev/null; then
+        echo "  note: ffprobe is not installed (sudo apt install -y ffmpeg) -"
+        echo "        generated clips are checked for format only, not size."
+    fi
 fi
 
 echo ""

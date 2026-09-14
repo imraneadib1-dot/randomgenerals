@@ -214,6 +214,123 @@ function check(label, ok, detail) {
   check("confirming deletes it",
     await page.evaluate(() => document.querySelectorAll(".thread-item").length) === threads - 1);
   check("no errors on the way", errors.length === 0, errors.slice(-3).join(" | "));
+  console.log("== the video bay draws diagrams for a guest ==");
+  await page.click('[data-bay="video"]');
+  await page.waitForFunction(() => !document.getElementById("videoBay").hidden, null, { timeout: 5000 }).catch(() => {});
+  const guestBay = await page.evaluate(() => ({
+    title: document.getElementById("genTitle").textContent.trim(),
+    studio: document.getElementById("videoStudio").hidden,
+  }));
+  check("the bay is the diagram bay", guestBay.title === "Draw a diagram", guestBay.title);
+  check("with the studio controls hidden", guestBay.studio);
+
+  console.log("== the studio, signed in ==");
+  const base = URL.split("/app")[0];
+  const login = await page.request.post(base + "/api/auth/login",
+    { data: { email: "studio@check.example", password: "studio-pass" } });
+  check("the check's account signs in", login.ok(), String(login.status()));
+  await page.goto(URL + "?bay=video", { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() => {
+    const st = document.getElementById("videoStudio");
+    return st && !st.hidden && document.getElementById("genModel").options.length > 1;
+  }, null, { timeout: 15000 }).catch(() => {});
+  const studio = await page.evaluate(() => ({
+    title: document.getElementById("genTitle").textContent.trim(),
+    models: document.getElementById("genModel").options.length,
+    backendHidden: document.getElementById("ctlBackend").hidden,
+    quota: document.getElementById("genQuota").textContent,
+  }));
+  check("the bay is the video studio", studio.title === "Make a video", studio.title);
+  check("with a choice of models", studio.models > 5, String(studio.models));
+  check("one backend, so no backend picker", studio.backendHidden);
+  check("the allowance is on screen", /of 10 left/.test(studio.quota), studio.quota);
+
+  // Controls follow the model.
+  await page.selectOption("#genModel", "veo-3.1");
+  const veo = await page.evaluate(() => ({
+    seconds: [...document.getElementById("genSeconds").options].map((o) => o.value).join(","),
+    seed: document.getElementById("ctlSeed").hidden,
+    negative: document.getElementById("ctlNegative").hidden,
+    ratios: [...document.getElementById("genRatio").options].map((o) => o.value).join(","),
+  }));
+  check("Veo offers only the lengths it makes", veo.seconds === "4,6,8", veo.seconds);
+  check("and no seed field (it takes none)", veo.seed);
+  check("nor a negative prompt", veo.negative);
+  check("and its two aspect ratios", veo.ratios === "16:9,9:16", veo.ratios);
+  await page.selectOption("#genModel", "wan-2.5");
+  const wan = await page.evaluate(() => ({
+    seed: document.getElementById("ctlSeed").hidden,
+    ratio: document.getElementById("ctlRatio").hidden,
+    negative: document.getElementById("ctlNegative").hidden,
+  }));
+  check("Wan shows the seed field", !wan.seed);
+  check("and the negative prompt", !wan.negative);
+  check("but no aspect picker (it decides)", wan.ratio);
+  await page.selectOption("#genModel", "kling-2.5-turbo");
+  // Selecting a model must not be undone by the re-render it causes.
+  await page.selectOption("#genModel", "sora-2");
+  check("the chosen model stays chosen", (await page.inputValue("#genModel")) === "sora-2");
+  await page.selectOption("#genModel", "kling-2.5-turbo");
+
+  // The brief, before anything is spent.
+  await page.fill("#genPrompt", "a fox in snow");
+  await page.click("#genPreview");
+  await page.waitForFunction(() => document.querySelector("#genBrief dt"), null, { timeout: 10000 }).catch(() => {});
+  const brief = await page.evaluate(() => {
+    const dts = [...document.querySelectorAll("#genBrief dt")].map((d) => d.textContent);
+    const camera = [...document.querySelectorAll("#genBrief dd")][dts.indexOf("camera")];
+    return { fields: dts.join(","), camera: camera ? camera.textContent : "" };
+  });
+  check("the brief lists its parts", /subject,action,setting,camera,lighting,style/.test(brief.fields), brief.fields);
+  check("with the camera path", brief.camera === "slow dolly-in, 35mm", brief.camera);
+
+  // Generate, watch the log, get a card.
+  await page.focus('#genMotion [data-v="medium"]');
+  await page.keyboard.press("ArrowRight");
+  const motion = await page.evaluate(() => document.querySelector('#genMotion [aria-checked="true"]').getAttribute("data-v"));
+  check("motion moves with the arrow keys", motion === "high", motion);
+  await page.click("#genRun");
+  await page.waitForSelector(".clip-card", { timeout: 10000 }).catch(() => {});
+  check("a card appears at once", await page.evaluate(() => document.querySelectorAll(".clip-card").length) === 1);
+  check("the log has started", await page.evaluate(() => document.querySelectorAll("#videoLogList li").length) >= 1);
+  await page.waitForFunction(() => {
+    const c = document.querySelector(".clip-card");
+    return c && (c.dataset.status === "done" || c.dataset.status === "failed");
+  }, null, { timeout: 40000 }).catch(() => {});
+  const card = await page.evaluate(() => {
+    const c = document.querySelector(".clip-card");
+    const v = c.querySelector("video");
+    return {
+      status: c.dataset.status,
+      video: !!v, src: v ? v.getAttribute("src") : "",
+      meta: c.querySelector(".clip-meta").textContent,
+      download: (c.querySelector(".clip-download") || {}).getAttribute ? c.querySelector(".clip-download").getAttribute("href") : "",
+      lastLog: (document.querySelector("#videoLogList li:last-child span") || {}).textContent || "",
+      quota: document.getElementById("genQuota").textContent,
+    };
+  });
+  check("the clip finishes", card.status === "done", card.status + " " + card.lastLog);
+  check("as a playable video from this server", card.video && card.src.startsWith("/static/video/generated/"), card.src);
+  check("with its settings on the card", /high motion/.test(card.meta), card.meta);
+  check("made by the model that was chosen", /kling-2\.5-turbo/.test(card.meta), card.meta);
+  check("the log ends with Done", /^Done:/.test(card.lastLog), card.lastLog);
+  check("the allowance went down by one", /9 of 10 left/.test(card.quota), card.quota);
+  const dl = await page.request.get(base + card.download);
+  check("Download serves the file", dl.ok() && /attachment/.test(dl.headers()["content-disposition"] || ""), String(dl.status()));
+  check("as video", /video\/mp4/.test(dl.headers()["content-type"] || ""), dl.headers()["content-type"]);
+
+  // The card hands its prompt back, and deleting asks first.
+  await page.fill("#genPrompt", "");
+  await page.click(".clip-card .clip-actions button:has-text('Reuse prompt')");
+  check("Reuse prompt refills the form", (await page.inputValue("#genPrompt")) === "a fox in snow");
+  await page.click(".clip-card .clip-actions .is-danger");
+  await page.waitForSelector("dialog.confirm[open]", { timeout: 5000 }).catch(() => {});
+  check("deleting a clip asks first", await page.evaluate(() => !!document.querySelector("dialog.confirm[open]")));
+  await page.click("dialog.confirm .confirm-ok");
+  await page.waitForFunction(() => document.querySelectorAll(".clip-card").length === 0, null, { timeout: 5000 }).catch(() => {});
+  check("and the card goes", (await page.evaluate(() => document.querySelectorAll(".clip-card").length)) === 0);
+  check("no errors in the studio", errors.length === 0, errors.slice(-3).join(" | "));
+
   for (const n of [...new Set(notes)]) console.log("    note: %s", n);
 
   await browser.close();

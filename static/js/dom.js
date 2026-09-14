@@ -234,10 +234,10 @@ export const appShell = document.querySelector(".app");
    A panel rather than a thread: a clip takes minutes and has settings,
    which is not a shape the chat log has a message type for.
 
-   This replaced an ffmpeg editor. The important difference for anyone
-   reading this later is that there is no upload and no source file -
-   the only input is a sentence, and the only output is a URL on the
-   provider's CDN. Nothing is stored on our server at all.
+   This replaced an ffmpeg editor. There is no source footage: the
+   inputs are a sentence, the model's settings and optionally a start
+   image; the output is a clip the server has fetched, checked and kept
+   (videogen.py), listed in the grid the studio draws.
 
    Generation is slow (minutes, not seconds) and costs real money per
    clip, so two things matter more here than elsewhere: the remaining
@@ -252,13 +252,11 @@ export const genPrompt = document.getElementById("genPrompt");
 
 export const genRun = document.getElementById("genRun");
 
-export const genSeconds = document.getElementById("genSeconds");
+export const genSeconds = /** @type {HTMLSelectElement} */ (document.getElementById("genSeconds"));
 
-export const genSecondsOut = document.getElementById("genSecondsOut");
+export const genRatio = /** @type {HTMLSelectElement} */ (document.getElementById("genRatio"));
 
-export const genRatio = document.getElementById("genRatio");
-
-export const genQuality = document.getElementById("genQuality");
+export const genQuality = /** @type {HTMLSelectElement} */ (document.getElementById("genQuality"));
 
 export const genQuotaEl = document.getElementById("genQuota");
 
@@ -271,8 +269,6 @@ export const genSub = document.getElementById("genSub");
 export const videoStatusEl = document.getElementById("videoStatus");
 
 export const videoResult = document.getElementById("videoResult");
-
-export const videoOut = document.getElementById("videoOut");
 
 export const modelOut = document.getElementById("modelOut");
 

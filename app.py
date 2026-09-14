@@ -2,6 +2,7 @@ from flask import (Flask, render_template, request, Response, jsonify,
                    session, stream_with_context, redirect, url_for, abort,
                    send_from_directory)
 from dotenv import load_dotenv
+import hashlib
 import hmac
 import secrets
 import subprocess
@@ -51,6 +52,8 @@ import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
 import pixverse  # noqa: E402  paid text-to-video - see pixverse.py
 import hfvideo  # noqa: E402  free-tier text-to-video - see hfvideo.py
 import tripo3d  # noqa: E402  text-to-3D generation - see tripo3d.py
+import higgsfield_api  # noqa: E402  Higgsfield Cloud video - see higgsfield_api.py
+import videogen  # noqa: E402  the video job engine - see videogen.py
 import tools  # noqa: E402  model-callable tools - see tools.py
 import mailer  # noqa: E402  verification email - see mailer.py
 
@@ -350,6 +353,7 @@ def _client_ip():
 LIMIT_CHAT = Limiter(rate=20, per=60, burst=5)
 LIMIT_IMAGE = Limiter(rate=6, per=60, burst=3)
 LIMIT_VIDEO = Limiter(rate=3, per=60, burst=2)
+LIMIT_VIDEO_ENHANCE = Limiter(rate=10, per=60, burst=4)
 LIMIT_SEARCH = Limiter(rate=20, per=60, burst=10)
 LIMIT_RUN = Limiter(rate=12, per=60, burst=4)
 LIMIT_DIAGRAM = Limiter(rate=12, per=60, burst=4)
@@ -6397,49 +6401,93 @@ def generate_image_route():
 # see the note at the top of pixverse.py for why those must not be the
 # same pool.
 # ----------------------------------------------------------------------
-VIDEO_JOBS = {}
-VIDEO_JOBS_LOCK = threading.Lock()
-
-
-# TWO BACKENDS, ONE BAY
+# THE BACKENDS, IN THE ORDER THE BAY PREFERS THEM
 #
-# PixVerse is better and costs about $0.45 a clip with no free tier at
-# any volume. Hugging Face's free allowance is the only genuinely free
-# path that survived checking - Pollinations is images only, and
-# Cloudflare Workers AI, which already serves this app's images, has no
-# video model in its catalogue.
+# Higgsfield first: it is the one this engine was built around, with a
+# choice of models, image-to-video, and per-model controls. PixVerse
+# next (paid, one model). Hugging Face's free allowance was measured at
+# about three clips a MONTH site-wide, so it is a last resort for video.
+# Tripo makes 3D meshes rather than clips and sits at the end so that a
+# server with only that key still has a working bay.
 #
-# Paid first when a key exists, because someone who has paid should get
-# what they paid for; free otherwise, so the bay works at all rather
-# than showing "not switched on" to everyone. Both expose the same
-# start()/result() pair, so nothing below this line knows which answered.
-def _video_backend():
-    """Whichever generator this bay can actually run.
+# Every backend has the same shape (see videogen's docstring); the
+# engine, not the routes, knows which one answered.
+VIDEO_BACKENDS = (
+    ("higgsfield", higgsfield_api),
+    ("pixverse", pixverse),
+    ("huggingface", hfvideo),
+    ("tripo", tripo3d),
+)
+for _name, _module in VIDEO_BACKENDS:
+    videogen.register(_name, _module)
 
-    3D FIRST, and the reason is arithmetic rather than preference. The
-    video backends were measured on this deployment: PixVerse has no free
-    tier at any volume, and Hugging Face's free allowance turned out to be
-    about three clips a MONTH site-wide - three succeeded and the fourth
-    was refused. A bay promising two a day on top of that fails on its
-    first visitor.
 
-    Tripo is first of the three because a mesh is one asset where a
-    clip is a hundred rendered frames, so the same money goes further.
-    Its free credits were checked rather than assumed, though, and a new
-    account's balance came back 0 - so this returns None here too until
-    someone funds a key, and the bay falls through to diagrams.
-    """
-    if tripo3d.configured():
-        return tripo3d, "tripo"
-    if pixverse.configured():
-        return pixverse, "pixverse"
-    if hfvideo.configured():
-        return hfvideo, "huggingface"
+def _video_backends() -> list[tuple[str, Any]]:
+    """(name, module) for every backend with a key on this server."""
+    return [(n, m) for n, m in VIDEO_BACKENDS if m.configured()]
+
+
+def _video_backend(name: str | None = None):
+    """The backend a request should use: the one it named if that is
+    live, else the first live one. -> (module, name) or (None, None)."""
+    live = _video_backends()
+    if name:
+        for n, m in live:
+            if n == name:
+                return m, n
+    if live:
+        return live[0][1], live[0][0]
     return None, None
 
 
 def video_configured():
     return _video_backend()[0] is not None
+
+
+def _video_turn(system: str, user: str) -> str | None:
+    """The text model the prompt engineer uses: Groq when it has room,
+    else whatever Ollama has loaded. None when neither can answer, and
+    the engine then keeps the person's own words."""
+    if groq_api.configured() and groq_api.models() and _groq_has_room(features.PRO):
+        model = _groq_model_for("chat")
+        if model:
+            msg, err = groq_api.chat_once(
+                model, [{"role": "system", "content": system},
+                        {"role": "user", "content": user}],
+                options={"temperature": 0.4, "num_predict": 400}, timeout=30)
+            if msg and not err and msg.get("content"):
+                return msg["content"]
+    text = imagegen._complete(system, user, max_tokens=400, timeout=30)
+    return text or None
+
+
+def _video_refund_failed(job: dict) -> None:
+    """A job the provider accepted and then could not finish: give the
+    period's count back. Called by the engine exactly once per job."""
+    period = (job.get("params") or {}).get("period")
+    if period:
+        db.video_refund(job["owner_id"], period)
+
+
+def _video_webhook_token() -> str:
+    """A server-specific path segment for the provider's callback. The
+    callback is only a nudge to poll, so a guessed token buys nothing
+    but a poll; the token keeps it from being a public poll button."""
+    return hmac.new(app.secret_key.encode(), b"video-webhook",
+                    hashlib.sha256).hexdigest()[:32]
+
+
+def _video_webhook_url(job_id: str) -> str | None:
+    """Where a provider may POST when a job ends - only when this server
+    is reachable over public HTTPS, which the providers require."""
+    base = PUBLIC_SITE_URL
+    if not base.startswith("https://") or os.environ.get("VIDEO_WEBHOOKS", "1") != "1":
+        return None
+    return "%s/api/video/webhook/%s" % (base, _video_webhook_token())
+
+
+videogen.start_poller(on_failed=_video_refund_failed,
+                      webhook_url=_video_webhook_url)
 
 
 def _video_period_key(plan):
@@ -6641,64 +6689,60 @@ def diagram_route():
                     "provider": provider})
 
 
+def _video_status_payload(account, signed_in):
+    plan = features.normalize_plan(account.get("plan"))
+    live = _video_backends()
+    default = live[0][0] if live else None
+    backends = []
+    for name, module in live:
+        caps = videogen.caps_for(module, None)
+        backends.append({
+            "id": name, "label": caps.get("label", name),
+            "kind": caps.get("kind", "video"),
+            "models": caps.get("models") or [],
+            "default_model": caps.get("default_model"),
+            "seconds": list(caps.get("seconds") or (1, 8)),
+            "seconds_discrete": bool(caps.get("seconds_discrete")),
+            "default_seconds": caps.get("default_seconds", 5),
+            "ratios": caps.get("ratios") or [],
+            "resolutions": caps.get("resolutions") or [],
+            "default_resolution": caps.get("default_resolution", "720p"),
+            "negative": bool(caps.get("negative")),
+            "seed": bool(caps.get("seed")),
+            "motion": bool(caps.get("motion")),
+            "image_to_video": bool(caps.get("image_to_video")),
+            "free_tier": bool(caps.get("free_tier")),
+            # Credits left, when the backend can report them. A key with
+            # an empty balance is indistinguishable from a working one
+            # until someone waits on a job that cannot start.
+            "credits": tripo3d.balance() if name == "tripo" else None,
+        })
+    return {
+        "configured": bool(live),
+        "backend": default,
+        "backends": backends,
+        # Say WHICH thing is missing. "Not switched on" is true and
+        # useless - it gives whoever runs the server nothing to do.
+        "detail": "" if live else higgsfield_api.unavailable_reason(),
+        "kind": "model" if default == "tripo" else "video",
+        "free_tier": default == "huggingface",
+        "enhancer": bool((groq_api.configured() and groq_api.models())
+                         or ollama_reachable()),
+        "quota": _video_quota_view(current_owner_id(), plan, signed_in),
+    }
+
+
 @app.route("/api/video/status", methods=["GET"])
 def video_status():
-    """What the bay should render before anyone types anything."""
+    """What the bay should render before anyone types anything: every
+    live backend with the controls it honours, and the quota."""
     account, _ = current_account()
-    plan = features.normalize_plan(account.get("plan"))
-    signed_in = bool(session.get("user_id"))
-    backend, backend_name = _video_backend()
-    return jsonify({
-        "configured": backend is not None,
-        "backend": backend_name,
-        # Say WHICH thing is missing. "Not switched on" is true and
-        # useless - it gives whoever runs the server nothing to do, and
-        # this bay has two possible backends, so "no key" is ambiguous
-        # without naming which key.
-        # Names the cheapest way to switch the bay on, which is the
-        # 3D key - a free Tripo account buys ~100 models against Hugging
-        # Face's ~3 clips.
-        "detail": "" if backend else tripo3d.unavailable_reason(),
-        # Named so the bay can say what it is using, and so "free tier,
-        # may run out" is something the page can explain rather than a
-        # surprise at the moment it happens.
-        "free_tier": backend_name == "huggingface",
-        # "video" or "model" - the bay renders a <video> or a GLB viewer,
-        # and the copy differs, so the client is told rather than
-        # guessing from the backend name.
-        "kind": "model" if backend_name == "tripo" else "video",
-        # Credits left, when the backend can report them. A configured
-        # key with an empty balance is indistinguishable from a working
-        # one until someone waits on a job that cannot start, so the bay
-        # asks up front and says so instead.
-        "credits": (tripo3d.balance() if backend_name == "tripo" else None),
-        "quota": _video_quota_view(current_owner_id(), plan, signed_in),
-        "max_seconds": pixverse.MAX_SECONDS,
-        "min_seconds": pixverse.MIN_SECONDS,
-        "default_seconds": pixverse.DEFAULT_SECONDS,
-        "qualities": list(pixverse.QUALITIES),
-        "ratios": list(pixverse.RATIOS),
-    })
+    return jsonify(_video_status_payload(account, bool(session.get("user_id"))))
 
 
-@app.route("/api/video/generate", methods=["POST"])
-@limited("video", LIMIT_VIDEO, key=_limit_key_account)
-def video_generate():
-    payload = request.get_json(force=True, silent=True) or {}
-    prompt = (payload.get("prompt") or "").strip()
-    if not prompt:
-        return jsonify({"error": "Describe the video you want."}), 400
-
-    backend, backend_name = _video_backend()
-    if backend is None:
-        return jsonify({
-            "error": "Generation isn't set up on this server yet.",
-            "detail": tripo3d.unavailable_reason(),
-        }), 503
-
-    account, _ = current_account()
-    plan = features.normalize_plan(account.get("plan"))
-    signed_in = bool(session.get("user_id"))
+def _video_gate(plan, signed_in):
+    """The plan and account checks every generation route shares.
+    -> (json, status) to return, or None to proceed."""
     if not features.video_allowed(plan):
         return jsonify({
             "error": "Video generation isn't available on your plan.",
@@ -6714,6 +6758,50 @@ def video_generate():
                      "moment, and it's how the daily limit is kept fair.",
             "needs_account": True,
         }), 401
+    return None
+
+
+@app.route("/api/video/enhance", methods=["POST"])
+@limited("video_enhance", LIMIT_VIDEO_ENHANCE, key=_limit_key_account)
+def video_enhance():
+    """The engineered prompt, before anything is spent - so the person
+    can read the brief, edit it, and generate from that instead."""
+    payload = request.get_json(force=True, silent=True) or {}
+    prompt = (payload.get("prompt") or "").strip()
+    if not prompt:
+        return jsonify({"error": "Describe the video you want."}), 400
+    blocked = moderation.check_image_prompt(prompt)
+    if blocked is not None:
+        return jsonify({"error": blocked}), 400
+    module, name = _video_backend(payload.get("backend"))
+    caps = videogen.caps_for(module, payload.get("model")) if module else {}
+    spec = videogen.parse_spec(dict(payload, prompt=prompt, enhance=True), caps)
+    brief = videogen.enhance(spec, _video_turn)
+    return jsonify({"prompt": brief["prompt"], "negative": brief["negative"],
+                    "enhanced": brief["enhanced"], "brief": brief.get("brief")})
+
+
+@app.route("/api/video/generate", methods=["POST"])
+@limited("video", LIMIT_VIDEO, key=_limit_key_account)
+def video_generate():
+    payload = request.get_json(force=True, silent=True) or {}
+    prompt = (payload.get("prompt") or "").strip()
+    if not prompt:
+        return jsonify({"error": "Describe the video you want."}), 400
+
+    module, backend_name = _video_backend(payload.get("backend"))
+    if module is None:
+        return jsonify({
+            "error": "Generation isn't set up on this server yet.",
+            "detail": higgsfield_api.unavailable_reason(),
+        }), 503
+
+    account, _ = current_account()
+    plan = features.normalize_plan(account.get("plan"))
+    signed_in = bool(session.get("user_id"))
+    gate = _video_gate(plan, signed_in)
+    if gate:
+        return gate
 
     # The image bar, not the chat one: a generated clip is a published
     # artefact in exactly the way a generated picture is, and the same
@@ -6723,92 +6811,142 @@ def video_generate():
     if blocked is not None:
         return jsonify({"error": blocked}), 400
 
+    caps = videogen.caps_for(module, payload.get("model"))
+    spec = videogen.parse_spec(dict(payload, prompt=prompt), caps)
+    if payload.get("model") and spec.model != payload.get("model"):
+        return jsonify({"error": "That model isn't offered by %s." % backend_name}), 400
+
+    # Image-to-video: the picture must be somewhere the provider can
+    # fetch it, so it is uploaded to the provider's own storage first.
+    # Only a backend that can do that offers the control at all.
+    image = payload.get("image")
+    if image and caps.get("image_to_video") and hasattr(module, "upload_image"):
+        decoded = higgsfield_api.decode_data_url(str(image)) if isinstance(image, str) else None
+        if not decoded:
+            return jsonify({"error": "Send the image as a data URL."}), 400
+        data, ctype = decoded
+        if len(data) > 8 * 1024 * 1024:
+            return jsonify({"error": "Keep the image under 8 MB."}), 413
+        public_url, err = module.upload_image(data, ctype)
+        if err:
+            return jsonify({"error": err}), 502
+        spec.image_url = public_url
+        if spec.model and not any(
+                m.get("id") == spec.model and m.get("image_to_video", True)
+                for m in caps.get("models") or []):
+            return jsonify({"error": "%s can't start from an image." % spec.model}), 400
+    elif spec.model and not any(
+            m.get("id") == spec.model and m.get("text_to_video", True)
+            for m in caps.get("models") or []):
+        return jsonify({"error": "%s needs a starting image." % spec.model}), 400
+
     owner = current_owner_id()
-    month = _video_period_key(plan)
+    period = _video_period_key(plan)
     limit = features.video_quota_for(plan)
     # Counted BEFORE the call, and the comparison to the limit is inside
     # the same statement as the count (db.video_try_consume). It used to
     # be a read, a compare, and then a consume - so two requests arriving
     # together both read 1, both passed, and both generated, and the
-    # overage is money rather than a rate limit. Refunded below if
-    # PixVerse never accepted the job.
-    if not db.video_try_consume(owner, month, limit):
-        period = features.video_period_for(plan)
+    # overage is money rather than a rate limit. Refunded below if the
+    # provider never accepted the job, and by the engine if it accepted
+    # and then failed.
+    if not db.video_try_consume(owner, period, limit):
         return jsonify({
             "error": "You've used all %d video generations for this %s." % (
-                limit, period),
+                limit, features.video_period_for(plan)),
             "quota": _video_quota_view(owner, plan, signed_in),
         }), 402
 
-    seconds = pixverse.clamp_seconds(payload.get("seconds"))
-    if backend_name == "pixverse":
-        video_id, err = backend.start(
-            prompt,
-            seconds=seconds,
-            quality=payload.get("quality") or "720p",
-            ratio=payload.get("ratio") or "16:9",
-        )
-    else:
-        # Neither the free video backend nor the 3D one has quality or
-        # aspect controls - a mesh has no aspect ratio and LTX produces a
-        # fixed shape - so offering settings that do nothing is worse
-        # than not offering them.
-        video_id, err = backend.start(prompt, seconds=seconds)
-    if err:
-        db.video_refund(owner, month)
-        return jsonify({"error": err,
-                        "quota": _video_quota_view(owner, plan,
-                                                   signed_in)}), 502
+    job = videogen.submit(owner, spec, backend_name, turn=_video_turn,
+                          extra={"period": period})
+    quota = _video_quota_view(owner, plan, signed_in)
+    if job["status"] == "failed":
+        # Refused before it was ever accepted. The engine has already
+        # given the count back (on_failed runs for every failure), so
+        # this only reports it.
+        return jsonify({"error": job.get("error") or "The provider refused it.",
+                        "job": videogen.public_job(job),
+                        "quota": _video_quota_view(owner, plan, signed_in)}), 502
+    return jsonify({"job": videogen.public_job(job), "quota": quota})
 
-    job_id = uuid.uuid4().hex[:12]
-    with VIDEO_JOBS_LOCK:
-        VIDEO_JOBS[job_id] = {
-            "id": job_id, "owner": owner, "video_id": video_id,
-            "backend": backend_name,
-            "status": "running", "url": None, "error": "",
-            "prompt": prompt, "started": now_iso(),
-        }
-    return jsonify({
-        "job": {"id": job_id, "status": "running"},
-        "quota": _video_quota_view(owner, plan, signed_in),
-    })
+
+@app.route("/api/video/jobs", methods=["GET"])
+def video_jobs():
+    """This owner's history, newest first - the dashboard's grid."""
+    account, _ = current_account()
+    plan = features.normalize_plan(account.get("plan"))
+    owner = current_owner_id()
+    jobs = [videogen.public_job(j) for j in db.video_jobs_for(owner, limit=40)]
+    return jsonify({"jobs": jobs,
+                    "quota": _video_quota_view(owner, plan, bool(session.get("user_id")))})
+
+
+def _own_video_job(job_id):
+    job = db.video_job_get(job_id)
+    if not job or job["owner_id"] != current_owner_id():
+        return None
+    return job
 
 
 @app.route("/api/video/job/<job_id>", methods=["GET"])
 def video_job(job_id):
-    with VIDEO_JOBS_LOCK:
-        job = VIDEO_JOBS.get(job_id)
-        if not job or job["owner"] != current_owner_id():
-            return jsonify({"error": "Unknown job"}), 404
-        job = dict(job)
-
-    plan_now = features.normalize_plan(current_account()[0].get("plan"))
-    if job["status"] == "running":
-        # Asked of whichever backend started it, not of whichever is
-        # configured now - a key added mid-render must not orphan a job.
-        started_with = {
-            "pixverse": pixverse,
-            "tripo": tripo3d,
-        }.get(job.get("backend") or "", hfvideo)
-        state, url, err = started_with.result(job["video_id"])
-        if state == "done":
-            job.update({"status": "done", "url": url})
-        elif state == "failed":
-            job.update({"status": "failed", "error": err or "Failed."})
-            # The provider never delivered, so the month's count should
-            # not carry it. Refunded once, at the moment the failure is
-            # first observed - polling again finds status "failed" and
-            # does not reach here a second time.
-            db.video_refund(job["owner"], _video_period_key(plan_now))
-        with VIDEO_JOBS_LOCK:
-            if job_id in VIDEO_JOBS:
-                VIDEO_JOBS[job_id].update(job)
-
+    job = _own_video_job(job_id)
+    if not job:
+        return jsonify({"error": "Unknown job"}), 404
     account, _ = current_account()
     plan = features.normalize_plan(account.get("plan"))
-    view = {k: v for k, v in job.items() if k != "owner"}
-    return jsonify({"job": view,
-                    "quota": _video_quota_view(job["owner"], plan)})
+    return jsonify({"job": videogen.public_job(job),
+                    "quota": _video_quota_view(job["owner_id"], plan,
+                                               bool(session.get("user_id")))})
+
+
+@app.route("/api/video/job/<job_id>", methods=["DELETE"])
+def video_job_delete(job_id):
+    """Cancel if it is still going, then forget it and its file."""
+    job = _own_video_job(job_id)
+    if not job:
+        return jsonify({"error": "Unknown job"}), 404
+    if job["status"] in ("queued", "running"):
+        confirmed = videogen.cancel(job)
+        # A provider that dropped it before starting does not bill for
+        # it; a queued-here job never reached one. Either way the count
+        # comes back. A render already in progress is spent.
+        if confirmed:
+            period = (job.get("params") or {}).get("period")
+            if period:
+                db.video_refund(job["owner_id"], period)
+    gone = db.video_job_delete(job_id, job["owner_id"])
+    if gone:
+        videogen.remove_file(gone)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/video/job/<job_id>/download", methods=["GET"])
+def video_job_download(job_id):
+    """The finished file as an attachment, named after the job."""
+    job = _own_video_job(job_id)
+    if not job or job["status"] != "done" or not job.get("local_path"):
+        return jsonify({"error": "Nothing to download yet."}), 404
+    rel = job["local_path"].lstrip("/")
+    directory, name = os.path.split(os.path.join(app.root_path, rel))
+    return send_from_directory(
+        directory, name, as_attachment=True,
+        download_name="randomgenerals-%s%s" % (job_id, os.path.splitext(name)[1]))
+
+
+@app.route("/api/video/webhook/<token>", methods=["POST"])
+def video_webhook(token):
+    """A provider saying a job ended. Unsigned (Higgsfield documents no
+    signature), so it is treated as a hint: the engine polls the job
+    now and believes the provider's status endpoint, not this body.
+    Always 200 - a 4xx tells the provider to stop retrying, and a 5xx
+    makes it retry for two hours, neither of which is wanted here."""
+    if not hmac.compare_digest(token, _video_webhook_token()):
+        return jsonify({"ok": False}), 200
+    payload = request.get_json(force=True, silent=True) or {}
+    ref = str(payload.get("request_id") or "")
+    known = videogen.nudge(ref) if ref else False
+    return jsonify({"ok": True, "known": known})
 
 
 # ----------------------------------------------------------------------

@@ -144,8 +144,33 @@ def _friendly(raw):
     return "Video generation failed: %s" % raw[:160]
 
 
-def start(prompt, seconds=5, fps=16):
-    """Queue a generation on a background thread. -> (job_id, error)."""
+def capabilities():
+    """LTX and Wan produce a fixed landscape shape at 16 fps and take
+    no seed, ratio or negative prompt through the client - so this
+    offers only what actually changes the clip."""
+    return {
+        "kind": "video",
+        "label": "Hugging Face (free tier)",
+        "models": [],
+        "default_model": None,
+        "seconds": (2, 8),
+        "default_seconds": 5,
+        "ratios": ["16:9"],
+        "resolutions": ["720p"],
+        "default_resolution": "720p",
+        "negative": False,
+        "seed": False,
+        "motion": False,
+        "image_to_video": False,
+        "fps": 16,
+        "free_tier": True,
+    }
+
+
+def start(prompt, seconds=5, fps=16, **_unused):
+    """Queue a generation on a background thread. -> (job_id, error).
+    Seed, ratio and the rest are accepted for the engine's sake and
+    ignored: the client does not pass them through."""
     if not configured():
         return None, unavailable_reason()
     prompt = (prompt or "").strip()

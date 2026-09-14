@@ -10,8 +10,7 @@
 
    Dark navy ground, peach type, terracotta on everything you act
    on, generous vertical rhythm. Dark is not a mode here - there is
-   no light variant to switch to, because the page sits on desert
-   footage shot at dusk and a light ground has nothing to offer it.
+   no light variant to switch to; the palette is the brand.
    Everything below is expressed in tokens, so the palette is the
    only thing that has to change to re-theme the page.
    ============================================================ */
@@ -426,45 +425,44 @@ section {
 
 /* ---- hero ---- */
 .hero {
-  position: relative;   /* containing block for the canvas */
+  position: relative;
   text-align: center;
-  padding-top: 88px;
-  padding-bottom: 72px;
+  min-height: min(78vh, 720px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-top: clamp(72px, 10vh, 120px);
+  padding-bottom: clamp(56px, 8vh, 96px);
 }
-/* Readability over the footage, bought without dimming it.
-
-   The old answer was a scrim across the whole frame, which is what
-   "don't hide the video" was about. A shadow does the same job for the
-   text and costs the picture nothing: it darkens a few pixels around
-   each glyph rather than a whole screen of desert. The hero opens on a
-   bright sunset, so without this the eyebrow and the small print sit
-   gold-on-gold and effectively vanish. */
+/* The glow the footage used to supply: one warm field above the
+   headline and a cooler one low and to the side, both far enough back
+   to be felt rather than seen. */
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: -20% -10% 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(52% 46% at 50% 22%,
+      rgb(var(--accent-rgb) / 0.20) 0%, transparent 70%),
+    radial-gradient(38% 34% at 78% 78%,
+      rgb(var(--cool-rgb) / 0.16) 0%, transparent 70%);
+}
+/* A soft lift off the ground for the small print; the glow behind the
+   hero is faint, but faint is not nothing. */
 .hero-sub,
 .hero-note {
-  text-shadow:
-    0 1px 2px rgb(var(--shade) / 0.9),
-    0 2px 14px rgb(var(--shade) / 0.75);
+  text-shadow: 0 1px 2px rgb(var(--shade) / 0.6);
 }
 
-/* The credit line sits lowest in the hero, which is where the footage is
-   brightest sand. --text-faint is 3.5:1 on the ground and far less than
-   that here, so it steps up a level rather than relying on the shadow
-   alone to rescue it. */
+/* --text-faint is 3.5:1 on the ground; the credit line steps up a
+   level so it is read, not merely present. */
 .hero-note {
   color: var(--text-soft);
-  text-shadow:
-    0 1px 2px rgb(var(--shade) / 0.95),
-    0 2px 16px rgb(var(--shade) / 0.85);
 }
 
-/* The hero eyebrow becomes a badge rather than loose text.
-
-   A shadow is enough for the sub and the small print, which sit over
-   sand. It is not enough for this line: the clip opens with the sun
-   directly behind it, and gold letters on a blown-out white sun have no
-   contrast to rescue. A small panel is the honest fix - it guarantees
-   the line is readable on every frame of an eight-second shot instead of
-   on most of them. */
+/* The hero eyebrow is a badge rather than loose text. */
 .hero .eyebrow {
   /* The hero is a flex column, so a child stretches to full width by
      default and `display: inline-block` is blockified away. Harmless
@@ -1064,30 +1062,6 @@ p {
     display: none;
   }
 
-  /* The dots stay on the vine - that effect survives a narrow screen
-     fine. The copy column does not: at 46vw it would be a sliver, so it
-     spans the width and sits low in the frame instead, which is where a
-     phone wants a caption anyway. */
-  .scene.scene-live .scene-beat {
-    left: 12px;
-    right: 12px;
-    top: auto;
-    bottom: 20px;
-    width: auto;
-    transform: translate3d(0, 14px, 0);
-  }
-
-  .scene.scene-live .scene-beat.is-active {
-    transform: translate3d(0, 0, 0);
-  }
-
-  .scene.scene-live .beat-card {
-    padding: 18px 20px;
-  }
-
-  .scene.scene-live .beat-card h2 {
-    font-size: 1.5rem;
-  }
 }
 
 /* ---- legal pages ----
@@ -1308,9 +1282,7 @@ p {
   }
 }
 
-/* Every hero child. It used to have to exclude the canvas, the video and
-   its scrim by name; those live in .filmstrip-media now, so the
-   exclusions went with them. */
+/* Every hero child rises in. */
 .hero > * {
   animation: rise-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -1464,341 +1436,6 @@ p {
 }
 
 /* ================================================================ */
-/* Scroll-driven scene                                               */
-/*                                                                   */
-/* A tall section with a pinned viewport inside it. Scrolling past    */
-/* the section drives a 0..1 progress value, which moves the canvas  */
-/* scene and swaps which caption is lit.                             */
-/*                                                                   */
-/* Everything below the .scene-live guard is the enhanced state. The */
-/* section without that class - script failed, script not loaded     */
-/* yet, reduced motion - is a plain stacked list of the four beats,  */
-/* which is a perfectly good way to read them.                       */
-/* ================================================================ */
-.scene {
-  position: relative;
-  max-width: var(--maxw);
-  margin: 0 auto;
-  padding: 0 24px;
-}
-
-.scene-beats {
-  display: grid;
-  gap: 56px;
-}
-
-/* The resting state, before scroll-scene.js takes over and if it never
-   does. Everything above this point in the cascade assumes .scene-live;
-   these are the styles that make the section a plain, readable list of
-   four headings on its own - which is what it has to be with no JS, with
-   a failed script, or in the moment before the script runs. */
-.beat-pin {
-  display: none;
-}
-
-.beat-card {
-  display: block;
-  position: static;
-  width: auto;
-  max-width: 46rem;
-  opacity: 1;
-  visibility: visible;
-  transform: none;
-  padding: 0;
-  border: 0;
-  background: none;
-  box-shadow: none;
-}
-
-.scene-beat h2 {
-  /* Same voice as the hero and the section headings. These sit directly
-     on the footage at the largest text size on the page after the
-     headline, so leaving them in the UI sans was the one place the type
-     visibly changed character mid-scroll.
-
-     Sized up from the sans it replaces: Cormorant has a small x-height
-     for its point size, so matching the old numbers would read as the
-     captions having shrunk. */
-  font-family: var(--font-serif);
-  font-weight: 500;
-  font-size: clamp(2rem, 4.2vw, 3rem);
-  line-height: 1.08;
-  letter-spacing: -0.005em;
-  margin: 12px 0 14px;
-}
-
-.scene-beat p {
-  color: var(--text-soft);
-  max-width: 46ch;
-  line-height: 1.65;
-  margin: 0;
-}
-
-/* ---- enhanced ---------------------------------------------------- */
-/* 400vh gives four screens of scroll, one per beat. */
-.scene.scene-live {
-  height: 400vh;
-  padding: 0;
-  max-width: none;
-}
-
-.scene.scene-live .scene-sticky {
-  position: sticky;
-  top: 0;
-  height: 100vh;
-  display: flex;
-  align-items: center;
-  overflow: hidden;
-}
-
-/* While the scene is live this stops being a text column and becomes the
-   coordinate space the pins live in: exactly the sticky viewport, with
-   no padding or centring to offset them. scroll-scene.js measures pin
-   positions against this element, so any box it does not fill would
-   shift every dot off the vine by that difference. */
-.scene.scene-live .scene-beats {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  display: block;
-  width: auto;
-  max-width: none;
-  margin: 0;
-  padding: 0;
-}
-
-/* ---- the dots ----------------------------------------------------
-   Their own layer, positioned onto the vine by scroll-scene.js. They are
-   the only part of this that follows the footage; the words below hold
-   one position, because text that moves around the frame between beats
-   is text nobody finishes reading. */
-.scene.scene-live .beat-pins {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 2;
-}
-
-.scene.scene-live .beat-pin {
-  /* Explicit, because the resting rule above hides these with
-     display:none and this selector never re-declared it - so the dots
-     were laid out, positioned, and then not rendered at all. Winning on
-     specificity only covers the properties a rule actually states. */
-  display: block;
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 14px;
-  height: 14px;
-  margin: -7px 0 0 -7px;
-  border-radius: 50%;
-  background: var(--accent-ink);
-  box-shadow:
-    0 0 0 1px rgb(var(--ground) / 0.55),
-    0 0 18px 3px rgb(var(--accent-rgb) / 0.55);
-  opacity: 0;
-  transform: scale(0.2);
-  transition:
-    opacity 0.5s ease,
-    transform 0.55s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-/* Dropped when the window is the wrong shape to show this part of the
-   frame - see placePins(). */
-.scene.scene-live .beat-pin.is-offstage {
-  display: none;
-}
-
-/* Once a dot has appeared it stays, dimmed. The trail down the vine is
-   the point. */
-.scene.scene-live .beat-pin.has-appeared {
-  opacity: 0.7;
-  transform: scale(0.78);
-  box-shadow:
-    0 0 0 1px rgb(var(--ground) / 0.7),
-    0 0 12px 2px rgb(var(--accent-rgb) / 0.45);
-}
-
-.scene.scene-live .beat-pin.is-active {
-  opacity: 1;
-  transform: scale(1);
-}
-
-/* The ring, only on the current dot. */
-.scene.scene-live .beat-pin::after {
-  content: "";
-  position: absolute;
-  inset: -5px;
-  border-radius: 50%;
-  border: 1px solid var(--accent-ink);
-  opacity: 0;
-}
-
-.scene.scene-live .beat-pin.is-active::after {
-  animation: pin-ping 2.6s cubic-bezier(0.16, 1, 0.3, 1) infinite;
-}
-
-@keyframes pin-ping {
-  0% { opacity: 0.85; transform: scale(0.55); }
-  70% { opacity: 0; transform: scale(2.6); }
-  100% { opacity: 0; transform: scale(2.6); }
-}
-
-/* ---- the copy ----------------------------------------------------
-   One column, one position, for all four beats. They stack on top of
-   each other and cross-fade in place rather than being repositioned per
-   beat, which is what made the text feel like it was jumping around. */
-.scene.scene-live .scene-beat {
-  position: absolute;
-  left: max(24px, calc((100% - var(--maxw)) / 2 + 24px));
-  top: 50%;
-  width: min(34rem, 46vw);
-  max-width: none;
-  z-index: 3;
-  transform: translate3d(0, calc(-50% + 14px), 0);
-  opacity: 0;
-  visibility: hidden;
-  transition:
-    opacity 0.45s ease,
-    transform 0.6s cubic-bezier(0.16, 1, 0.3, 1),
-    visibility 0s linear 0.45s;
-}
-
-.scene.scene-live .scene-beat.is-active {
-  opacity: 1;
-  visibility: visible;
-  transform: translate3d(0, -50%, 0);
-  transition-delay: 0s;
-}
-
-/* A panel only where the words are. The footage stays uncovered
-   everywhere else, which is the whole reason the full-frame scrim went
-   away - legibility is bought over the text, not over the picture. */
-.scene.scene-live .beat-card {
-  padding: 26px 28px;
-  border-radius: 16px;
-  border: 1px solid var(--line);
-  border-left: 2px solid var(--accent-ink);
-  background: rgb(var(--ground) / 0.58);
-  -webkit-backdrop-filter: blur(18px) saturate(115%);
-  backdrop-filter: blur(18px) saturate(115%);
-  box-shadow: 0 22px 60px rgb(var(--shade) / 0.5);
-}
-
-.scene.scene-live .beat-card h2 {
-  font-size: clamp(1.4rem, 2.1vw, 1.85rem);
-  margin: 10px 0 10px;
-}
-
-/* One span per word, written by scroll-scene.js. The inline-block is
-   load-bearing: transforms do not apply to inline boxes, so without it
-   the stagger silently does nothing. */
-.scene.scene-live .beat-card h2 .w {
-  display: inline-block;
-  overflow: hidden;
-  vertical-align: bottom;
-}
-
-.scene.scene-live .beat-card h2 .w > i {
-  display: inline-block;
-  font-style: inherit;
-  transform: translate3d(0, 105%, 0);
-  transition: transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
-  /* Each word waits a little longer than the last, so the line arrives
-     left to right rather than all at once. */
-  transition-delay: calc(0.12s + var(--i) * 0.045s);
-}
-
-.scene.scene-live .scene-beat.is-active .beat-card h2 .w > i {
-  transform: translate3d(0, 0, 0);
-}
-
-.scene.scene-live .beat-card p {
-  font-size: 14.5px;
-  line-height: 1.65;
-  max-width: none;
-}
-
-/* ---- narrow screens ---------------------------------------------- */
-@media (max-width: 720px) {
-  /* Four screens of scroll is a long time to hold someone on one
-     image on a phone. */
-  .scene.scene-live {
-    height: 260vh;
-  }
-
-  .scene.scene-live .scene-beat {
-    max-width: none;
-  }
-
-  .scene-beat p {
-    max-width: none;
-  }
-}
-
-/* ---- reduced motion ---------------------------------------------- */
-@media (prefers-reduced-motion: reduce) {
-  /* No pinning and no scrubbing: the section reverts to the plain
-     stacked list, with the canvas showing a single static frame. */
-  .scene.scene-live {
-    height: auto;
-    padding: 0 24px;
-    max-width: var(--maxw);
-  }
-
-  .scene.scene-live .scene-sticky {
-    position: static;
-    height: auto;
-    display: block;
-  }
-
-  .scene.scene-live .scene-beats {
-    position: static;
-    inset: auto;
-    display: grid;
-    gap: 56px;
-    padding: 0;
-  }
-
-  /* position:static alone was not enough. The live rules also set
-     width:0 and height:0 - correct for an element that is only a
-     coordinate origin, and catastrophic for one that is back in normal
-     flow: the card inside inherits a zero-width container and every
-     heading wraps to one letter per line. */
-  .scene.scene-live .scene-beat {
-    position: static;
-    width: auto;
-    height: auto;
-    opacity: 1;
-    visibility: visible;
-    transform: none;
-    transition: none;
-  }
-
-  /* The card comes back to being a plain block, not a floating panel
-     hidden at opacity 0 waiting for an is-active that never arrives. */
-  .scene.scene-live .beat-card {
-    position: static;
-    width: auto;
-    max-width: 46rem;
-    padding: 0;
-    border: 0;
-    background: none;
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-    box-shadow: none;
-    opacity: 1;
-    visibility: visible;
-    transform: none;
-  }
-
-  .scene.scene-live .beat-card::before,
-  .scene.scene-live .beat-pin {
-    display: none;
-  }
-}
-
-/* ================================================================ */
 /* Continuity                                                        */
 /*                                                                   */
 /* The page read as separate slabs: full-bleed footage ending on a   */
@@ -1830,6 +1467,16 @@ body::before {
    hard video edge the rhythm read as stacked panels. Consistent
    breathing room between them does more for continuity than any
    gradient. */
+.pillars {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 0 24px clamp(64px, 8vw, 112px);
+}
+.pillars-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  row-gap: clamp(32px, 4vw, 48px);
+}
+
 .features,
 .how,
 .pricing,
@@ -1846,238 +1493,4 @@ body::before {
      section's content is this plus that. */
   padding-top: clamp(80px, 9vw, 132px);
   padding-bottom: clamp(80px, 9vw, 132px);
-}
-
-/* ================================================================ */
-/* The filmstrip                                                     */
-/*                                                                   */
-/* Hero and scene over one continuous shot.                          */
-/*                                                                   */
-/* Before this they held a player each, showing the same file, each   */
-/* faded at its edges to disguise where it stopped. That cannot work: */
-/* two elements meeting at a boundary read as two elements however    */
-/* softly each one ends, and the dark gap between them read as a band */
-/* separating two panels - which is exactly what "it looks separated" */
-/* was pointing at.                                                   */
-/*                                                                   */
-/* One <video>, pinned for the height of both sections, has no        */
-/* boundary to disguise. Everything else here is a text layer over    */
-/* it. The only fade left is at the very bottom, where the footage    */
-/* genuinely does end and the written sections begin.                 */
-/* ================================================================ */
-.filmstrip {
-  position: relative;
-}
-
-.filmstrip-media {
-  position: sticky;
-  top: 0;
-  height: 100vh;
-  overflow: hidden;
-  z-index: 0;
-}
-
-/* The media is first in flow so it can be sticky for the whole strip,
-   which means it also occupies a screen of layout before the hero. This
-   pulls the content back over it. Without it the page opens on a screen
-   of video with the headline below the fold. */
-.filmstrip > .hero {
-  margin-top: -100vh;
-}
-
-.film-canvas,
-.film-video {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  /* Load-bearing, not decoration: these cover the whole pinned area and
-     would otherwise swallow every click on the hero buttons and every
-     attempt to select the caption text. */
-  pointer-events: none;
-}
-
-/* The drawn dunes are the floor. If the video cannot play - a codec the
-   browser refuses, a blocked request, data-saver - the scene behind it
-   is already there and the page looks finished rather than black. */
-.film-canvas {
-  z-index: 0;
-}
-
-.film-video {
-  z-index: 1;
-  opacity: 0;
-  transition: opacity 0.9s ease;
-  /* No transform. The clip is 1920x1080 and the point is to see it, so
-     it is shown at its own framing - any scale here is throwing away
-     resolution that was paid for in the file size. The scroll-driven
-     zoom that used to live on this property is gone; the pins carry the
-     movement now. */
-}
-
-.film-video.is-ready {
-  opacity: 1;
-}
-
-.film-scrim {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  pointer-events: none;
-  /* A vignette, not a filter.
-
-     This used to be two heavy gradients - up to 88% of the page ground
-     across the top and 82% down the left - which made the text easy and
-     the footage nearly invisible. Shipping a 1080p clip and then hiding
-     it behind that is paying for resolution twice and using neither.
-
-     What is left does only the two jobs that genuinely need doing: a
-     band at the very top so the nav has something to sit on, and a
-     gentle fade into the page at the very bottom where the strip ends.
-     The middle - the whole of the picture - is untouched. Text
-     legibility is handled where the text actually is, by the frosted
-     panel behind each card, instead of by dimming the entire frame. */
-  background:
-    linear-gradient(180deg,
-      rgb(var(--ground) / 0.72) 0%,
-      rgb(var(--ground) / 0.28) 9%,
-      rgb(var(--ground) / 0) 22%,
-      rgb(var(--ground) / 0) 74%,
-      rgb(var(--ground) / 0.34) 92%,
-      rgb(var(--ground) / 0.78) 100%),
-    /* A soft corner vignette, low enough to be felt and not seen. It
-       stops the frame ending on four hard bright edges. */
-    radial-gradient(130% 105% at 50% 45%,
-      transparent 52%, rgb(var(--shade) / 0.42) 100%);
-}
-
-/* Hero and scene are text layers over the strip. */
-.filmstrip > .hero,
-.filmstrip > .scene {
-  position: relative;
-  z-index: 1;
-}
-
-.filmstrip > .hero {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  /* Lifted off dead centre. Optically centred text in a full-height box
-     sits low, because the eye reads the middle of a block as being above
-     its geometric centre - and here it also left the headline competing
-     with the horizon in the footage rather than sitting above it. */
-  justify-content: center;
-  padding-bottom: clamp(60px, 12vh, 140px);
-}
-
-/* The strip's last screen dissolves into the page rather than stopping
-   at a line. This is the one place footage actually ends, so it is the
-   one place that needs a fade. */
-.filmstrip::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 46vh;
-  z-index: 2;
-  pointer-events: none;
-  /* Deeper and starting higher than before. The dunes below sit on this,
-     and a crest is only legible if the sand behind it has already gone
-     dark - against bright footage the shapes read as smudges. */
-  background: linear-gradient(180deg,
-    rgb(var(--ground) / 0) 0%,
-    rgb(var(--ground) / 0.42) 46%,
-    rgb(var(--ground) / 0.82) 74%,
-    rgb(var(--ground) / 1) 100%);
-}
-
-/* ---- the dune pass ------------------------------------------------ */
-.dune-pass {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -1px;          /* -1 so no hairline shows between svg and page */
-  height: clamp(120px, 17vw, 240px);
-  z-index: 3;
-  pointer-events: none;
-  overflow: hidden;
-}
-
-.dune-pass svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-/* The crest catches a little of the same light the vine does; the foot
-   is the page's own ground, so the shapes dissolve into the section
-   below instead of sitting on top of it as two cut-outs. */
-/* Taller than before, so the sand has room to be sand. At 240px the
-   shapes were mostly slope and the base was a hard horizontal line
-   against the page; the extra height lets the gradient reach the ground
-   colour gradually and the join disappear. */
-.dune-pass {
-  height: clamp(150px, 21vw, 300px);
-}
-
-/* The lit edge of the crest. Brighter than before and warmer, because
-   this is the one line in the whole shape that says "the sun is over
-   there" - at 0.5 opacity it read as a drawn outline instead. */
-.dune-rim {
-  stroke: rgb(var(--accent-rgb) / 0.85);
-  stroke-width: 1.5;
-  vector-effect: non-scaling-stroke;
-  /* A soft bloom along the ridge, the way a lit sand edge actually
-     behaves against a dark sky. */
-  filter: drop-shadow(0 0 6px rgb(var(--accent-rgb) / 0.4));
-}
-
-/* The parting. scroll-scene.js writes --open from 0 to 1 across the last
-   screen of the strip.
-
-   At 0 the two overlap across the whole centre and there is no way
-   through. At 1 they have drawn right back and the gap between them is
-   the pass. 16% each way rather than the old 7%: the paths now overlap
-   by roughly a third of the frame, so a small translation only thins the
-   overlap instead of opening anything. */
-.dune {
-  --open: 0;
-  transition: transform 0.1s linear;
-}
-
-.dune-left {
-  transform: translateX(calc(var(--open) * -16%));
-}
-
-.dune-right {
-  transform: translateX(calc(var(--open) * 16%));
-}
-
-@media (prefers-reduced-motion: reduce) {
-  /* The shape still divides the sections; it just does not move. */
-  .dune {
-    --open: 0 !important;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  /* No pinning and no scrubbing: the strip becomes an ordinary stack of
-     the hero and four captions, on the drawn scene rather than footage.
-     A looping or scroll-driven shot is the continuous motion this
-     setting exists to stop. */
-  .filmstrip-media {
-    position: relative;
-    height: 60vh;
-  }
-
-  .filmstrip > .hero {
-    margin-top: 0;
-    min-height: 0;
-  }
-
-  .film-video {
-    display: none;
-  }
 }

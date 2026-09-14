@@ -29,7 +29,6 @@ export const state = {
   paddleReady: null,
   lastPaddleCustomer: "",
   genKind: "video",
-  videoPoll: null,
   mermaidReady: false,
   settingsSaveTimer: null,
 };

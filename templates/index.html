@@ -332,18 +332,11 @@
         </header>
 
         <!-- Video bay. A separate panel rather than a message thread:
-             trimming is a form with a preview, not a conversation, and
-             forcing it into the chat log would mean inventing a message
-             type for a range slider. -->
+             a generation is a form with settings and a wait, not a
+             conversation. The same panel draws diagrams on a server with
+             no video backend - diagram is the floor, see video.js. -->
         <section class="video-bay" id="videoBay" hidden aria-label="Video">
           <div class="video-inner">
-            <!-- GENERATION, NOT EDITING
-                 The ffmpeg editor that used to live here was removed: on
-                 a GPU-less server a re-encode of anything longer than a
-                 short clip took tens of minutes. This does something
-                 genuinely different rather than a faster version of the
-                 same thing - it makes footage, it cannot change footage
-                 you already have. -->
             <div class="gen-head">
               <h2 class="gen-title" id="genTitle">Draw a diagram</h2>
               <p class="gen-sub" id="genSub">
@@ -361,36 +354,93 @@
                 id="genPrompt"
                 class="video-prompt"
                 rows="3"
-                maxlength="900"
+                maxlength="2000"
                 placeholder="How an OAuth 2.0 authorization code flow works, including the token exchange"
               ></textarea>
 
-              <div class="gen-controls">
-                <label class="gen-ctl">
-                  <span>Length</span>
-                  <input type="range" id="genSeconds" min="1" max="8"
-                         step="1" value="5" />
-                  <output id="genSecondsOut">5s</output>
-                </label>
-                <label class="gen-ctl gen-ctl-tight">
-                  <span>Shape</span>
-                  <select id="genRatio">
-                    <option value="16:9">16:9 wide</option>
-                    <option value="9:16">9:16 vertical</option>
-                    <option value="1:1">1:1 square</option>
-                    <option value="4:3">4:3</option>
-                    <option value="3:4">3:4</option>
-                  </select>
-                </label>
-                <label class="gen-ctl gen-ctl-tight">
-                  <span>Quality</span>
-                  <select id="genQuality">
-                    <option value="720p">720p</option>
-                    <option value="540p">540p</option>
-                    <option value="1080p">1080p</option>
-                    <option value="360p">360p</option>
-                  </select>
-                </label>
+              <!-- THE STUDIO CONTROLS
+                   Every control here is shown only when the chosen
+                   backend and model honour it (video.js reads the
+                   capabilities the server reports). A slider for a
+                   value the provider ignores is a lie with a handle. -->
+              <div class="studio" id="videoStudio" hidden>
+                <div class="studio-row">
+                  <label class="gen-ctl gen-ctl-tight" id="ctlBackend">
+                    <span>Backend</span>
+                    <select id="genBackend"></select>
+                  </label>
+                  <label class="gen-ctl gen-ctl-tight" id="ctlModel">
+                    <span>Model</span>
+                    <select id="genModel"></select>
+                  </label>
+                  <label class="gen-ctl gen-ctl-tight" id="ctlSeconds">
+                    <span>Length</span>
+                    <select id="genSeconds"></select>
+                  </label>
+                  <label class="gen-ctl gen-ctl-tight" id="ctlRatio">
+                    <span>Aspect</span>
+                    <select id="genRatio"></select>
+                  </label>
+                  <label class="gen-ctl gen-ctl-tight" id="ctlResolution">
+                    <span>Resolution</span>
+                    <select id="genQuality"></select>
+                  </label>
+                </div>
+                <div class="studio-row">
+                  <div class="gen-ctl gen-ctl-tight" id="ctlMotion">
+                    <span id="genMotionLabel">Motion</span>
+                    <div class="seg" role="radiogroup" aria-labelledby="genMotionLabel" id="genMotion">
+                      <button type="button" role="radio" aria-checked="false" data-v="low">Low</button>
+                      <button type="button" role="radio" aria-checked="true" data-v="medium">Medium</button>
+                      <button type="button" role="radio" aria-checked="false" data-v="high">High</button>
+                    </div>
+                  </div>
+                  <label class="gen-ctl gen-ctl-tight" id="ctlSeed">
+                    <span>Seed</span>
+                    <span class="seed-wrap">
+                      <input type="number" id="genSeed" min="1" max="999999"
+                             inputmode="numeric" placeholder="random" />
+                      <button type="button" id="genSeedDice" title="Pick a random seed"
+                              aria-label="Pick a random seed">&#x2684;</button>
+                    </span>
+                  </label>
+                  <label class="gen-ctl gen-ctl-tight" id="ctlCount">
+                    <span>Clips</span>
+                    <select id="genCount">
+                      <option value="1">1</option>
+                      <option value="2">2</option>
+                      <option value="3">3</option>
+                      <option value="4">4</option>
+                    </select>
+                  </label>
+                  <label class="gen-ctl gen-ctl-tight" id="ctlImage">
+                    <span>Start image</span>
+                    <span class="image-wrap">
+                      <input type="file" id="genImage"
+                             accept="image/png,image/jpeg,image/webp,image/gif" />
+                      <img id="genImageThumb" alt="" hidden />
+                      <button type="button" id="genImageClear" hidden
+                              aria-label="Remove the start image">&times;</button>
+                    </span>
+                  </label>
+                </div>
+                <div class="studio-row">
+                  <label class="gen-ctl gen-ctl-wide" id="ctlNegative">
+                    <span>Avoid</span>
+                    <input type="text" id="genNegative" maxlength="500"
+                           placeholder="text, watermark, flicker" />
+                  </label>
+                  <label class="gen-ctl gen-ctl-check" id="ctlEnhance">
+                    <input type="checkbox" id="genEnhance" checked />
+                    <span>Enhance prompt</span>
+                  </label>
+                  <button type="button" class="studio-link" id="genPreview">
+                    Preview the brief
+                  </button>
+                </div>
+                <!-- The engineered brief, shown on request before any
+                     quota is spent: subject, camera, lighting, style. -->
+                <div class="studio-brief" id="genBrief" hidden></div>
               </div>
 
               <div class="gen-examples" id="genExamples">
@@ -411,15 +461,21 @@
 
             <div class="video-status" id="videoStatus" hidden></div>
 
+            <!-- The generation log: every step the engine records for
+                 the jobs in flight, as they happen. -->
+            <section class="studio-log" id="videoLog" hidden aria-label="Generation log">
+              <header class="studio-log-head">
+                <span>Generation log</span>
+                <button type="button" class="studio-link" id="videoLogClear">Clear</button>
+              </header>
+              <ol class="studio-log-list" id="videoLogList" aria-live="polite"></ol>
+            </section>
+
             <div class="video-result" id="videoResult" hidden>
-              <!-- Two possible outputs, one of which is shown. A clip is
-                   a <video>; a mesh needs a renderer, and <model-viewer>
-                   is Google's web component wrapping three.js - orbit,
-                   pinch-zoom and a sensible default light rig without
-                   this app taking on a 3D engine of its own. -->
-              <video class="video-preview" id="videoOut" controls playsinline
-                     disablepictureinpicture
-                     controlslist="noremoteplayback" hidden></video>
+              <!-- A mesh needs a renderer, and <model-viewer> is Google's
+                   web component wrapping three.js - orbit, pinch-zoom and
+                   a sensible default light rig without this app taking on
+                   a 3D engine of its own. -->
               <model-viewer
                 id="modelOut"
                 class="model-preview"
@@ -439,10 +495,22 @@
                 <summary>Diagram source</summary>
                 <pre><code id="diagramCode"></code></pre>
               </details>
-              <a class="video-download" id="videoDownload" download>
+              <a class="video-download" id="videoDownload" download hidden>
                 Download
               </a>
             </div>
+
+            <!-- Every clip this person has made, newest first. Cards
+                 for jobs still rendering show the engine's last log
+                 line and a cancel; finished ones play, download, and
+                 hand their prompt and seed back to the form. -->
+            <section class="studio-grid" id="videoGrid" hidden aria-label="Your clips">
+              <header class="studio-grid-head">
+                <h3>Your clips</h3>
+                <span class="studio-grid-count" id="videoGridCount"></span>
+              </header>
+              <div class="studio-cards" id="videoCards"></div>
+            </section>
           </div>
         </section>
 

@@ -112,7 +112,29 @@ def balance(force=False):
     return value
 
 
-def start(prompt, seconds=None):
+def capabilities():
+    """A mesh has no duration, ratio or resolution. Listed so the bay
+    can offer it as a backend and hide the controls that mean nothing
+    to it."""
+    return {
+        "kind": "model",
+        "label": "Tripo 3D",
+        "models": [],
+        "default_model": None,
+        "seconds": (1, 1),
+        "default_seconds": 1,
+        "ratios": ["1:1"],
+        "resolutions": ["720p"],
+        "default_resolution": "720p",
+        "negative": False,
+        "seed": False,
+        "motion": False,
+        "image_to_video": False,
+        "fps": 0,
+    }
+
+
+def start(prompt, seconds=None, **_unused):
     """Queue a generation. -> (task_id, error).
 
     `seconds` is accepted and ignored so this is a drop-in for the video

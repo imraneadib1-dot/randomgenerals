@@ -3172,152 +3172,15 @@ html.time-night .night-moon {
 }
 
 .video-inner {
-  max-width: 760px;
+  max-width: 980px;
   margin: 0 auto;
   display: grid;
   gap: 22px;
-}
-
-.video-drop {
-  display: grid;
-  place-items: center;
-  gap: 8px;
-  padding: 52px 24px;
-  text-align: center;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  cursor: pointer;
-  transition:
-    border-color 0.18s ease,
-    background 0.18s ease;
-}
-
-.video-drop:hover,
-.video-drop:focus-visible,
-.video-drop.is-over {
-  border-color: var(--bay);
-  background: var(--surface-raised);
-}
-
-.video-drop-icon {
-  font-size: 26px;
-  color: var(--bay);
-  line-height: 1;
-}
-
-.video-drop-title {
-  font-family: var(--font-display);
-  font-weight: 600;
-  font-size: 16px;
-  margin: 0;
-  color: var(--ink);
-}
-
-.video-drop-sub {
-  margin: 0;
-  font-size: 13px;
-  color: var(--ink-faint);
-}
-
-.video-preview {
-  width: 100%;
-  border-radius: var(--radius-lg);
-  background: #000;
-  display: block;
-  max-height: 46vh;
-}
-
-.video-meta {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--ink-faint);
-  /* Digits in a row of stats should not shuffle as the numbers change. */
-  font-variant-numeric: tabular-nums;
-}
-
-.video-range {
-  display: grid;
-  gap: 10px;
-}
-
-.video-range-row {
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) 56px;
-  align-items: center;
-  gap: 12px;
-}
-
-.video-range-row label {
-  font-size: 12px;
-  color: var(--ink-soft);
-}
-
-.video-range-row output {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--ink);
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.video-range input[type="range"] {
-  width: 100%;
-  accent-color: var(--bay);
-}
-
-.video-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-}
-
-.video-size {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--ink-soft);
-}
-
-.video-size select {
-  font: inherit;
-  font-size: 13px;
-  color: var(--ink);
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 10px;
-}
-
-.video-selection {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--ink-faint);
-  font-variant-numeric: tabular-nums;
-  margin-left: auto;
-}
-
-.video-go {
-  font: inherit;
-  font-weight: 600;
-  font-size: 14px;
-  color: #fff;
-  background: var(--bay);
-  border: none;
-  border-radius: 10px;
-  padding: 10px 18px;
-  cursor: pointer;
-}
-
-.video-go:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-
-.video-go:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+  /* Grid tracks grow to their content's minimum by default, so one
+     unbreakable line anywhere below would widen the whole column past
+     the bay. Every row is allowed to be narrower than its content. */
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
 }
 
 .video-status {
@@ -3364,23 +3227,7 @@ html.time-night .night-moon {
   display: none !important;
 }
 
-/* ---- Video bay: asking for an edit in words ---- */
-
-.video-ask {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 6px;
-}
-
-.video-ask-label {
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-}
-
+/* ---- Video bay: the prompt ---- */
 .video-prompt {
   width: 100%;
   resize: vertical;
@@ -3403,35 +3250,6 @@ html.time-night .night-moon {
   outline: none;
   border-color: var(--bay);
   box-shadow: 0 0 0 3px var(--bay-soft);
-}
-
-/* Examples teach the shape of a request. Clicking one fills the box
-   rather than running it, so the numbers can be changed first. */
-.video-examples {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.video-examples button {
-  padding: 5px 11px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--ink-soft);
-  font-family: var(--font-body);
-  font-size: 12px;
-  cursor: pointer;
-  transition:
-    color 0.2s ease,
-    border-color 0.2s ease,
-    background 0.2s ease;
-}
-
-.video-examples button:hover {
-  color: var(--ink);
-  border-color: var(--border-strong);
-  background: var(--surface);
 }
 
 .video-go {
@@ -3464,173 +3282,18 @@ html.time-night .night-moon {
   cursor: default;
 }
 
-/* The manual controls are still here, just not the first thing offered. */
-.video-go-quiet {
-  background: transparent;
-  color: var(--ink-soft);
-  border: 1px solid var(--border-strong);
-  box-shadow: none;
-}
-
-.video-manual {
-  border-top: 1px solid var(--border);
-  padding-top: 12px;
-}
-
-.video-manual > summary {
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--ink-faint);
-  list-style: none;
-}
-
-.video-manual > summary::-webkit-details-marker {
-  display: none;
-}
-
-.video-manual > summary::before {
-  content: "▸ ";
-}
-
-.video-manual[open] > summary::before {
-  content: "▾ ";
-}
-
-.video-manual > summary:hover {
-  color: var(--ink-soft);
-}
-
-/* What the sentence was understood as. Shown while the render runs, so a
-   misread prompt is caught by reading one line rather than by watching
-   the wrong video come out at the end. */
-.video-plan {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-}
-
-/* The skipped list is its own line. Inline with the steps it read as one
-   long run of chips where the important half - the things that did NOT
-   happen - was indistinguishable from the things that did. */
-.video-plan-row {
-  flex-basis: 100%;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.video-plan-lead {
-  color: var(--ink-faint);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.video-plan-step {
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: var(--bay-soft);
-  border: 1px solid var(--border-strong);
-  color: var(--ink);
-}
-
-.video-plan-note {
-  color: var(--ink-faint);
-  font-style: italic;
-}
-
-.video-plan-lead-skip {
-  color: var(--credit-mid);
-}
-
-/* Deliberately not styled as an error. Nothing went wrong - part of the
-   request was not understood, which is information, not a failure, and
-   colouring it red would make every partially-read prompt look like a
-   broken render. */
-.video-plan-skip {
-  background: transparent;
-  border-style: dashed;
-  border-color: var(--border);
-  color: var(--ink-soft);
-}
-
-.video-ask-hint {
-  margin: 8px 0 0;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--ink-faint);
-  max-width: 62ch;
-}
-
-.video-examples-lead {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  align-self: center;
-  margin-right: 2px;
-}
-
-/* Once a clip is loaded the drop zone stops being the main event: it
-   shrinks to a single line that still accepts a drop and still opens the
-   file picker, but gives the panel back to the video and the prompt. */
-.video-bay.has-clip .video-drop {
-  padding: 10px 14px;
-  min-height: 0;
-  text-align: left;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.video-bay.has-clip .video-drop-icon {
-  font-size: 13px;
-  margin: 0;
-}
-
-.video-bay.has-clip .video-drop-title {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.video-bay.has-clip .video-drop-title::after {
-  content: " — or drop another to replace it";
-  color: var(--ink-faint);
-  font-weight: 400;
-}
-
-.video-bay.has-clip .video-drop-sub {
-  display: none;
-}
-
-/* A tall source clip should not push everything else off screen. */
-.video-preview {
-  max-height: 46vh;
-  width: 100%;
-  background: #000000;
-  border-radius: var(--radius-md);
-}
-
-
 /* ======================================================================
    VIDEO GENERATION (video bay)
 
-   Replaced the timeline editor's styles. Kept small on purpose: the bay
-   is now one textarea, three settings and a wait, so anything more
-   would be decoration around a form.
+   Replaced the timeline editor's styles. The bay is a textarea, the
+   studio controls (further down), a log and a grid of clips.
    ====================================================================== */
 .gen-head { margin-bottom: 14px; }
 .gen-title {
   font-family: Sora, system-ui, sans-serif;
-  font-size: 20px; margin: 0 0 4px; color: var(--text, #dfe2dc);
+  font-size: 20px; margin: 0 0 4px; color: var(--ink);
 }
-.gen-sub { margin: 0; font-size: 13px; color: var(--text-soft, #a9ada5); }
+.gen-sub { margin: 0; font-size: 13px; color: var(--ink-soft); }
 
 /* No box. A short sentence explaining why a bay is empty does not need
    a card around it - the card was the only thing making it look like a
@@ -3643,7 +3306,7 @@ html.time-night .night-moon {
 }
 .gen-locked p {
   margin: 0 0 14px;
-  color: var(--text-soft, #a9ada5);
+  color: var(--ink-soft);
   font-size: 14px;
 }
 /* This was rendering as a default browser-blue underlined anchor - it is
@@ -3656,7 +3319,7 @@ html.time-night .night-moon {
   border-radius: 999px;
   padding: 8px 18px;
   font-size: 13px;
-  color: var(--ink, #dfe2dc);
+  color: var(--ink);
   background: transparent;
   transition: border-color 0.18s ease, color 0.18s ease;
 }
@@ -3674,16 +3337,16 @@ html.time-night .night-moon {
 .gen-ctl { display: flex; align-items: center; gap: 9px; flex: 1 1 220px; }
 .gen-ctl-tight { flex: 0 0 auto; }
 .gen-ctl > span {
-  font-size: 12px; color: var(--text-soft, #a9ada5); flex: none;
+  font-size: 12px; color: var(--ink-soft); flex: none;
 }
-.gen-ctl input[type="range"] { flex: 1; min-width: 90px; accent-color: var(--accent); }
+.gen-ctl input[type="range"] { flex: 1; min-width: 90px; accent-color: var(--accent, var(--tan)); }
 .gen-ctl output {
   font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 12px; color: var(--text, #dfe2dc); min-width: 26px;
+  font-size: 12px; color: var(--ink); min-width: 26px;
 }
 .gen-ctl select {
-  background: var(--ink-2, #2a4155); color: var(--text, #dfe2dc);
-  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--surface-raised); color: var(--ink);
+  border: 1px solid var(--border); border-radius: 8px;
   padding: 6px 9px; font-size: 12px; font-family: inherit;
 }
 
@@ -3693,25 +3356,192 @@ html.time-night .night-moon {
 }
 .gen-examples-lead {
   font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
-  color: var(--text-faint, #7a7e74); margin-right: 2px;
+  color: var(--ink-faint); margin-right: 2px;
 }
 .gen-examples button {
-  border: 1px solid var(--line); background: transparent;
-  color: var(--text-soft, #a9ada5); border-radius: 999px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--ink-soft); border-radius: 999px;
   padding: 5px 11px; font-size: 12px; cursor: pointer;
 }
 .gen-examples button:hover {
-  border-color: var(--line-bright, var(--line)); color: var(--text, #dfe2dc);
+  border-color: var(--border-strong); color: var(--ink);
 }
 
 .gen-actions { display: flex; align-items: center; gap: 14px; }
 .gen-quota {
-  font-size: 12px; color: var(--text-faint, #7a7e74);
+  font-size: 12px; color: var(--ink-faint);
+}
+
+/* ---- the video studio ------------------------------------------------
+   Controls in rows that wrap, each one present only when the chosen
+   model honours it (video.js). Inputs share one look with the selects
+   above so a row of mixed controls reads as one instrument panel.
+   ---------------------------------------------------------------------- */
+.studio {
+  display: grid; gap: 10px; margin: 12px 0 14px;
+  grid-template-columns: minmax(0, 1fr);
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--edge-lit);
+}
+.studio-row { display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: center; min-width: 0; }
+.studio select { max-width: 100%; }
+.studio .gen-ctl { flex: 0 0 auto; }
+.studio .gen-ctl-wide { flex: 1 1 260px; }
+.studio .gen-ctl-wide input[type="text"],
+.studio input[type="number"] {
+  background: var(--surface-raised); color: var(--ink);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 6px 9px; font-size: 12px; font-family: inherit;
+}
+.studio .gen-ctl-wide input[type="text"] { flex: 1; min-width: 160px; }
+.studio input[type="number"] { width: 92px; font-family: var(--font-mono); }
+.studio input:focus-visible, .studio select:focus-visible, .studio button:focus-visible {
+  outline: 2px solid var(--accent-ink, #d6bb80); outline-offset: 2px;
+}
+.gen-ctl-check { gap: 7px; cursor: pointer; }
+.gen-ctl-check input { accent-color: var(--accent, var(--tan)); margin: 0; }
+.gen-ctl-check > span { color: var(--ink); }
+
+.seg {
+  display: inline-flex; border: 1px solid var(--border); border-radius: 999px;
+  overflow: hidden; background: var(--surface-raised);
+}
+.seg [role="radio"] {
+  border: 0; background: transparent; color: var(--ink-soft);
+  padding: 5px 12px; font-size: 12px; font-family: inherit; cursor: pointer;
+}
+.seg [role="radio"] + [role="radio"] { border-left: 1px solid var(--border); }
+.seg [role="radio"][aria-checked="true"] {
+  background: var(--accent, var(--tan)); color: #fff; font-weight: 600;
+}
+
+.seed-wrap { display: inline-flex; gap: 6px; align-items: center; }
+#genSeedDice {
+  border: 1px solid var(--border); background: transparent; color: var(--ink);
+  border-radius: 8px; padding: 4px 8px; font-size: 15px; line-height: 1; cursor: pointer;
+}
+#genSeedDice:hover { border-color: var(--accent-ink, #d6bb80); }
+
+.image-wrap { display: inline-flex; gap: 8px; align-items: center; }
+.image-wrap input[type="file"] { font-size: 12px; color: var(--ink-soft); max-width: 220px; }
+.image-wrap img { width: 44px; height: 44px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
+#genImageClear {
+  border: 1px solid var(--border); background: transparent; color: var(--ink-soft);
+  border-radius: 999px; width: 24px; height: 24px; line-height: 1; cursor: pointer;
+}
+
+.studio-link {
+  border: 0; background: none; padding: 0; cursor: pointer;
+  color: var(--accent-ink, #d6bb80); font-size: 12px; font-family: inherit;
+  text-decoration: underline; text-underline-offset: 3px;
+}
+.studio-link:hover { color: var(--ink); }
+.studio-link:disabled { opacity: .5; cursor: default; }
+
+.studio-brief {
+  font-size: 13px; color: var(--ink-soft);
+  border-left: 3px solid var(--accent, var(--tan)); padding: 6px 12px;
+}
+.studio-brief dl { margin: 0 0 8px; display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; }
+.studio-brief dt {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--ink-faint); padding-top: 2px;
+}
+.studio-brief dd { margin: 0; color: var(--ink); }
+
+/* The log: a monospace timeline of the engine's own words. */
+.studio-log {
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, .18); overflow: hidden;
+}
+.studio-log-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 14px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--ink-faint); border-bottom: 1px solid var(--border);
+}
+.studio-log-list {
+  list-style: none; margin: 0; padding: 8px 14px; max-height: 180px; overflow-y: auto;
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.7; color: var(--ink-soft);
+}
+.studio-log-list li { display: flex; gap: 10px; align-items: baseline; min-width: 0; }
+/* A provider's job id is one unbreakable token; without this it sets
+   the width of the whole bay on a phone. */
+.studio-log-list li span { min-width: 0; overflow-wrap: anywhere; }
+.studio-log-list time { color: var(--ink-faint); flex: none; }
+.studio-log-list code { color: var(--accent-ink, #d6bb80); flex: none; }
+.studio-log-list li.is-error span { color: var(--danger); }
+.studio-log-list li.is-done span { color: var(--success); }
+
+/* The grid of clips. */
+.studio-grid-head {
+  display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px;
+}
+.studio-grid-head h3 {
+  margin: 0; font-family: var(--font-display); font-size: 15px; color: var(--ink);
+}
+.studio-grid-count { font-size: 12px; color: var(--ink-faint); }
+.studio-cards {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+.studio-cards.is-empty::before {
+  content: "Nothing yet. Describe a shot above and it will appear here.";
+  grid-column: 1 / -1; font-size: 13px; color: var(--ink-faint);
+  padding: 22px 0; text-align: center;
+}
+.clip-card {
+  display: grid; grid-template-rows: auto 1fr auto;
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--surface); overflow: hidden; box-shadow: var(--edge-lit);
+  transition: border-color .18s ease, transform .18s ease;
+}
+.clip-card:hover { border-color: var(--border-strong); }
+.clip-card[data-status="failed"] { border-color: var(--danger-edge); }
+.clip-media { aspect-ratio: 16 / 9; background: rgba(0, 0, 0, .35); position: relative; }
+.clip-media video { width: 100%; height: 100%; object-fit: cover; display: block; cursor: pointer; }
+.clip-placeholder {
+  position: absolute; inset: 0; display: flex; gap: 10px; align-items: center; justify-content: center;
+  padding: 14px; text-align: center; font-size: 12.5px; color: var(--ink-soft);
+}
+.clip-placeholder.is-error { color: var(--danger); }
+.clip-spinner {
+  width: 14px; height: 14px; border-radius: 50%; flex: none;
+  border: 2px solid var(--border); border-top-color: var(--accent-ink, #d6bb80);
+  animation: clip-spin .9s linear infinite;
+}
+@keyframes clip-spin { to { transform: rotate(360deg); } }
+.clip-body { padding: 10px 12px 6px; min-width: 0; }
+.clip-card { min-width: 0; }
+.clip-prompt {
+  margin: 0 0 4px; font-size: 13px; color: var(--ink); line-height: 1.4;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.clip-meta { margin: 0; font-size: 11px; color: var(--ink-faint); font-family: var(--font-mono); }
+.clip-actions {
+  display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 6px 12px 10px;
+}
+.clip-actions button, .clip-actions a {
+  border: 0; background: none; padding: 2px 0; cursor: pointer; font-family: inherit;
+  font-size: 12px; color: var(--ink-soft); text-decoration: none;
+}
+.clip-actions button:hover, .clip-actions a:hover { color: var(--ink); }
+.clip-actions .clip-download { color: var(--accent-ink, #d6bb80); font-weight: 600; }
+.clip-actions .is-danger { margin-left: auto; }
+.clip-actions .is-danger:hover { color: var(--danger); }
+
+@media (prefers-reduced-motion: reduce) {
+  .clip-spinner { animation: none; border-top-color: var(--border); }
 }
 
 @media (max-width: 640px) {
   .gen-controls { gap: 10px; }
   .gen-ctl { flex: 1 1 100%; }
+  .studio .gen-ctl { flex: 1 1 100%; min-width: 0; }
+  .studio .gen-ctl select { flex: 1; min-width: 0; }
+  .studio-cards { grid-template-columns: 1fr; }
 }
 
 
