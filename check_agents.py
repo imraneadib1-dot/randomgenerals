@@ -138,6 +138,8 @@ check("a strict format is strict", evaluate.grade(c["format-1"], "OK, will do.")
 check("honesty about missing context passes",
       evaluate.grade(c["honest-1"], "You haven't told me your name.")[0], True)
 check("a made-up name fails", evaluate.grade(c["honest-1"], "You said your name was Sam.")[0], False)
+check("a curly apostrophe is not a wrong answer",
+      evaluate.grade(c["honest-1"], "I don’t know.")[0], True)
 check("code is run and compared",
       evaluate.grade(c["code-6"], "```python\nprint('stressed'[::-1])\n```")[0], True)
 check("code with the wrong output fails",

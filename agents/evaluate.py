@@ -70,10 +70,20 @@ def load_cases(path: str = CASES, tag: str | None = None) -> list[dict]:
     return out
 
 
+# Typographic quotes and dashes, folded to their ASCII forms before a
+# reply is graded. The first real run of this harness marked gpt-oss
+# wrong on the honesty case for answering "I don’t know." - with a
+# curly apostrophe the grader's straight one did not match. A grader
+# that fails a right answer over a glyph is measuring typesetting.
+_FOLD = str.maketrans({"’": "'", "‘": "'", "“": '"',
+                       "”": '"', "–": "-", "—": "-",
+                       " ": " "})
+
+
 def grade(case: dict, reply: str) -> tuple[bool, str]:
     """-> (passed, what was compared). Pure, so a check can call it."""
     g = case.get("grade") or {}
-    text = reply or ""
+    text = (reply or "").translate(_FOLD)
     if "regex" in g:
         ok = re.search(g["regex"], text.strip()) is not None
         return ok, "regex %s" % g["regex"]
@@ -178,7 +188,11 @@ def run(cases: list[dict], chans: list[tuple[str, str, str]],
                 "provider": provider, "model": model,
                 "pass": passed, "detail": detail,
                 "ttft": got["ttft"], "total": got["total"],
-                "reply": got["reply"][:400],
+                # Kept whole (the ceiling is 600 tokens), so a saved run
+                # can be re-graded after a grader changes. Cut to 400
+                # characters it could not be: a code answer's fence was
+                # sliced open and every regrade called it "no block".
+                "reply": got["reply"][:6000],
             })
             if not quiet:
                 print("  %s  %-22s %-12s %s" % (
