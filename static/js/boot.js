@@ -36,7 +36,7 @@ export function updateGenBayLabel(kind) {
 export function dismissBoot() {
   if (!bootScreen || bootScreen.hidden) return;
   bootScreen.classList.add("boot-done");
-  setTimeout(() => (bootScreen.hidden = true), 500);
+  setTimeout(() => (bootScreen.hidden = true), 200);
 }
 
 export async function boot() {
@@ -47,7 +47,12 @@ export async function boot() {
   const deadLetter = setTimeout(dismissBoot, 12000);
 
   try {
-    const minHold = new Promise((resolve) => setTimeout(resolve, 650));
+    // NO MINIMUM HOLD. The splash used to stay up for at least 650ms
+    // and then fade for 500ms, so every arrival spent over a second
+    // looking at a logo whatever the network did. The site is the
+    // chat; the splash exists only to cover the moment before the
+    // first data lands, and it comes down the moment it has.
+    const minHold = Promise.resolve();
     if (bootLabel) bootLabel.textContent = "reaching the local model…";
     initAppearance();
     // ?bay=code from the installed app's shortcuts (manifest.webmanifest)

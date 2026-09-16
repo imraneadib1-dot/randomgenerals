@@ -2223,9 +2223,10 @@ html.time-night .night-moon {
   justify-content: center;
   gap: 18px;
   background: linear-gradient(180deg, var(--sky-top), var(--sky-bottom));
+  /* Quick, because the person is waiting behind it. */
   transition:
-    opacity 0.5s ease,
-    visibility 0.5s ease;
+    opacity var(--dur) var(--ease),
+    visibility var(--dur) var(--ease);
 }
 .boot-screen.boot-done {
   opacity: 0;
