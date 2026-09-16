@@ -47,7 +47,7 @@ import groq_api  # noqa: E402  fast open-weight models - see groq_api.py
 import openai_api  # noqa: E402  OpenAI-compatible API - see openai_api.py
 import connectors  # noqa: E402  pasted links, turned into tools
 import keystore  # noqa: E402  provider-key encryption + TOTP
-import openrouter_api  # noqa: E402  the only channel serving Kimi
+import openrouter_api  # noqa: E402  DeepSeek for the code bay - see openrouter_api.py
 import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
 import pixverse  # noqa: E402  paid text-to-video - see pixverse.py
 import hfvideo  # noqa: E402  free-tier text-to-video - see hfvideo.py
@@ -2330,11 +2330,12 @@ def contact_page():
 def robots_txt():
     """What search engines may crawl.
 
-    Only the landing page is worth indexing. /app is the application
-    itself - it renders nothing useful without a session, so a crawler
-    would file an empty shell under the site's name. /api/ is machine
-    endpoints. The upload and generated directories hold users' own
-    files and images, which must never turn up in search results.
+    The legal pages and the download page are worth indexing. The app -
+    which / now serves as well - renders nothing useful without a
+    session, so a crawler would file an empty shell under the site's
+    name. /api/ is machine endpoints. The upload and generated
+    directories hold users' own files and images, which must never turn
+    up in search results.
 
     The sitemap line is built from the live host rather than hardcoded,
     so this stays correct on a .pythonanywhere.com or .onrender.com
@@ -2342,13 +2343,13 @@ def robots_txt():
     """
     body = (
         "User-agent: *\n"
-        "Allow: /$\n"
         "Allow: /terms\n"
         "Allow: /privacy\n"
         "Allow: /refunds\n"
         "Allow: /acceptable-use\n"
         "Allow: /download\n"
         "Allow: /contact\n"
+        "Disallow: /$\n"
         "Disallow: /app\n"
         "Disallow: /api/\n"
         "Disallow: /static/generated/\n"
@@ -2361,11 +2362,11 @@ def robots_txt():
 
 @app.route("/sitemap.xml")
 def sitemap_xml():
-    """The home page and the four legal pages - everything that is meant
-    to be indexed, and nothing that is not. A sitemap listing pages that
-    should not be indexed actively works against you."""
+    """The legal pages, the download page and contact - everything that
+    is meant to be indexed, and nothing that is not. A sitemap listing
+    pages that should not be indexed actively works against you. The
+    root is the app now, and the app is not for crawlers."""
     pages = [
-        ("", "weekly", "1.0"),
         ("terms", "yearly", "0.3"),
         ("privacy", "yearly", "0.3"),
         ("refunds", "yearly", "0.3"),
@@ -2393,22 +2394,16 @@ def sitemap_xml():
     return Response(body, mimetype="application/xml")
 
 
+# THE APP IS THE FRONT DOOR.
+#
+# There was a marketing page at / - hero, feature cards, pricing, FAQ,
+# over a desert shot - with the app one click away at /app. It is gone
+# by request: the product is the four bays, and a visitor should land
+# in them. Both paths serve the same page rather than / redirecting,
+# so a person arriving at the root is one visit on the dashboard, not
+# two, and every existing link to /app keeps working. Pricing lives in
+# Settings > Plan, where it always also was.
 @app.route("/")
-def landing():
-    """The public front door. The app itself lives at /app.
-
-    Signed-in visitors used to be redirected straight to /app on the
-    reasoning that they don't need the pitch. That was wrong: it means
-    nobody who has ever logged in - the owner included - can reach the
-    landing page at all without clearing cookies, which makes the
-    pricing, FAQ and feature copy effectively invisible to the person
-    most likely to want to check it. Everyone gets the landing page;
-    the nav's "Launch app" button is one click away.
-    """
-    return render_template(
-        "landing.html", signed_in=bool(session.get("user_id")))
-
-
 @app.route("/app")
 def index():
     return render_template("index.html", plan_perks=plan_perks(),
@@ -4940,7 +4935,7 @@ def get_credits():
 #
 # That measurement is why qwen was on the chat bay. The split is now made
 # on ROLE instead, which is a product decision rather than a measured
-# one: Kimi is the coding model and gpt-oss-120b is the chat model. Two
+# one: DeepSeek is the coding model and gpt-oss-120b is the chat model. Two
 # models, one job each, which is easier to reason about than a third
 # model that differs only in how it formats an answer - and gpt-oss is
 # the one that stays free, so the free chat bay is not the paid one
@@ -4953,12 +4948,13 @@ def get_credits():
 # score.)
 BAY_ROUTES = {
     "code": [
-        # Kimi first, asked for by name. It is coding-tuned and it is the
-        # reason openrouter_api exists - Groq serves no Moonshot model at
-        # all, so this line is unreachable without OPENROUTER_API_KEY and
-        # gpt-oss below carries the bay exactly as before until one is
-        # set. That is deliberate: this is the one model in the table
-        # that costs money per message.
+        # DeepSeek first, asked for by name. V3 for the bay; Deep mode
+        # swaps in R1 (openrouter_api.DEEP_MODEL) at _stream_reply. Both
+        # are paid and bounded by OPENROUTER_DAILY_USD, so the free
+        # coding model and then gpt-oss carry the bay when the ceiling
+        # is reached or no OpenRouter key is set.
+        ("openrouter", "deepseek-v3.2"),
+        ("openrouter", "deepseek-chat-v3"),
         ("openrouter", "laguna-s-2.1:free"),
         ("groq", "gpt-oss-120b"),
         ("ollama", "gemma3:1b"),
@@ -5217,7 +5213,7 @@ def _failover_chain(provider: str, mode: str) -> list[tuple[str, str]]:
 _CHANNEL_NAMES = {
     "groq": "the fast channel",
     "ollama": "the local model",
-    "openrouter": "the Kimi channel",
+    "openrouter": "the DeepSeek channel",
 }
 
 
@@ -5444,10 +5440,11 @@ def list_providers():
             "available": bool(or_models),
             "models": or_models,
             "model_info": [describe_model(m, plan) for m in or_models],
-            "note": ("Large coding models over OpenRouter. The :free "
-                     "ones cost nothing beyond an account and are capped "
-                     "at about 50 requests a day; Kimi is the paid option "
-                     "and is billed per message to this server's key."),
+            "note": ("DeepSeek for code, over OpenRouter: V3 answers, "
+                     "and Deep mode thinks with R1. Both are billed per "
+                     "message to this server's key, within a daily "
+                     "ceiling; the :free models cost nothing beyond an "
+                     "account and are capped at about 50 requests a day."),
         })
 
     live = [p for p in providers if p["available"]]
@@ -5495,6 +5492,12 @@ MODEL_DISPLAY_NAMES = {
     "z-ai/glm-5.2:free": ("GLM", "Free generalist, 256k context"),
     "nvidia/nemotron-3-ultra-550b-a55b:free": (
         "Nemotron", "Free, 550B parameters, 1M context"),
+    "deepseek/deepseek-v3.2": (
+        "DeepSeek V3", "The coding model - PAID, a fraction of a cent a reply"),
+    "deepseek/deepseek-r1-0528": (
+        "DeepSeek R1", "Reasons before it writes; Deep mode's model - PAID"),
+    "deepseek/deepseek-chat-v3-0324": (
+        "DeepSeek V3 (0324)", "The earlier V3 - PAID"),
     "moonshotai/kimi-k2.7-code": (
         "Kimi", "Coding model - PAID, billed per message"),
     "moonshotai/kimi-k2.5": ("Kimi", "Moonshot's general model - PAID"),
@@ -7296,6 +7299,18 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # vision model for everyone. A free account's image is now
     # acknowledged by name and not looked at, with a nudge to upgrade,
     # which is what the tier table always described.
+    # DEEP MODE ON THE CODE BAY IS R1. The strength toggle has always
+    # changed how much the model is asked to think (STRENGTH_LEVELS);
+    # on the DeepSeek channel it can also change WHICH model, because
+    # R1 exists to do exactly that. Only when the bay is already on V3 -
+    # a person who picked something else in the picker keeps it - and
+    # only while the day's ceiling has room for the pricier model.
+    if (mode == "code" and strength == "deep" and provider == "openrouter"
+            and model.startswith("deepseek/deepseek-v3")
+            and openrouter_api.DEEP_MODEL in (openrouter_api.models() or [])
+            and openrouter_api.budget_ok(openrouter_api.DEEP_MODEL)):
+        model = openrouter_api.DEEP_MODEL
+
     plan_now = features.normalize_plan(current_account()[0].get("plan"))
     may_see = features.enabled(plan_now, "vision")
     if (may_see and any(f["kind"] == "image" for f in files)
@@ -7366,11 +7381,11 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     fell_back_to_cloud = False
     plan = features.normalize_plan(current_account()[0].get("plan"))
 
-    # Kimi is first in the code bay but it is the only route here that
-    # needs a paid key, so a request naming it on a server without one -
-    # a stale tab, a saved preference, an older client - must not become
-    # a dead reply. It degrades to the free fast channel, and to the
-    # local model after that, the same way every other channel does.
+    # DeepSeek is first in the code bay but it is the only route here
+    # that needs a paid key, so a request naming it on a server without
+    # one - a stale tab, a saved preference, an older client - must not
+    # become a dead reply. It degrades to the free fast channel, and to
+    # the local model after that, the same way every other channel does.
     if provider == "openrouter" and not openrouter_api.budget_ok(model):
         # Out of money for today rather than out of key. Same failover.
         local = None

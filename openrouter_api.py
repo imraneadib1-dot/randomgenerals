@@ -1,29 +1,31 @@
-"""OpenRouter - the channel that can actually run Kimi.
+"""OpenRouter - the channel that runs DeepSeek for the code bay.
 
 WHY THIS FILE EXISTS
 
-Kimi was asked for by name. Groq does not serve it: the live catalogue
-on this key is 14 models and not one of them is from Moonshot, so
-pointing the code bay at "kimi" there would have produced a 404 on the
-first coding question. It cannot run locally either - K2 is a trillion
--parameter mixture-of-experts, against an Always Free VM with 11.9GB of
-RAM and no GPU.
+The coding model is asked for by name - Kimi originally, DeepSeek now -
+and Groq serves neither: its catalogue on this key is a handful of
+open-weight models, none of them from Moonshot or DeepSeek. They cannot
+run locally either, being hundreds of billions of parameters against
+an Always Free VM with 11.9GB of RAM and no GPU.
 
-OpenRouter serves it, and that is the whole reason for a third provider.
+OpenRouter serves them, and that is the whole reason for a third
+provider.
 
-KIMI COSTS MONEY. THE DEFAULT HERE DOES NOT.
+DEEPSEEK COSTS MONEY, A LITTLE. THE FALLBACKS DO NOT.
 
-Kimi was asked for by name, and there is no free Kimi anywhere: Groq
-serves no Moonshot model, all nine on OpenRouter are paid, Moonshot's own
-platform is pay-as-you-go, and K2 cannot run on this VM. So Kimi needs a
-funded key, and this deployment does not have a budget.
+The code bay's model is DeepSeek V3 (deepseek-v3.2, the current V3
+line: about $0.27 in and $0.40 out per million tokens, so a long
+answer is a fraction of a cent), and Deep mode switches to DeepSeek R1
+(r1-0528, the reasoning model, about five times the output price).
+Both are billed to this server's key and stopped by the daily ceiling
+below.
 
 What OpenRouter also has is genuinely free models - no card, just an
 account, rate-limited to about 50 requests a day (1,000 if the account
-ever holds $10 in credit). Several are large and current. So PREFERRED
-below is FREE FIRST: a free key gets a strong coding model at no cost,
-and Kimi sits at the bottom of the list, reached only by an account that
-has actually funded one.
+ever holds $10 in credit). Several are large and current. They sit
+under DeepSeek in PREFERRED below, so a key with no credit, or one that
+has spent the day's ceiling, still gets a strong coding model at no
+cost.
 
 That ordering is a judgement, not a measurement. Ranking these against
 each other needs a key to test with, and none of them has been run on
@@ -63,22 +65,34 @@ MODELS_TTL = 3600
 #   nemotron ultra 550B parameters and a million tokens of context - the
 #                  largest thing on the free list by a wide margin
 #
-# Then Kimi, which is paid and therefore last: an account with no credit
-# never reaches these lines, and one that has funded a key can select
-# them from the picker.
+# DEEPSEEK FIRST NOW, by request. V3 is the code bay's model and R1 is
+# what Deep mode switches to (see DEEP_MODEL and app._stream_reply). The
+# older V3 (0324) is kept as the fallback for the day OpenRouter retires
+# the id. The free models follow, so a key with no credit - or one that
+# has spent the day's ceiling - still gets a coding model rather than a
+# dead bay. Kimi is gone from the list: two paid coding models is two
+# ways to be surprised by the bill, and one was asked for.
 #
 # Ids on this list get retired as new versions land, and models() keeps
 # only the ones the live catalogue still has - so a retired id is
 # skipped rather than 404ing the bay.
 PREFERRED = [
+    # paid: DeepSeek, the code bay's models
+    "deepseek/deepseek-v3.2",
+    "deepseek/deepseek-r1-0528",
+    "deepseek/deepseek-chat-v3-0324",
+    # free, from here down
     "poolside/laguna-s-2.1:free",
     "cohere/north-mini-code:free",
     "z-ai/glm-5.2:free",
     "nvidia/nemotron-3-ultra-550b-a55b:free",
-    # paid, from here down
-    "moonshotai/kimi-k2.7-code",
-    "moonshotai/kimi-k2.5",
 ]
+
+# What Deep mode asks for on this channel. R1 thinks before it writes,
+# which is what "deep" means, and costs about five times V3 per output
+# token, which is why it is not the default. Only reached when the
+# catalogue has it and the day's ceiling allows it.
+DEEP_MODEL = "deepseek/deepseek-r1-0528"
 
 # What the picker offers. OpenRouter lists several hundred models from
 # every lab, which is not a menu anyone wants in a settings dropdown, so
@@ -118,9 +132,9 @@ DEFAULT_DAILY_USD = 1.00
 
 
 def daily_limit():
-    """Dollars a day, from OPENROUTER_DAILY_USD. 0 disables Kimi
-    entirely, which is a legitimate way to turn it off without removing
-    the key."""
+    """Dollars a day, from OPENROUTER_DAILY_USD. 0 disables the paid
+    models entirely, which is a legitimate way to turn them off without
+    removing the key."""
     raw = os.environ.get("OPENROUTER_DAILY_USD", "").strip()
     if not raw:
         return DEFAULT_DAILY_USD
@@ -213,7 +227,7 @@ def _headers():
 
 
 def models():
-    """The Kimi models this key can actually see, live and cached.
+    """The models this key can actually see, live and cached.
 
     Filtered to EXPOSED_MODELS rather than returned whole: the raw list
     is enormous, and the picker is not the place to discover that
@@ -314,8 +328,8 @@ def chat_once(model, history, tools=None, options=None, timeout=120):
         # it would treat the same as a bad request.
         raise RateLimited("OpenRouter rate limit")
     if r.status_code == 402:
-        return None, ("This OpenRouter key is out of credit - Kimi is a "
-                      "paid model.")
+        return None, ("This OpenRouter key is out of credit - DeepSeek "
+                      "is a paid model.")
     if r.status_code != 200:
         return None, "OpenRouter error %d" % r.status_code
     try:
@@ -371,7 +385,7 @@ def stream_chat(model, history, options=None, images=None, usage=None):
         return
     if not budget_ok(_pick(model)):
         spent, limit = budget_state()
-        yield ("[Kimi has reached its spending limit for today "
+        yield ("[DeepSeek has reached its spending limit for today "
                "($%.2f of $%.2f). Switch to the chat model, or raise "
                "OPENROUTER_DAILY_USD on the server.]" % (spent, limit))
         return
@@ -422,8 +436,8 @@ def stream_chat(model, history, options=None, images=None, usage=None):
                 # nothing, and this is the one failure here with an
                 # obvious remedy. Said, not raised: another provider
                 # cannot top the key up.
-                yield ("[This OpenRouter key is out of credit. Kimi is a "
-                       "paid model - top the key up, or unset "
+                yield ("[This OpenRouter key is out of credit. DeepSeek "
+                       "is a paid model - top the key up, or unset "
                        "OPENROUTER_API_KEY to go back to the free channel.]")
                 return
             if r.status_code in (401, 403):

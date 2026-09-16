@@ -670,6 +670,42 @@ check("rg-build marker is in the page",
       'name="rg-build" content="%s"' % appmod.BUILD_ID in html, True)
 check("and it is not the unknown fallback", appmod.BUILD_ID != "unknown", True)
 
+print("\n== the code bay is DeepSeek: V3 to answer, R1 to think ==")
+import openrouter_api                                     # noqa: E402
+openrouter_api.configured = lambda: True
+openrouter_api.budget_ok = lambda model=None: True
+openrouter_api.models = lambda: ["deepseek/deepseek-v3.2", "deepseek/deepseek-r1-0528",
+                                 "poolside/laguna-s-2.1:free"]
+appmod.openrouter_api = openrouter_api
+appmod.PROVIDER_STREAMERS["openrouter"] = fake_streamer(["def f(): pass"], usage={"eval_count": 8})
+appmod.PROVIDER_TURNS["openrouter"] = lambda *a, **k: ({"content": "", "finish_reason": "stop"}, "no tools here")
+# An earlier section stubbed the local provider without the plan
+# argument /api/providers passes; give it one.
+appmod.ollama_provider = lambda plan=None: {"id": "ollama", "label": "local", "available": True,
+                                            "models": ["fake-local"], "model_info": [], "note": ""}
+rec = client.get("/api/providers").get_json()["recommended"]
+check("the code bay is recommended DeepSeek V3 on OpenRouter",
+      rec.get("code"), {"provider": "openrouter", "model": "deepseek/deepseek-v3.2"})
+check("the chat bay stays on the free fast channel", (rec.get("chat") or {}).get("provider"), "groq")
+tid = client.post("/api/threads", json={"mode": "code"}).get_json()["id"]
+for strength, want in (("quick", "deepseek/deepseek-v3.2"), ("deep", "deepseek/deepseek-r1-0528")):
+    CALLS.clear()
+    r = client.post("/api/chat", json={
+        "thread_id": tid, "provider": "openrouter", "model": "deepseek/deepseek-v3.2",
+        "message": "write a function", "strength": strength})
+    check("[%s] streams" % strength, r.status_code, 200)
+    check("[%s] answers with %s" % (strength, want.split("/")[1]), CALLS and CALLS[-1]["model"], want)
+openrouter_api.budget_ok = lambda model=None: model != openrouter_api.DEEP_MODEL
+CALLS.clear()
+client.post("/api/chat", json={"thread_id": tid, "provider": "openrouter",
+                               "model": "deepseek/deepseek-v3.2", "message": "again", "strength": "deep"})
+check("Deep mode stays on V3 when the ceiling has no room for R1",
+      CALLS and CALLS[-1]["model"], "deepseek/deepseek-v3.2")
+CALLS.clear()
+client.post("/api/chat", json={"thread_id": tid, "provider": "openrouter",
+                               "model": "poolside/laguna-s-2.1:free", "message": "free", "strength": "deep"})
+check("a model the person chose is left alone", CALLS and CALLS[-1]["model"], "poolside/laguna-s-2.1:free")
+
 print("")
 if FAILED:
     print("%d FAILED:" % len(FAILED))
