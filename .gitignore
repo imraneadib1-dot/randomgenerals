@@ -25,6 +25,10 @@ static/uploads/
 static/generated/
 static/video/generated/
 
+# The evaluator's runs. Measurements, not source; commit one deliberately
+# when it is a baseline worth keeping.
+evals/results/
+
 # Python
 __pycache__/
 *.pyc
