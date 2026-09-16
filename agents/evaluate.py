@@ -128,19 +128,38 @@ def ask(provider: str, model: str, bay: str, prompt: str) -> dict:
     history = [{"role": "system", "content": system},
                {"role": "user", "content": prompt}]
     options = {"num_predict": 600, "temperature": 0.2}
+    import providers
     usage: dict = {}
-    started = time.monotonic()
-    first = None
     pieces = []
-    try:
-        for piece in appmod.PROVIDER_STREAMERS[provider](
-                model, history, options=options, usage=usage):
-            if first is None:
-                first = time.monotonic()
-            pieces.append(piece)
-    except Exception as e:                       # noqa: BLE001
-        return {"reply": "".join(pieces), "ttft": None, "total": None,
-                "error": type(e).__name__ + ": " + str(e)[:120]}
+    first = None
+    started = time.monotonic()
+    # A per-minute budget refills on a clock, and a harness that counts a
+    # 429 as a wrong answer is measuring the budget, not the model. Wait
+    # for the window once, then ask again.
+    for attempt in range(2):
+        pieces = []
+        first = None
+        started = time.monotonic()
+        try:
+            for piece in appmod.PROVIDER_STREAMERS[provider](
+                    model, history, options=options, usage=usage):
+                if first is None:
+                    first = time.monotonic()
+                pieces.append(piece)
+            break
+        except providers.RateLimited as e:
+            if attempt:
+                return {"reply": "", "ttft": None, "total": None,
+                        "error": "RateLimited: " + str(e)[:80]}
+            wait = 20.0
+            try:
+                wait = min(60.0, float(str(e.args[0]).rstrip("s")))
+            except (ValueError, IndexError, TypeError):
+                pass
+            time.sleep(wait + 1)
+        except Exception as e:                   # noqa: BLE001
+            return {"reply": "".join(pieces), "ttft": None, "total": None,
+                    "error": type(e).__name__ + ": " + str(e)[:120]}
     end = time.monotonic()
     return {"reply": "".join(pieces),
             "ttft": round((first or end) - started, 2),
