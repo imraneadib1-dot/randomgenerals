@@ -94,7 +94,15 @@ bash deploy.sh                         # deploy, then prove it landed
 app.py            routes, routing table, chat streaming   (~5,000 lines)
 db.py             SQLite, 18 tables, WAL
 groq_api.py       fast channel + per-minute budget tracking
-openrouter_api.py Kimi and the free models, with a daily spend ceiling
+openrouter_api.py DeepSeek (V3, R1 in Deep mode) and the free models,
+                  with a daily spend ceiling
+videogen.py       the video engine: persistent jobs, a poller, validation
+higgsfield_api.py Higgsfield Cloud - Kling, Veo, Seedance, Sora, Wan, DoP
+agents/           the runtime agents: router (which channel is answering
+                  well right now), verifier (code is run before it is
+                  trusted), evaluate (the offline accuracy harness)
+evals/            graded cases the evaluator runs, and its results
+.claude/agents/   the specialists Claude Code can run on this repo
 connectors.py     paste a link, it becomes a tool the model can call
 keystore.py       AES-GCM for provider keys; TOTP from RFC 6238
 tools.py          web search, Python runner, image generation

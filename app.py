@@ -55,6 +55,8 @@ import tripo3d  # noqa: E402  text-to-3D generation - see tripo3d.py
 import higgsfield_api  # noqa: E402  Higgsfield Cloud video - see higgsfield_api.py
 import videogen  # noqa: E402  the video job engine - see videogen.py
 import tools  # noqa: E402  model-callable tools - see tools.py
+from agents import router as agent_router  # noqa: E402  who is answering well right now
+from agents import verifier as agent_verifier  # noqa: E402  code answers, run before trusted
 import mailer  # noqa: E402  verification email - see mailer.py
 
 # The one AI this app talks to: Ollama, running locally (llama3.2 pulled
@@ -353,6 +355,7 @@ def _client_ip():
 LIMIT_CHAT = Limiter(rate=20, per=60, burst=5)
 LIMIT_IMAGE = Limiter(rate=6, per=60, burst=3)
 LIMIT_VIDEO = Limiter(rate=3, per=60, burst=2)
+LIMIT_FEEDBACK = Limiter(rate=30, per=60, burst=10)
 LIMIT_VIDEO_ENHANCE = Limiter(rate=10, per=60, burst=4)
 LIMIT_SEARCH = Limiter(rate=20, per=60, burst=10)
 LIMIT_RUN = Limiter(rate=12, per=60, burst=4)
@@ -3512,6 +3515,11 @@ def _reconcile_forever() -> None:
                 app.logger.info("reconcile: %s", result)
         except Exception as e:                          # noqa: BLE001
             app.logger.warning("reconcile failed: %s", e)
+        try:
+            # The router keeps a week of evidence; the same clock trims it.
+            agent_router.prune()
+        except Exception as e:                          # noqa: BLE001
+            app.logger.warning("channel prune failed: %s", e)
 
 
 threading.Thread(target=_reconcile_forever, daemon=True).start()
@@ -5207,7 +5215,11 @@ def _failover_chain(provider: str, mode: str) -> list[tuple[str, str]]:
         local = _local_alternative(mode)
         if local:
             chain.append(("ollama", local))
-    return chain
+    # The table says what to prefer; the router says what has actually
+    # been answering in the last ten minutes. A channel that is failing
+    # or crawling right now goes to the back of the line rather than
+    # being tried first because it is listed first. See agents/router.py.
+    return agent_router.rank(chain)
 
 
 _CHANNEL_NAMES = {
@@ -5381,6 +5393,7 @@ def _recommended_routes(providers, plan=None):
         # option - and skipping it left the bay with no route at all.
         has_alternative = any(
             pid != "ollama" and pid in by_id for pid, _ in ranked)
+        first_choice = None
         for provider_id, pattern in ranked:
             if skip_local and has_alternative and provider_id == "ollama":
                 continue
@@ -5391,9 +5404,21 @@ def _recommended_routes(providers, plan=None):
                 (m for m in provider["models"]
                  if pattern in m.lower()
                  and features.model_allowed(plan, m)), None)
-            if match:
-                out[bay] = {"provider": provider_id, "model": match}
-                break
+            if not match:
+                continue
+            # A channel the router has watched fail for the last ten
+            # minutes is not recommended to the next person while
+            # another one is answering - but it is remembered, so a bay
+            # whose every channel is struggling still gets its first
+            # choice rather than nothing.
+            if first_choice is None:
+                first_choice = {"provider": provider_id, "model": match}
+            if agent_router.health(provider_id, match)["failing"]:
+                continue
+            out[bay] = {"provider": provider_id, "model": match}
+            break
+        if bay not in out and first_choice is not None:
+            out[bay] = first_choice
     return out
 
 
@@ -7564,16 +7589,35 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
             limited: tuple[str, str] | None = None
             answered = False
             for i, (p, m) in enumerate(candidates):
+                # What the router learns from: when the first token
+                # arrived, when the last did, and whether it worked.
+                t0 = time.monotonic()
+                t_first = None
                 try:
                     for piece in PROVIDER_STREAMERS[p](
                             m, history, **kwargs_for(p)):
+                        if t_first is None and piece:
+                            t_first = time.monotonic()
                         full_reply += piece
                         yield piece
                 except groq_api.ProviderUnavailable as e:
                     failures.append((p, e))
+                    agent_router.record(
+                        p, m, ok=False,
+                        reason=("rate_limited" if isinstance(e, providers.RateLimited)
+                                else "unreachable"))
                     if limited is None and isinstance(e, providers.RateLimited):
                         limited = (p, m)
                     continue
+                except Exception:
+                    agent_router.record(p, m, ok=False, total=time.monotonic() - t0,
+                                        reason="dropped")
+                    raise
+                agent_router.record(
+                    p, m, ok=True,
+                    ttft=round((t_first or time.monotonic()) - t0, 3),
+                    total=round(time.monotonic() - t0, 3),
+                    tokens=usage.get("eval_count"))
                 answered = True
                 if i > 0:
                     # Recorded on the message so a reload still shows
@@ -7670,6 +7714,33 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                     "differently, or more specifically.]")
                 yield stream_event({"event": "reply", "kind": reply_kind})
                 yield full_reply
+
+            # THE CODE IS RUN BEFORE IT IS TRUSTED. In the code bay, a
+            # finished reply's Python goes through the sandbox; a block
+            # that fails is sent back to the same model with the
+            # traceback for one repair, and both are appended under a
+            # "Self-check" heading. Signed-in only, for the reason the
+            # Run button is: the sandbox is a timeout and a memory cap,
+            # not a container. See agents/verifier.py.
+            if (mode == "code" and reply_kind == "text" and full_reply.strip()
+                    and session.get("user_id")):
+                def ask(prompt: str) -> str:
+                    repair = list(history) + [
+                        {"role": "assistant", "content": full_reply},
+                        {"role": "user", "content": prompt}]
+                    opts = dict(stream_kwargs.get("options") or {})
+                    opts["num_predict"] = min(900, int(opts.get("num_predict") or 900))
+                    return "".join(PROVIDER_STREAMERS[provider](
+                        model, repair, options=opts, usage={}))
+                # A slow local model is not asked for a repair: the
+                # answer is already on screen, and a forty-second wait
+                # for a footnote is worse than the footnote saying it
+                # could not ask. The failure itself is still reported.
+                can_ask = provider != "ollama" or _local_is_fast()
+                extra = agent_verifier.self_check(full_reply, ask if can_ask else None)
+                if extra:
+                    full_reply += extra
+                    yield extra
         except GeneratorExit:
             raise
         except Exception as e:
@@ -7744,6 +7815,40 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # answer, so the failure is invisible from the browser; it just means
     # credits were silently never deducted.
     return streaming_response(generate())
+
+
+@app.route("/api/feedback", methods=["POST"])
+@limited("feedback", LIMIT_FEEDBACK, key=_limit_key_account)
+def reply_feedback():
+    """A thumb on a reply. Stored with the question and the answer,
+    truncated, so agents/evaluate.py --from-feedback can turn a dislike
+    into a case with a right answer attached later. vote 0 withdraws."""
+    payload = request.get_json(force=True, silent=True) or {}
+    tid = str(payload.get("thread_id") or "")
+    try:
+        index = int(payload.get("index"))
+        vote = int(payload.get("vote"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "index and vote are needed"}), 400
+    if vote not in (-1, 0, 1):
+        return jsonify({"error": "vote is 1, -1 or 0"}), 400
+    thread = THREADS.get(tid)
+    if not thread or thread.get("owner_id") != current_owner_id():
+        return jsonify({"error": "Unknown thread"}), 404
+    messages = thread.get("messages") or []
+    if not (0 <= index < len(messages)) or messages[index].get("role") != "assistant":
+        return jsonify({"error": "That is not a reply"}), 400
+    reply = messages[index]
+    question = next((m.get("content") or "" for m in reversed(messages[:index])
+                     if m.get("role") == "user"), "")
+    db.feedback_set(
+        current_owner_id(), tid, index, vote,
+        note=str(payload.get("note") or "")[:500],
+        provider=str(reply.get("provider") or ""),
+        model=str(reply.get("model") or ""),
+        mode=str(thread.get("mode") or "chat"),
+        question=question, answer=str(reply.get("content") or ""))
+    return jsonify({"ok": True, "vote": vote})
 
 
 @app.route("/api/chat", methods=["POST"])

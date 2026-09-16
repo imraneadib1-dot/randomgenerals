@@ -3,6 +3,8 @@ import { renderMarkdown } from "./markdown.js";
 import { regenerateLast } from "./image.js";
 import { downloadBlob, downloadHtml, isPreviewable, noteFilename, openPreview } from "./preview.js";
 import { PROVIDER_META } from "./shell.js";
+import { state } from "./state.js";
+import { postJSON } from "./api.js";
 
 /* ----------------------------------------------------------------
    Message rendering
@@ -116,6 +118,39 @@ export function addMessageActions(msg, bubble, { allowRegenerate }) {
     });
     row.appendChild(speakBtn);
   }
+
+  // A thumb either way. Two buttons and no dialog: the moment a reply
+  // is judged is the moment it is read, and a form would lose it.
+  // The reply's place in the thread is counted from the log, which is
+  // rendered in thread order; the server checks that it is a reply.
+  const vote = document.createElement("span");
+  vote.className = "msg-vote";
+  vote.setAttribute("role", "group");
+  vote.setAttribute("aria-label", "Rate this reply");
+  /** @type {[string, number, string][]} */
+  const choices = [["👍", 1, "Good answer"], ["👎", -1, "Wrong or unhelpful"]];
+  choices.forEach(([glyph, value, title]) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "msg-action-btn msg-vote-btn";
+    b.textContent = glyph;
+    b.title = title;
+    b.setAttribute("aria-pressed", "false");
+    b.addEventListener("click", async () => {
+      const index = Array.from(chatLog.querySelectorAll(".msg")).indexOf(msg);
+      const was = b.getAttribute("aria-pressed") === "true";
+      const next = was ? 0 : value;
+      try {
+        await postJSON("/api/feedback", { thread_id: state.currentThreadId, index, vote: next });
+      } catch (_) {
+        return;                    // a thumb is not worth an error toast
+      }
+      vote.querySelectorAll(".msg-vote-btn").forEach((x) => x.setAttribute("aria-pressed", "false"));
+      if (!was) b.setAttribute("aria-pressed", "true");
+    });
+    vote.appendChild(b);
+  });
+  row.appendChild(vote);
 
   msg.appendChild(row);
 }

@@ -327,6 +327,46 @@ CREATE TABLE IF NOT EXISTS openrouter_spend (
     usd REAL NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS channel_stats (
+    -- One row per reply, about the CHANNEL rather than the person: which
+    -- provider and model answered, how long the first token took, how
+    -- long the whole reply took, how many tokens came back, and whether
+    -- it worked. agents/router.py reads the last few minutes of this to
+    -- decide who to ask next; the dashboard reads a day of it. Nothing
+    -- here says what was asked. Pruned after seven days.
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL,
+    model    TEXT NOT NULL,
+    ok       INTEGER NOT NULL,
+    ttft     REAL,
+    total    REAL,
+    tokens   INTEGER,
+    reason   TEXT,
+    created  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_channel_stats_created
+    ON channel_stats(created);
+
+CREATE TABLE IF NOT EXISTS reply_feedback (
+    -- A thumb on a reply. Keyed by the reply's place in its thread, so
+    -- a second thumb on the same reply replaces the first. The question
+    -- and the answer are kept, truncated, because a thumbs-down with
+    -- nothing to look at is a number rather than a lesson -
+    -- agents/evaluate.py turns these into cases the owner can review.
+    owner_id  TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    msg_index INTEGER NOT NULL,
+    vote      INTEGER NOT NULL,
+    note      TEXT,
+    provider  TEXT,
+    model     TEXT,
+    mode      TEXT,
+    question  TEXT,
+    answer    TEXT,
+    created   TEXT NOT NULL,
+    PRIMARY KEY (owner_id, thread_id, msg_index)
+);
+
 CREATE TABLE IF NOT EXISTS site_visits (
     -- Page views, aggregated to (day, path) the moment they happen.
     -- There is no row per request and no row per person: by the time
@@ -2289,6 +2329,97 @@ def video_job_delete(job_id: str, owner_id: str) -> dict | None:
         conn.execute("DELETE FROM video_jobs WHERE id = ?", (job_id,))
         conn.commit()
     return _video_row(r)
+
+
+# ---------------------------------------------------------------------
+# What the agents remember. See agents/__init__.py.
+# ---------------------------------------------------------------------
+def channel_record(provider: str, model: str, ok: bool, ttft=None,
+                   total=None, tokens=None, reason: str = "",
+                   created: str | None = None) -> None:
+    """One reply's worth of evidence about a channel. Never raises: a
+    failure to note a failure must not become a third failure."""
+    try:
+        conn = _connect()
+        with conn:
+            conn.execute(
+                "INSERT INTO channel_stats (provider, model, ok, ttft, total, "
+                "tokens, reason, created) VALUES (?,?,?,?,?,?,?,?)",
+                (provider, model, 1 if ok else 0, ttft, total, tokens,
+                 (reason or "")[:60], created or _now_iso()))
+    except Exception:                          # noqa: BLE001
+        pass
+
+
+def channel_window(since_iso: str) -> list[dict]:
+    """Every row since `since_iso`, newest first."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT provider, model, ok, ttft, total, tokens, reason, created "
+        "FROM channel_stats WHERE created >= ? ORDER BY created DESC",
+        (since_iso,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def channel_prune(before_iso: str) -> int:
+    """Forget rows older than `before_iso`. -> how many went."""
+    conn = _connect()
+    with conn:
+        cur = conn.execute("DELETE FROM channel_stats WHERE created < ?",
+                           (before_iso,))
+        return cur.rowcount
+
+
+def _now_iso() -> str:
+    import datetime as _dt
+    return _dt.datetime.now(_dt.timezone.utc).replace(
+        microsecond=0).isoformat()
+
+
+def feedback_set(owner_id: str, thread_id: str, msg_index: int, vote: int,
+                 note: str = "", provider: str = "", model: str = "",
+                 mode: str = "", question: str = "", answer: str = "") -> None:
+    """Record, or replace, one person's thumb on one reply. vote 0
+    withdraws it."""
+    conn = _connect()
+    with conn:
+        if vote == 0:
+            conn.execute(
+                "DELETE FROM reply_feedback WHERE owner_id=? AND thread_id=? "
+                "AND msg_index=?", (owner_id, thread_id, msg_index))
+            return
+        conn.execute(
+            "INSERT INTO reply_feedback (owner_id, thread_id, msg_index, vote, "
+            "note, provider, model, mode, question, answer, created) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(owner_id, thread_id, msg_index) DO UPDATE SET "
+            "vote=excluded.vote, note=excluded.note, created=excluded.created",
+            (owner_id, thread_id, msg_index, int(vote), (note or "")[:500],
+             provider, model, mode, (question or "")[:600],
+             (answer or "")[:2500], _now_iso()))
+
+
+def feedback_summary(since_iso: str) -> list[dict]:
+    """Thumbs per (provider, model) since `since_iso`."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT provider, model, "
+        "SUM(CASE WHEN vote > 0 THEN 1 ELSE 0 END) AS up, "
+        "SUM(CASE WHEN vote < 0 THEN 1 ELSE 0 END) AS down "
+        "FROM reply_feedback WHERE created >= ? GROUP BY provider, model "
+        "ORDER BY up + down DESC", (since_iso,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def feedback_negative(limit: int = 50) -> list[dict]:
+    """The replies people disliked, newest first, with what was asked -
+    the evaluator's raw material."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT thread_id, msg_index, note, provider, model, mode, question, "
+        "answer, created FROM reply_feedback WHERE vote < 0 "
+        "ORDER BY created DESC LIMIT ?", (int(limit),)).fetchall()
+    return [dict(r) for r in rows]
 
 
 def video_try_consume(owner_id: str, month: str, limit: int) -> bool:

@@ -154,6 +154,7 @@
   /* The bar sits over the ground rather than on a panel, so it gets its
      own value: near-black here, near-white in the light theme. */
   --topbar-ground: rgba(5, 8, 15, 0.62);
+  --modal-ground: rgba(24, 40, 58, 0.94);
 
   /* A TYPE SCALE, rather than a size per component.
      Sizes were set individually wherever they were needed - 14.5px
@@ -1626,6 +1627,20 @@ html.time-night .night-moon {
 .msg.assistant.streaming .msg-actions {
   display: none;
 }
+.msg-vote {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: auto;
+}
+.msg-vote-btn {
+  font-size: 12px;
+  filter: grayscale(1);
+  opacity: 0.55;
+  transition: opacity var(--dur) var(--ease), filter var(--dur) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+.msg-vote-btn:hover { opacity: 1; filter: none; }
+.msg-vote-btn[aria-pressed="true"] { opacity: 1; filter: none; transform: scale(1.15); }
 .msg-action-btn {
   border: none;
   background: none;
@@ -1734,6 +1749,20 @@ html.time-night .night-moon {
   font-size: 13px;
   font-family: var(--font-mono);
   color: #e2e8f0;
+}
+
+/* The highlighter's stylesheet (atom-one-dark, from the CDN) paints its
+   own ground and its own padding on `code.hljs`. Inside a <pre> that
+   already has both, that drew a second, lighter box inset inside the
+   card - two backgrounds and 28px of padding around three words. The
+   card is the box; the code is text in it. */
+.code-block pre code,
+.code-block pre code.hljs {
+  display: block;
+  padding: 0;
+  background: transparent;
+  font-size: inherit;
+  line-height: 1.55;
 }
 
 .inline-code {
@@ -2268,9 +2297,9 @@ html.time-night .night-moon {
   position: fixed;
   inset: 0;
   z-index: 50;
-  background: rgba(20, 45, 90, 0.28);
-  -webkit-backdrop-filter: blur(4px);
-  backdrop-filter: blur(4px);
+  background: rgba(5, 8, 15, 0.42);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2291,14 +2320,21 @@ html.time-night .night-moon {
   max-width: 400px;
   max-height: min(640px, 90vh);
   overflow-y: auto;
-  background: var(--surface-raised);
-  -webkit-backdrop-filter: blur(26px);
-  backdrop-filter: blur(26px);
-  border: 1px solid var(--border);
+  /* Glass, but glass you can read through only as a glow. The panel
+     was --surface-raised (11% white) over a 4px-blurred page: the
+     conversation behind showed through as ghost text under the
+     settings text, and the blur on this element cannot help because a
+     backdrop-filter blurs what is behind the element, not what is
+     drawn through its own transparent fill. The fill is opaque enough
+     now that the page reads as light and colour, not as words. */
+  background: var(--modal-ground);
+  -webkit-backdrop-filter: var(--blur-md);
+  backdrop-filter: var(--blur-md);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--edge-lit), var(--shadow-card);
   padding: 20px 20px 24px;
-  animation: modalIn 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: modalIn var(--dur) var(--ease);
 }
 @keyframes modalIn {
   from {
@@ -4351,6 +4387,7 @@ html[data-motion="reduced"] *::after {
   --hairline: rgba(24, 42, 58, 0.11);
   --blur-md: blur(18px) saturate(120%);
   --topbar-ground: rgba(255, 255, 255, 0.78);
+  --modal-ground: rgba(255, 255, 255, 0.96);
 
   /* WHITE, not near-white. The dark theme's lit edge is light falling
      on a raised surface; on a white panel that same line is invisible,

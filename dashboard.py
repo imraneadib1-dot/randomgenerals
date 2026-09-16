@@ -58,6 +58,7 @@ number that is not an amount of money.
 import datetime
 
 import db
+from agents import router as agent_router
 
 
 def _money(minor, currency="USD"):
@@ -286,4 +287,14 @@ def collect(days=None, since=None):
             "peak": peak(request_days, "messages"),
             "window": sum(r["messages"] for r in request_days),
         },
+        # What the router has watched: per channel, over the last day,
+        # how often it answered, how fast, and how often it failed -
+        # and what people thought of the answers. See agents/.
+        "channels": agent_router.summary(24),
+        "feedback": db.feedback_summary(_iso_days_ago(30)),
     }
+
+
+def _iso_days_ago(days):
+    return (datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(days=days)).replace(microsecond=0).isoformat()

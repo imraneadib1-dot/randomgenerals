@@ -426,6 +426,55 @@
         <span>{{ d.requests.series[-1].day }}</span>
       </div>
 
+      <h2>Channels <span>· last 24 hours</span></h2>
+      {% if d.channels %}
+        <table class="money">
+          <tr>
+            <th>Model</th><th>Replies</th><th>Failed</th>
+            <th>First token</th><th>Whole reply</th><th>Speed</th><th>Now</th>
+          </tr>
+          {% for c in d.channels %}
+            <tr>
+              <td>{{ c.provider }} · {{ c.model.split('/')[-1] }}</td>
+              <td>{{ c.replies }}</td>
+              <td>{{ c.failures }}{% if c.failures %} ({{ (c.failure_rate * 100)|round|int }}%){% endif %}</td>
+              <td>{% if c.ttft_p50 is not none %}{{ c.ttft_p50 }}s{% else %}—{% endif %}</td>
+              <td>{% if c.total_p50 is not none %}{{ c.total_p50 }}s{% else %}—{% endif %}</td>
+              <td>{% if c.tokens_per_s %}{{ c.tokens_per_s }} tok/s{% else %}—{% endif %}</td>
+              <td>{% if c.now.failing %}failing — demoted{% elif c.now.slow %}slow — demoted{% else %}fine{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </table>
+      {% else %}
+        <p class="empty">
+          Nothing yet. Every reply from now on records which channel
+          answered and how fast, and the router uses the last ten
+          minutes of it to route around a channel that is failing.
+        </p>
+      {% endif %}
+
+      <h2>What people thought <span>· last 30 days</span></h2>
+      {% if d.feedback %}
+        <table class="money">
+          <tr><th>Model</th><th>👍</th><th>👎</th></tr>
+          {% for f in d.feedback %}
+            <tr>
+              <td>{{ f.provider }} · {{ (f.model or '')[-32:] }}</td>
+              <td>{{ f.up }}</td><td>{{ f.down }}</td>
+            </tr>
+          {% endfor %}
+        </table>
+        <p class="caveat">
+          Disliked replies can be turned into test cases:
+          <code>python -m agents.evaluate --from-feedback</code>.
+        </p>
+      {% else %}
+        <p class="empty">
+          No thumbs yet. Each reply has 👍 / 👎 under it; a dislike is
+          kept with the question so it can become a test case.
+        </p>
+      {% endif %}
+
       <h2>Money</h2>
       {% if d.money.by_currency %}
         <table class="money">

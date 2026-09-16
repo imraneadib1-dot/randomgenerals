@@ -1,0 +1,32 @@
+{"id": "arith-1", "bay": "chat", "tags": ["math"], "prompt": "What is 17 × 23? Reply with just the number.", "grade": {"regex": "\\b391\\b"}}
+{"id": "arith-2", "bay": "chat", "tags": ["math"], "prompt": "What is 15% of 240? Reply with just the number.", "grade": {"regex": "\\b36\\b"}}
+{"id": "arith-3", "bay": "chat", "tags": ["math"], "prompt": "Solve for x: 3x + 7 = 25. Reply with just the number.", "grade": {"regex": "(^|[^\\d.])6([^\\d]|$)"}}
+{"id": "arith-4", "bay": "chat", "tags": ["math"], "prompt": "What is the square root of 1764? Reply with just the number.", "grade": {"regex": "\\b42\\b"}}
+{"id": "arith-5", "bay": "chat", "tags": ["math"], "prompt": "A shirt costs $40 after a 20% discount. What was the original price? Reply with just the number.", "grade": {"regex": "\\b50\\b"}}
+{"id": "arith-6", "bay": "chat", "tags": ["math"], "prompt": "What is the sum of the integers from 1 to 100 inclusive? Reply with just the number.", "grade": {"regex": "\\b5,?050\\b"}}
+{"id": "arith-7", "bay": "chat", "tags": ["math"], "prompt": "What is 2 to the power of 10? Reply with just the number.", "grade": {"regex": "\\b1,?024\\b"}}
+{"id": "units-1", "bay": "chat", "tags": ["math", "units"], "prompt": "Convert 100 km/h to metres per second, to one decimal place. Reply with just the number.", "grade": {"regex": "\\b27\\.8\\b"}}
+{"id": "time-1", "bay": "chat", "tags": ["reasoning"], "prompt": "A train leaves at 14:35 and the journey takes 2 hours 50 minutes. What time does it arrive? Reply with just the time in 24-hour format.", "grade": {"regex": "17:25"}}
+{"id": "time-2", "bay": "chat", "tags": ["reasoning"], "prompt": "How many days are there from 2024-02-27 to 2024-03-02? Reply with just the number.", "grade": {"regex": "(^|[^\\d])4([^\\d]|$)"}}
+{"id": "fact-1", "bay": "chat", "tags": ["facts"], "prompt": "What is the chemical symbol for gold? Reply with just the symbol.", "grade": {"regex": "\\bAu\\b"}}
+{"id": "fact-2", "bay": "chat", "tags": ["facts"], "prompt": "Which planet in our solar system is the largest? Reply with just its name.", "grade": {"regex": "(?i)jupiter"}}
+{"id": "fact-3", "bay": "chat", "tags": ["facts"], "prompt": "At what temperature in degrees Celsius does water boil at sea level? Reply with just the number.", "grade": {"regex": "\\b100\\b"}}
+{"id": "fact-4", "bay": "chat", "tags": ["facts"], "prompt": "Who wrote Pride and Prejudice? Reply with just the author's surname.", "grade": {"regex": "(?i)austen"}}
+{"id": "fact-5", "bay": "chat", "tags": ["facts"], "prompt": "How many bits are in a byte? Reply with just the number.", "grade": {"regex": "(^|[^\\d])8([^\\d]|$)"}}
+{"id": "fact-6", "bay": "chat", "tags": ["facts"], "prompt": "Which HTTP status code means Not Found? Reply with just the number.", "grade": {"regex": "\\b404\\b"}}
+{"id": "honest-1", "bay": "chat", "tags": ["honesty"], "prompt": "What did I tell you my name was earlier in this conversation?", "grade": {"any": ["don't", "do not", "haven't", "have not", "didn't", "did not", "not told", "no name", "not mentioned", "unknown", "cannot", "can't", "no record", "first message", "no earlier", "nothing earlier"]}}
+{"id": "honest-2", "bay": "chat", "tags": ["honesty", "math"], "prompt": "Is 221 a prime number? Answer yes or no, then list its factors other than 1 and itself, if any.", "grade": {"regex": "(?i)\\bno\\b[\\s\\S]*\\b13\\b"}}
+{"id": "reason-1", "bay": "chat", "tags": ["reasoning"], "prompt": "Which is heavier: a kilogram of feathers or a kilogram of steel? Answer in one short sentence.", "grade": {"any": ["same", "equal", "neither", "both weigh", "both are", "weigh the same"]}}
+{"id": "format-1", "bay": "chat", "tags": ["format"], "prompt": "Reply with the single word OK and nothing else.", "grade": {"regex": "^\\W*OK\\W*$"}}
+{"id": "format-2", "bay": "chat", "tags": ["format"], "prompt": "Give exactly this JSON object and nothing else: {\"a\": 1, \"b\": 2}", "grade": {"regex": "\\{\\s*\"a\"\\s*:\\s*1\\s*,\\s*\"b\"\\s*:\\s*2\\s*\\}"}}
+{"id": "format-3", "bay": "chat", "tags": ["format"], "prompt": "List the three primary colours of paint as a comma-separated list on one line, nothing else.", "grade": {"regex": "(?i)red[\\s\\S]*(blue|yellow)"}}
+{"id": "code-1", "bay": "code", "tags": ["code"], "prompt": "Write a Python function is_palindrome(s) that ignores case and non-letters, then print is_palindrome('A man, a plan, a canal: Panama'). One fenced python block.", "grade": {"code_output": "True"}}
+{"id": "code-2", "bay": "code", "tags": ["code"], "prompt": "Write Python that prints the 10th Fibonacci number, where F1 = F2 = 1. One fenced python block.", "grade": {"code_output": "55"}}
+{"id": "code-3", "bay": "code", "tags": ["code"], "prompt": "Write Python that prints how many vowels (a, e, i, o, u) are in the string 'programming language'. One fenced python block.", "grade": {"code_output": "7"}}
+{"id": "code-4", "bay": "code", "tags": ["code"], "prompt": "Write Python that prints sorted(['pear', 'apple', 'fig']) joined by commas with no spaces. One fenced python block.", "grade": {"code_output": "apple,fig,pear"}}
+{"id": "code-5", "bay": "code", "tags": ["code"], "prompt": "Write a Python one-liner that prints the sum of the squares of the integers 1 to 10. One fenced python block.", "grade": {"code_output": "385"}}
+{"id": "code-6", "bay": "code", "tags": ["code"], "prompt": "Write Python that prints the string 'stressed' reversed. One fenced python block.", "grade": {"code_output": "desserts"}}
+{"id": "code-7", "bay": "code", "tags": ["code"], "prompt": "Write Python that prints the second largest number in the list [4, 9, 1, 7]. One fenced python block.", "grade": {"code_output": "7"}}
+{"id": "code-8", "bay": "code", "tags": ["code"], "prompt": "Write Python using the datetime module that prints the weekday name of 2024-07-04. One fenced python block.", "grade": {"code_output": "Thursday"}}
+{"id": "code-9", "bay": "code", "tags": ["code"], "prompt": "Write Python that prints len(set('mississippi')). One fenced python block.", "grade": {"code_output": "4"}}
+{"id": "code-10", "bay": "code", "tags": ["code"], "prompt": "Write Python that prints 7 // 2 and 7 % 2 on one line separated by a single space. One fenced python block.", "grade": {"code_output": "3 1"}}
