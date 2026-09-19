@@ -1,0 +1,199 @@
+{"text": "what's the difference between a list and a tuple", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "write a python function that reverses a string", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "my flask app returns 500 on every post, here's the traceback", "bay": "code", "web": 0, "depth": "deep"}
+{"text": "TypeError: unsupported operand type(s) for +: 'int' and 'str'", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "refactor this into smaller functions", "bay": "code", "web": 0, "depth": "deep"}
+{"text": "how do i center a div", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "explain what this regex does", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "write a sql query that joins users and orders and counts per user", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "why is my useEffect running twice", "bay": "code", "web": 0, "depth": "deep"}
+{"text": "convert this callback code to async await", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "write unit tests for this class", "bay": "code", "web": 0, "depth": "deep"}
+{"text": "what does this error mean: ECONNREFUSED 127.0.0.1:5432", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "optimise this loop, it takes 40 seconds on 10k rows", "bay": "code", "web": 0, "depth": "deep"}
+{"text": "how do i read a csv in pandas and drop empty rows", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "implement binary search", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "my docker build fails at the pip install step", "bay": "code", "web": 0, "depth": "deep"}
+{"text": "git says detached HEAD, how do i get back", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "write a bash script that backs up a folder daily", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "what is a race condition and how do i avoid one", "bay": "code", "web": 0, "depth": "deep"}
+{"text": "review this function for bugs", "bay": "code", "web": 0, "depth": "deep"}
+{"text": "add type hints to this module", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "how do i paginate an api in fastapi", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "explain big o notation with examples", "bay": "code", "web": 0, "depth": "deep"}
+{"text": "segfault in my c program when i free the pointer twice", "bay": "code", "web": 0, "depth": "deep"}
+{"text": "write a react component for a todo list", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "how do i mock a database call in pytest", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "my css grid columns overflow on mobile", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "what's the latest stable version of node and what changed", "bay": "code", "web": 1, "depth": "quick"}
+{"text": "is there a new syntax in python 3.14 for this", "bay": "code", "web": 1, "depth": "quick"}
+{"text": "does the stripe api still support this endpoint", "bay": "code", "web": 1, "depth": "quick"}
+{"text": "debug this stack trace", "bay": "code", "web": 0, "depth": "deep"}
+{"text": "write a dockerfile for a flask app", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "explain dependency injection", "bay": "code", "web": 0, "depth": "deep"}
+{"text": "how do i handle cors in express", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "turn this into a generator so it doesn't load everything into memory", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "what's wrong with my recursion, it hits max depth", "bay": "code", "web": 0, "depth": "deep"}
+{"text": "write a function to validate an email address", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "compare rest and graphql for my use case", "bay": "code", "web": 0, "depth": "deep"}
+{"text": "how do i deploy this to a vps", "bay": "code", "web": 0, "depth": "deep"}
+{"text": "npm install fails with peer dependency conflict", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "show me how to use async generators", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "my sqlite query is slow, should i add an index", "bay": "code", "web": 0, "depth": "deep"}
+{"text": "write a class that represents a deck of cards", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "what does __init__.py actually do", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "help me write a github actions workflow", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "explain the difference between == and === in javascript", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "my api returns 401 but the token looks fine", "bay": "code", "web": 0, "depth": "deep"}
+{"text": "write a python script that renames files by date", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "how do websockets differ from polling", "bay": "code", "web": 0, "depth": "deep"}
+{"text": "fix the indentation error in this snippet", "bay": "code", "web": 0, "depth": "quick"}
+{"text": "why is the sky blue", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "explain entropy without using the word disorder", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "plan a week of meals for two people", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "what is 17 times 23", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "how do i stop procrastinating", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "summarise the causes of the first world war", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "write a birthday message for my sister", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "what does the word ubiquitous mean", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "help me write a cover letter for a junior developer role", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "explain how vaccines work to a ten year old", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "what's a good way to learn a language on my own", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "translate good morning into japanese", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "give me three ideas for a weekend trip", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "how many days between february 27 and march 2 2024", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "proofread this paragraph", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "what causes thunder", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "compare renting and buying a flat for someone on my salary", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "tell me a joke", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "how do i make bread without a machine", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "explain the prisoner's dilemma", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "what should i say in a performance review", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "is coffee bad for you", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "write a short poem about rain", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "how does compound interest work", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "what's the capital of australia", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "help me plan a study schedule for exams in six weeks", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "explain quantum entanglement simply", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "what are the rules of chess castling", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "rewrite this email to sound more polite", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "how much water should i drink a day", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "describe the water cycle", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "what's the difference between weather and climate", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "give me a workout plan for beginners", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "explain inflation and why prices rise", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "how do i apologise properly", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "what is the meaning of the word serendipity", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "summarise this article i'm pasting", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "who wrote pride and prejudice", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "help me decide between two job offers", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "what happens during an eclipse", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "explain how a car engine works", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "what should i cook with chicken and rice", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "how do i improve my handwriting", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "solve for x: 3x plus 7 equals 25", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "what is the square root of 1764", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "explain photosynthesis step by step", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "give me tips for public speaking", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "what's a good book about habits", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "how do i register a business in morocco", "bay": "chat", "web": 1, "depth": "deep"}
+{"text": "tell me about the history of algebra", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "what's the news today", "bay": "chat", "web": 1, "depth": "quick"}
+{"text": "who won the match last night", "bay": "chat", "web": 1, "depth": "quick"}
+{"text": "what's the weather in casablanca tomorrow", "bay": "chat", "web": 1, "depth": "quick"}
+{"text": "current price of bitcoin", "bay": "chat", "web": 1, "depth": "quick"}
+{"text": "latest iphone release date", "bay": "chat", "web": 1, "depth": "quick"}
+{"text": "what happened in the election this week", "bay": "chat", "web": 1, "depth": "deep"}
+{"text": "is that restaurant still open on sundays", "bay": "chat", "web": 1, "depth": "quick"}
+{"text": "find me recent reviews of this laptop", "bay": "chat", "web": 1, "depth": "deep"}
+{"text": "what time does the shop close today", "bay": "chat", "web": 1, "depth": "quick"}
+{"text": "search for flights to madrid next month", "bay": "chat", "web": 1, "depth": "deep"}
+{"text": "what is the exchange rate for euros right now", "bay": "chat", "web": 1, "depth": "quick"}
+{"text": "look up the population of morocco in 2026", "bay": "chat", "web": 1, "depth": "quick"}
+{"text": "who is the current prime minister of the uk", "bay": "chat", "web": 1, "depth": "quick"}
+{"text": "what are people saying about the new album", "bay": "chat", "web": 1, "depth": "deep"}
+{"text": "give me this week's football fixtures", "bay": "chat", "web": 1, "depth": "quick"}
+{"text": "has the train strike been called off", "bay": "chat", "web": 1, "depth": "quick"}
+{"text": "what's trending on twitter", "bay": "chat", "web": 1, "depth": "quick"}
+{"text": "find the opening hours of the museum", "bay": "chat", "web": 1, "depth": "quick"}
+{"text": "recent research on sleep and memory", "bay": "chat", "web": 1, "depth": "deep"}
+{"text": "how much does a playstation cost now", "bay": "chat", "web": 1, "depth": "quick"}
+{"text": "what's the score", "bay": "chat", "web": 1, "depth": "quick"}
+{"text": "any updates on that lawsuit", "bay": "chat", "web": 1, "depth": "deep"}
+{"text": "compare the latest phone models for battery life", "bay": "chat", "web": 1, "depth": "deep"}
+{"text": "what did the company announce yesterday", "bay": "chat", "web": 1, "depth": "quick"}
+{"text": "draw a picture of a fox in the snow", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "generate an image of a neon city at night", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "make me a logo for a coffee shop", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "picture of a mountain lake at sunrise", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "create an illustration of a dragon", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "draw me a cat wearing sunglasses", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "an oil painting of a harbour in winter", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "design a poster for a jazz concert", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "photorealistic portrait of an old fisherman", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "generate a wallpaper with abstract shapes", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "image of a futuristic car in the desert", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "draw a cartoon robot waving", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "make an image of a forest path in autumn", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "sketch of a medieval castle on a hill", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "create a watercolour of a sleeping cat", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "render a spaceship above a red planet", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "give me a picture of a bowl of ramen", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "generate album art for an electronic track", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "draw a map of a fantasy island", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "an anime style girl with a red umbrella", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "make a 3d render of a glass cube", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "picture of a lighthouse in a storm", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "illustration of a bee on a flower, macro", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "create a minimal vector icon of a rocket", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "draw the inside of a library, wide angle", "bay": "image", "web": 0, "depth": "quick"}
+{"text": "make a video of a red fox running through snow", "bay": "video", "web": 0, "depth": "quick"}
+{"text": "animate a sunrise over the ocean", "bay": "video", "web": 0, "depth": "quick"}
+{"text": "generate a clip of rain on a window", "bay": "video", "web": 0, "depth": "quick"}
+{"text": "short video of a city street at night, slow pan", "bay": "video", "web": 0, "depth": "quick"}
+{"text": "create a 5 second clip of coffee being poured", "bay": "video", "web": 0, "depth": "quick"}
+{"text": "make a diagram of how oauth works", "bay": "video", "web": 0, "depth": "deep"}
+{"text": "flowchart for a user signup process", "bay": "video", "web": 0, "depth": "deep"}
+{"text": "draw a database schema for a blog", "bay": "video", "web": 0, "depth": "deep"}
+{"text": "diagram the request path through a load balancer", "bay": "video", "web": 0, "depth": "deep"}
+{"text": "sequence diagram for a payment flow", "bay": "video", "web": 0, "depth": "deep"}
+{"text": "state machine for an online order", "bay": "video", "web": 0, "depth": "deep"}
+{"text": "animate a logo spinning", "bay": "video", "web": 0, "depth": "quick"}
+{"text": "video of waves hitting rocks, cinematic", "bay": "video", "web": 0, "depth": "quick"}
+{"text": "make a clip of a drone shot over a forest", "bay": "video", "web": 0, "depth": "quick"}
+{"text": "generate a video of a candle flickering in the dark", "bay": "video", "web": 0, "depth": "quick"}
+{"text": "chart the architecture of a microservice app", "bay": "video", "web": 0, "depth": "deep"}
+{"text": "draw a mind map of machine learning topics", "bay": "video", "web": 0, "depth": "deep"}
+{"text": "make a timeline diagram of the project phases", "bay": "video", "web": 0, "depth": "deep"}
+{"text": "short cinematic clip of a desert at golden hour", "bay": "video", "web": 0, "depth": "quick"}
+{"text": "animate text appearing letter by letter", "bay": "video", "web": 0, "depth": "quick"}
+{"text": "diagram showing how dns resolution works", "bay": "video", "web": 0, "depth": "deep"}
+{"text": "video of a train passing through a station", "bay": "video", "web": 0, "depth": "quick"}
+{"text": "make an entity relationship diagram for a shop", "bay": "video", "web": 0, "depth": "deep"}
+{"text": "clip of snow falling on a quiet street", "bay": "video", "web": 0, "depth": "quick"}
+{"text": "visualise the steps of a ci pipeline", "bay": "video", "web": 0, "depth": "deep"}
+{"text": "hi", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "hello", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "thanks", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "can you help me", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "what can you do", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "are you there", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "ok", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "go on", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "explain that again more simply", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "why", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "write the whole thing out properly this time", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "think carefully and check your working", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "research this thoroughly and cite sources", "bay": "chat", "web": 1, "depth": "deep"}
+{"text": "give me a detailed comparison with pros and cons", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "quick answer please", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "one word answer", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "in short", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "step by step please, i want to understand the reasoning", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "prove that the square root of two is irrational", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "derive the quadratic formula", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "integrate x squared times sin x", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "what is 15 percent of 240", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "convert 100 km/h to metres per second", "bay": "chat", "web": 0, "depth": "quick"}
+{"text": "write an essay on the causes of the industrial revolution", "bay": "chat", "web": 0, "depth": "deep"}
+{"text": "analyse this poem's imagery in depth", "bay": "chat", "web": 0, "depth": "deep"}

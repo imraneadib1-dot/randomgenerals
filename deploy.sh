@@ -76,7 +76,7 @@ echo "== python syntax, before restarting anything =="
 # A syntax error here has taken this site down before. Better to find it
 # with the old process still serving than after it has been killed.
 if command -v python3 >/dev/null; then
-    MODULES="app.py db.py videogen.py higgsfield_api.py paddle_billing.py features.py ratelimit.py providers.py agents"
+    MODULES="app.py db.py videogen.py higgsfield_api.py paddle_billing.py features.py ratelimit.py providers.py agents brain/intent.py"
     if ! python3 -m compileall -q $MODULES >/dev/null 2>&1; then
         echo "  a module does not compile - NOT restarting."
         python3 -m compileall $MODULES 2>&1 | tail -5 | sed 's/^/  /'

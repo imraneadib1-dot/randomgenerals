@@ -101,6 +101,8 @@ higgsfield_api.py Higgsfield Cloud - Kling, Veo, Seedance, Sora, Wan, DoP
 agents/           the runtime agents: router (which channel is answering
                   well right now), verifier (code is run before it is
                   trusted), evaluate (the offline accuracy harness)
+brain/            neural networks from scratch in NumPy - the character
+                  models, and intent.py, which triages every message
 evals/            graded cases the evaluator runs, and its results
 .claude/agents/   the specialists Claude Code can run on this repo
 connectors.py     paste a link, it becomes a tool the model can call

@@ -1,12 +1,64 @@
 
-# brain/ — a neural network built from scratch
+# brain/ — neural networks built from scratch
 
-A character-level language model written in plain NumPy. No PyTorch, no
-TensorFlow, no autograd. Every matrix multiply, every derivative, and the
-optimiser are written out by hand and checked against calculus.
+Plain NumPy. No PyTorch, no TensorFlow, no autograd. Every matrix
+multiply, every derivative, and the optimiser are written out by hand
+and checked against calculus.
 
-It plugs into the chat app as a provider called **Local brain**, alongside
-Ollama.
+Two models live here, and they do completely different jobs.
+
+**The character models** (`model.py`, `rnn.py`, `rnn_deep.py`) learn
+which letter follows which. They plug into the chat app as a provider
+called **Local brain**, alongside Ollama, and the section at the bottom
+of this file is honest about what a 200k-parameter character model can
+and cannot do: it continues text in the voice of its training books and
+has no notion of meaning.
+
+**The intent model** (`intent.py`) is small in the same way but pointed
+at a job the site actually has. It reads an incoming message and says
+which bay it belongs to — chat, code, image or video — in about a fifth
+of a millisecond on the VM's own CPU, so a coding question typed into
+the chat bay gets the coding prompt instead of the general one. It is
+the one model here that runs on every request.
+
+```bash
+python -m brain.intent              # train, save the checkpoint
+python -m brain.intent --check      # gradient check
+python -m brain.intent --evaluate   # k-fold, every example validated
+python -m brain.intent --try "how do i center a div"
+python -m brain.intent --from-threads   # also learn from your real traffic
+python check_brain.py               # the full 48 checks
+```
+
+Measured by five-fold cross-validation over two seeds, so every one of
+the 199 labelled examples is judged by a model that never saw it:
+
+| head | always guess the commonest | this model |
+|---|---|---|
+| bay | 50% | **86%** |
+| web | 88% | 92% |
+| deep | 65% | 72% |
+
+Per bay: chat 93%, code 74%, image 82%, video 88%. On the 76% of
+messages it is confident about (p ≥ 0.70) it is **95% correct**, and
+that is the only head the app acts on — the other two are returned and
+deliberately ignored, because four and seven points over guessing is
+not enough to change what the site does.
+
+Two things cost real accuracy until they were found, both worth
+remembering:
+
+- **A single held-out split lied.** It flattered the bay head by seven
+  points and could not tell a 16-unit model from a 32-unit one — 40
+  validation examples means each is 2.5% of the score. Every tuning
+  decision made against it was noise. `cross_validate()` replaced it.
+- **Class imbalance quietly picked a winner.** Half the corpus is chat,
+  so the cheapest way to cut the loss was to answer "chat" more often:
+  the code bay sat at 56%, and the confident mistakes were nearly all
+  coding questions containing no code ("how do i center a div"). Class
+  weighting plus `_CODEY` — a closed list of the trade's vocabulary —
+  took code to 74% and the head as a whole to 86%. A hashed unigram
+  could not have done it: "javascript" appears in exactly one example.
 
 ## The files
 
@@ -19,6 +71,9 @@ Ollama.
 | `train.py` | the training loop, checkpointing, resume |
 | `serve.py` | loads a checkpoint and streams text to `app.py` |
 | `corpus/` | the training texts (several public-domain books) |
+| `intent.py` | the triage model — features, three heads, training, k-fold |
+| `intents.jsonl` | its 199 labelled examples |
+| `checkpoint-intent.npz` | its weights, 33 KB, loaded at boot by app.py |
 
 ## Quick start
 

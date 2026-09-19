@@ -56,6 +56,13 @@ import higgsfield_api  # noqa: E402  Higgsfield Cloud video - see higgsfield_api
 import videogen  # noqa: E402  the video job engine - see videogen.py
 import tools  # noqa: E402  model-callable tools - see tools.py
 from agents import router as agent_router  # noqa: E402  who is answering well right now
+try:
+    from brain import intent as brain_intent  # noqa: E402  the triage model
+except Exception as _e:                       # noqa: BLE001
+    # NumPy missing, or a checkpoint from a different feature set. The
+    # site works exactly as it did without it; it just stops guessing.
+    print("[intent] brain unavailable: %s" % _e)
+    brain_intent = None
 from agents import verifier as agent_verifier  # noqa: E402  code answers, run before trusted
 import mailer  # noqa: E402  verification email - see mailer.py
 
@@ -7353,6 +7360,29 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     ]
 
     system_prompt = CODING_SYSTEM_PROMPT if mode == "code" else CHAT_SYSTEM_PROMPT
+
+    # THE TRIAGE MODEL, ON THE CHAT BAY ONLY (brain/intent.py).
+    #
+    # Most people never switch bays. A coding question asked in Chat got
+    # the general prompt - which is the difference between an answer
+    # with a runnable block in it and an answer ABOUT programming. The
+    # model reads the message in about a fifth of a millisecond and says
+    # which bay it belongs to; when it is confident the answer is code,
+    # this message alone gets the coding prompt.
+    #
+    # Deliberately the smallest possible action. The thread's mode, its
+    # model and what it costs are untouched, so a wrong guess costs a
+    # differently-worded answer and nothing else - which is the only
+    # kind of mistake a model measured at 95% on the calls it is
+    # confident about should be allowed to make. Its web and depth
+    # heads are read and ignored: +4 and +7 points over guessing is not
+    # enough to change what the site does.
+    if mode == "chat" and brain_intent is not None:
+        asked = next((m.get("content") or "" for m in reversed(thread["messages"])
+                      if m.get("role") == "user"), "")
+        guess = brain_intent.predict(asked)
+        if guess and guess["confident"] and guess["bay"] == "code":
+            system_prompt = CODING_SYSTEM_PROMPT
     owner_id = current_owner_id()
     memories = db.load_memories(owner_id)
     custom_instructions = db.load_custom_instructions(owner_id)
