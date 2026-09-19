@@ -73,12 +73,19 @@ eleven answer formats and refuses to report a score if that fails.
 ```bash
 pip install -r requirements.txt
 cp .env.example .env          # SECRET_KEY is the only required value
-python app.py                 # http://127.0.0.1:5001
+python app.py                 # http://127.0.0.1:5000
 ```
 
 Everything is optional beyond `SECRET_KEY`. With no keys at all it runs
 against a local Ollama; with `GROQ_API_KEY` it uses the fast channel.
 `.env.example` documents each one and what breaks without it.
+
+Port 5000 here, 5001 on the server: `deploy.sh` and `deploy/ORACLE.md`
+check 5001 because gunicorn is started with `PORT=5001` there, which
+leaves 5000 free for exactly this - a dev copy running beside it. Set
+`PORT` to move either one. This line said 5001 for a while, which is a
+small lie that costs whoever reads it the first five minutes of the
+project wondering why nothing is listening.
 
 Three scripts answer "is this actually working?" without guesswork:
 
