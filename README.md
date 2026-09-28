@@ -131,7 +131,8 @@ mobile/           Capacitor shell for iOS and Android
 ## Deploying
 
 Built for an Oracle Always Free ARM VM behind a Cloudflare Tunnel.
-`deploy/ORACLE.md` has the full setup. `deploy.sh` does updates and
+`deploy/ORACLE.md` has the full setup; `deploy/VERCEL.md` puts Vercel
+in front instead, with the app staying on the VM. `deploy.sh` does updates and
 checks the live page afterwards for markup that only exists in the new
 build — so it cannot report success when a stale process is still
 serving.

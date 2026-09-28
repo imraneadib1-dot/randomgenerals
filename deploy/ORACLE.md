@@ -137,6 +137,9 @@ curl -s localhost:5001/api/health
 journalctl -u randomgenerals -f        # if it does not come up
 ```
 
+> **Using Vercel instead of the tunnel?** See [VERCEL.md](VERCEL.md);
+> skip step 8.
+
 ## 8. Move the tunnel off the laptop
 
 The tunnel credentials live on whichever machine currently serves the

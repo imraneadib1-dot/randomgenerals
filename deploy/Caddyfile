@@ -1,0 +1,58 @@
+# Caddy on the VM: the only public door, and it only opens for Vercel.
+#
+# Vercel serves randomgenerals.com and forwards every request here (see
+# vercel/vercel.json). This box now listens on the public internet, which
+# the Cloudflare tunnel never needed, so three things matter:
+#
+# 1. ONLY VERCEL GETS IN. Vercel stamps X-Origin-Secret on every request
+#    it forwards, overwriting any value a visitor sends. Anything without
+#    the right secret is someone who found this address and skipped
+#    Vercel - they get a 404 and never reach gunicorn.
+#
+# 2. THE VISITOR'S ADDRESS COMES FROM ONE HEADER. The app trusts
+#    CF-Connecting-IP (see _client_ip in app.py) for rate limits, the
+#    visitor count and the Paddle webhook allowlist. Vercel passes a
+#    visitor's own CF-Connecting-IP straight through, so it is REPLACED
+#    here, from X-Vercel-Proxied-For. Measured on 28 Sep 2026 with forged
+#    headers through a real deployment: X-Vercel-Proxied-For and
+#    Forwarded were overwritten by Vercel; X-Forwarded-For,
+#    X-Vercel-Forwarded-For, X-Real-IP and CF-Connecting-IP were not.
+#    Do not switch to any of the second group.
+#
+# 3. THE APP SEES ITS PUBLIC NAME. Vercel connects with Host set to this
+#    origin's name and puts the public one in X-Forwarded-Host. Flask
+#    builds the Google sign-in redirect_uri from it (TRUST_PROXY=1), and
+#    Google refuses the whole flow if that says origin.* instead of the
+#    address registered in Cloud Console.
+#
+# Environment (in /etc/default/caddy or the unit's Environment=):
+#   ORIGIN_HOST    this box's own name, e.g. origin.randomgenerals.com
+#   ORIGIN_SECRET  the same long random value as the Vercel project's
+#                  ORIGIN_SECRET
+#   APP_PORT       gunicorn's port, 5001 unless you changed it
+#
+# Caddy gets and renews the HTTPS certificate for ORIGIN_HOST by itself,
+# which needs ports 80 and 443 open - see deploy/VERCEL.md.
+
+{$ORIGIN_HOST} {
+	@vercel header X-Origin-Secret {$ORIGIN_SECRET}
+
+	handle @vercel {
+		reverse_proxy 127.0.0.1:{$APP_PORT:5001} {
+			# The secret has done its job; the app has no use for it
+			# and a log line is no place for it.
+			header_up -X-Origin-Secret
+			header_up CF-Connecting-IP {header.X-Vercel-Proxied-For}
+			header_up X-Forwarded-For {header.X-Vercel-Proxied-For}
+			header_up X-Forwarded-Host {header.X-Forwarded-Host}
+			header_up X-Forwarded-Proto https
+			# Replies stream token by token. Without this Caddy may
+			# buffer, and the chat shows nothing until it is finished.
+			flush_interval -1
+		}
+	}
+
+	handle {
+		respond 404
+	}
+}

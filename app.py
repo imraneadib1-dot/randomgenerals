@@ -339,6 +339,13 @@ def _client_ip():
     everybody on earth and CF-Connecting-IP is what Cloudflare puts the
     real one in. Nothing outside the tunnel can set that header, because
     nothing outside the tunnel can open the socket.
+
+    Behind Vercel the same header is used, but Caddy writes it (see
+    deploy/Caddyfile): Vercel passes a visitor's own CF-Connecting-IP
+    through untouched, so Caddy replaces it from X-Vercel-Proxied-For,
+    which Vercel does overwrite, and refuses any request that did not
+    come through Vercel. Change one of those and this line changes with
+    it.
     """
     return (request.headers.get("CF-Connecting-IP")
             or (request.headers.get("X-Forwarded-For", "").split(",")[0]
