@@ -800,6 +800,32 @@
             </div>
             <p class="memory-hint" id="setKeyStatus"></p>
           </div>
+
+          <div class="memory-divider"></div>
+
+          <div class="appearance-section">
+            <label class="memory-label">Blender</label>
+            <p class="memory-hint">
+              Use the assistant inside Blender: it teaches you a model step
+              by step, writes a script that builds it, and finds what is
+              making a scene lag. Install the add-on (Edit &rsaquo;
+              Preferences &rsaquo; Add-ons &rsaquo; Install from Disk),
+              then paste a key into its preferences. The same key works
+              for any app that speaks the OpenAI API. Creating a new key
+              replaces the old one.
+            </p>
+            <div class="data-actions">
+              <a class="btn-secondary" href="/blender/addon.py" download>
+                Download the add-on
+              </a>
+              <button type="button" class="btn-secondary" id="setApiKeyCreate">
+                Create key
+              </button>
+            </div>
+            <input type="text" id="setApiKeyValue" class="tl-input" readonly
+                   hidden aria-label="Your new API key" />
+            <p class="memory-hint" id="setApiKeyStatus"></p>
+          </div>
         </div>
 
         <!-- Notifications tab -->

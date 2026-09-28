@@ -389,6 +389,7 @@ export function initSettingsPanels() {
   }
 
   initProviderKeys();
+  initApiKey();
   initMfa();
   initSessions();
 }
@@ -460,6 +461,37 @@ export function initProviderKeys() {
       status.textContent = "Could not reach the server.";
     } finally {
       save.disabled = false;
+    }
+  });
+}
+
+/* The account's own API key - what the Blender add-on (and any app
+   that speaks the OpenAI API) signs in with. The server keeps only a
+   hash, so the key is shown here once and cannot be fetched again. */
+export function initApiKey() {
+  const create = S("setApiKeyCreate");
+  if (!create) return;
+  create.addEventListener("click", async () => {
+    const status = S("setApiKeyStatus");
+    const field = S("setApiKeyValue");
+    create.disabled = true;
+    status.textContent = "Creating…";
+    try {
+      const res = await fetch("/api/account/api-key", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) { status.textContent = data.error || "Could not create a key."; return; }
+      field.value = data.api_key;
+      field.hidden = false;
+      field.select();
+      let copied = false;
+      try { await navigator.clipboard.writeText(data.api_key); copied = true; } catch (_) { /* select() is the fallback */ }
+      status.textContent = (copied ? "Copied. " : "") +
+        "Paste it into the add-on now - it is not shown again. Server: " +
+        location.origin;
+    } catch (_) {
+      status.textContent = "Could not reach the server.";
+    } finally {
+      create.disabled = false;
     }
   });
 }

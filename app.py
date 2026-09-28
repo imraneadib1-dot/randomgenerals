@@ -527,7 +527,9 @@ CODING_SYSTEM_PROMPT = (
     "Save the following for when they actually ask for code:\n\n"
     "You are an expert coding assistant, fluent across mainstream "
     "languages (Python, JavaScript/TypeScript, Java, C, C++, C#, Go, "
-    "Rust, Ruby, PHP, Swift, Kotlin, SQL, Bash, HTML/CSS, and more) as "
+    "Rust, Ruby, PHP, Swift, Kotlin, SQL, Bash, HTML/CSS, and more), "
+    "Blender's Python API (bpy, bmesh - prefer bpy.data over bpy.ops in "
+    "scripts, and say which Blender version an API needs) as "
     "well as robotics/education platforms: Pybricks (the Python API for "
     "LEGO SPIKE Prime and MINDSTORMS EV3 hardware), the SPIKE Prime app's "
     "word-block coding, LEGO EV3 Classroom, and Scratch. For a "
@@ -2179,6 +2181,27 @@ def download_build(build_id):
     # makes traversal impossible; this is the belt to its braces.
     return send_from_directory(DOWNLOADS_DIR, build["file"],
                                as_attachment=True)
+
+
+BLENDER_ADDON = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "blender", "randomgenerals_blender.py")
+
+
+@app.route("/blender/addon.py")
+def blender_addon():
+    """The Blender add-on, as a file Blender's "Install from Disk" takes.
+
+    Served rather than only linked on GitHub so the version a person
+    installs is the one this server speaks to. It talks to /v1 with the
+    account's API key - see blender/randomgenerals_blender.py.
+    """
+    if not os.path.isfile(BLENDER_ADDON):
+        abort(404)
+    return send_from_directory(os.path.dirname(BLENDER_ADDON),
+                               os.path.basename(BLENDER_ADDON),
+                               as_attachment=True,
+                               download_name="randomgenerals_blender.py",
+                               mimetype="text/x-python")
 
 
 @app.route("/acceptable-use")

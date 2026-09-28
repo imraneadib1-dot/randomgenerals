@@ -10,6 +10,12 @@ Python runner, web search, file and image reading, memory that carries
 between conversations, accounts with two-factor authentication, and
 subscriptions through Paddle. It installs as an app from the browser.
 
+A Blender add-on (`blender/`, downloadable from Settings > Blender) puts
+the same assistant in Blender's sidebar: it teaches a model step by step,
+writes a script that builds one, and measures what is making a scene lag
+with one-click, undoable fixes. `check_blender.py` tests it, inside real
+Blender when `BLENDER_PY` points at a Python with `pip install bpy`.
+
 ---
 
 ## How it answers
@@ -118,6 +124,7 @@ tools.py          web search, Python runner, image generation
 attachments.py    file reading, with a content sniffer
 features.py       one table deciding what each plan can do
 static/sw.js      service worker — caches the shell, never the API
+blender/          the Blender add-on; talks to /v1 with the account's key
 mobile/           Capacitor shell for iOS and Android
 ```
 
