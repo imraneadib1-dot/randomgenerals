@@ -3752,20 +3752,33 @@ def _v1_pieces(candidates, history, opts, usage, failure):
     [DONE], on the streaming one.
     """
     failures: list[tuple[str, BaseException]] = []
-    for p, m in candidates:
-        try:
-            for piece in PROVIDER_STREAMERS[p](m, history, options=opts,
-                                               usage=usage):
-                yield piece
-            return
-        except groq_api.ProviderUnavailable as e:
-            failures.append((p, e))
-            continue
-        except Exception as e:                            # noqa: BLE001
-            app.logger.warning("/v1 reply failed on %s: %s", p, e)
-            failure["message"] = ("Something went wrong talking to %s."
-                                  % _channel_name(p))
-            return
+    # Two rounds at most: the second only after waiting out a per-minute
+    # limit. The chat bay has always waited (RATE_LIMIT_WAIT_SECONDS);
+    # this route refused at once, so on a busy afternoon every Blender or
+    # editor request failed with "refills in about 20 seconds" while a
+    # browser tab asking the same thing simply got its answer late.
+    for attempt in range(2):
+        failures = []
+        for p, m in candidates:
+            try:
+                for piece in PROVIDER_STREAMERS[p](m, history, options=opts,
+                                                   usage=usage):
+                    yield piece
+                return
+            except groq_api.ProviderUnavailable as e:
+                failures.append((p, e))
+                continue
+            except Exception as e:                        # noqa: BLE001
+                app.logger.warning("/v1 reply failed on %s: %s", p, e)
+                failure["message"] = ("Something went wrong talking to %s."
+                                      % _channel_name(p))
+                return
+        limited = [p for p, e in failures
+                   if isinstance(e, providers.RateLimited)]
+        wait = _retry_after(limited[0], failures) if limited else None
+        if attempt or not wait or wait > RATE_LIMIT_WAIT_SECONDS:
+            break
+        time.sleep(wait + 0.5)
     failure["message"] = _nobody_answered(failures).strip("[]")
 
 

@@ -6,15 +6,23 @@ tick it, then paste the API key from the site (Settings > Blender) into
 the add-on's preferences. The panel is in the 3D Viewport sidebar (N),
 under the "RandomGenerals" tab.
 
-Three things it does:
+What it does:
 
-  Teach   - asks the site's model to walk you through a modelling task as
-            numbered steps with the real menu paths and hotkeys for the
-            Blender you are running. Nothing is changed in your scene.
-  Build   - asks for a bpy script that makes what you described. The
-            script lands in the Text Editor as "RG Script" and runs only
-            when you press Run, as one undo step. If it errors, "Fix it"
-            sends the traceback back and asks for a corrected script.
+  Guide me       - coaches you through making it yourself, one step at a
+                   time. "Show me where" moves your mouse pointer to the
+                   editor the step happens in (and opens the right
+                   Properties tab); it watches the scene and ticks each
+                   step off as soon as you have done it; "Do it for me"
+                   does a step you are stuck on, undoable with Ctrl+Z.
+  Make it for me - builds the model itself: writes a script, runs it,
+                   fixes its own errors from the traceback, then looks at
+                   the resulting scene and corrects it - up to four model
+                   calls, each one undo step. A script that reaches
+                   outside Blender is never run without you.
+  Explain        - the same task as written numbered steps, with real
+                   menu paths and hotkeys for the Blender you are running.
+  Write script   - a bpy script in the Text Editor as "RG Script", run
+                   only when you press Run. "Fix it" sends an error back.
   Lag     - measures the scene locally (no model, no network): triangle
             counts before and after modifiers, subdivision levels, big
             textures, particle counts, sample settings. Each finding that
@@ -38,7 +46,7 @@ at the repository root.
 bl_info = {
     "name": "RandomGenerals Assistant",
     "author": "RandomGenerals",
-    "version": (1, 0, 0),
+    "version": (1, 1, 0),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar (N) > RandomGenerals",
     "description": "AI tutor and model builder, plus a scene lag doctor",
@@ -150,8 +158,144 @@ FIX_REQUEST = (
     "corrected script, following the same rules."
 )
 
+GUIDE_PROMPT = _COMMON + (
+    "MODE: GUIDE. You are coaching the user live, one step at a time, "
+    "while they do the work in Blender. The add-on shows one step, can "
+    "move their mouse pointer to the editor it happens in, can do the "
+    "step for them if they ask, and watches the scene to tick the step "
+    "off the moment they have done it. Reply with ONLY a JSON object, no "
+    "prose and no code fence:\n"
+    '{{"title": "short name of what they will make",\n'
+    ' "steps": [\n'
+    '  {{"say": "what to do and why, one or two sentences",\n'
+    '   "keys": "the hotkey or menu path, e.g. Shift+A > Mesh > Cube",\n'
+    '   "area": "VIEW_3D | PROPERTIES | OUTLINER | NODE_EDITOR | '
+    'TEXT_EDITOR | TIMELINE",\n'
+    '   "tab": "for PROPERTIES only: OBJECT | MODIFIER | MATERIAL | DATA '
+    '| RENDER | WORLD | PHYSICS | PARTICLES | CONSTRAINT | OUTPUT",\n'
+    '   "mode": "OBJECT or EDIT - the mode the step happens in",\n'
+    '   "check": "ONE Python expression, True once the step is done",\n'
+    '   "do": "Python that does this step for them"}}\n'
+    " ]}}\n"
+    "Rules: 4 to 12 small steps, each one action. `check` is evaluated "
+    "every second with only `bpy`, `C` (bpy.context) and `D` (bpy.data) "
+    "available and must only READ state - no bpy.ops, no assignments, no "
+    "imports - e.g. \"'Mug' in D.objects\" or \"C.object and "
+    "any(m.type == 'BEVEL' for m in C.object.modifiers)\". Make checks "
+    "forgiving (the user may name things differently: prefer checking "
+    "the active object's type or modifiers over an exact name). Leave "
+    "`check` empty for a step that cannot be detected, like orbiting "
+    "the view. `do` uses bpy.data / bmesh where it can, never touches "
+    "files or the network, and must work on the scene as the earlier "
+    "steps left it."
+)
+
+REVIEW_REQUEST = (
+    "Your script ran without errors. This is the scene now:\n\n{scene}\n\n"
+    "Compare it with what I asked for: {request}\n"
+    "If it is right, reply with the single word DONE on the first line "
+    "and one short sentence on what was made. If something is missing "
+    "or wrong (wrong proportions, parts not joined, nothing visible, "
+    "objects at the origin on top of each other), send ONE corrected "
+    "full script that fixes the scene as it is now - it runs on top of "
+    "it, so remove or edit what you already made instead of making "
+    "duplicates."
+)
+
 MODE_PROMPTS = {"TEACH": TEACH_PROMPT, "BUILD": BUILD_PROMPT,
-                "LAG": LAG_PROMPT}
+                "LAG": LAG_PROMPT, "GUIDE": GUIDE_PROMPT,
+                "AGENT": BUILD_PROMPT}
+
+# Make it for me: at most this many model calls per request - the first
+# script, fixes for scripts that error, and one look at the result. Each
+# call costs credits and a slice of the per-minute budget, and a model
+# that has not got it right in four goes is not going to on the fifth.
+MAX_AGENT_ROUNDS = 4
+GUIDE_AREAS = {"VIEW_3D", "PROPERTIES", "OUTLINER", "NODE_EDITOR",
+               "TEXT_EDITOR", "TIMELINE", "DOPESHEET_EDITOR",
+               "IMAGE_EDITOR"}
+MAX_GUIDE_STEPS = 20
+
+
+def parse_guide(reply):
+    """The step list from a GUIDE reply, or None.
+
+    Models asked for bare JSON still wrap it in a fence or a sentence
+    often enough that parsing only a perfect reply would make the mode
+    fail half the time, so this takes the outermost {...} in the text.
+    """
+    text = reply or ""
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        data = json.loads(text[start:end + 1])
+    except ValueError:
+        return None
+    steps = []
+    for raw in (data.get("steps") or [])[:MAX_GUIDE_STEPS]:
+        if not isinstance(raw, dict) or not str(raw.get("say", "")).strip():
+            continue
+        area = str(raw.get("area") or "VIEW_3D").upper()
+        check = str(raw.get("check") or "").strip()
+        steps.append({
+            "say": str(raw["say"]).strip(),
+            "keys": str(raw.get("keys") or "").strip(),
+            "area": area if area in GUIDE_AREAS else "VIEW_3D",
+            "tab": str(raw.get("tab") or "").strip().upper(),
+            "mode": str(raw.get("mode") or "").strip().upper(),
+            # A check that could change the scene is dropped here, once,
+            # rather than refused every second by the watcher.
+            "check": check if check_is_safe(check) else "",
+            "do": str(raw.get("do") or "").strip(),
+        })
+    if not steps:
+        return None
+    return {"title": str(data.get("title") or "Guide").strip()[:60],
+            "steps": steps}
+
+
+_CHECK_FORBIDDEN = re.compile(
+    r"__|\bimport\b|\bops\b|\bexec\b|\beval\b|\bopen\b|\bcompile\b|"
+    r"\bglobals\b|\blocals\b|\bgetattr\b|\bsetattr\b|\bdelattr\b|"
+    r"\blambda\b|:=|\.remove\b|\.new\b|\.clear\b|\.link\b|\.unlink\b|"
+    r"\.write\b|\.update\b|\.select_set\b|\.hide_set\b|\bdel\b")
+
+
+def check_is_safe(expr):
+    """Whether a step's done-check only reads the scene.
+
+    It runs every second without asking, so it is held to a much
+    stricter rule than a script the user chooses to run: one expression,
+    no operators, no calls that create, delete or change anything.
+    """
+    if not expr or len(expr) > 400 or "\n" in expr:
+        return False
+    if _CHECK_FORBIDDEN.search(expr):
+        return False
+    try:
+        compile(expr, "<check>", "eval")
+    except SyntaxError:
+        return False
+    return True
+
+
+_CHECK_BUILTINS = {"len": len, "any": any, "all": all, "abs": abs,
+                   "min": min, "max": max, "round": round, "sum": sum,
+                   "bool": bool, "str": str, "int": int, "float": float,
+                   "True": True, "False": False, "None": None}
+
+
+def evaluate_check(expr, namespace):
+    """True/False for a done-check. Anything that raises is not done."""
+    if not check_is_safe(expr):
+        return False
+    try:
+        env = dict(namespace)
+        env["__builtins__"] = _CHECK_BUILTINS
+        return bool(eval(compile(expr, "<check>", "eval"), env))
+    except Exception:                                   # noqa: BLE001
+        return False
 
 
 def build_messages(mode, request_text, scene_summary, history, version):
@@ -277,10 +421,11 @@ def call_api(server, api_key, messages, timeout=180):
                                     context=context) as res:
             data = json.loads(res.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", "replace")
         try:
-            message = json.loads(e.read().decode("utf-8"))["error"]["message"]
+            message = json.loads(raw)["error"]["message"]
         except Exception:                               # noqa: BLE001
-            message = "The server answered %d." % e.code
+            message = _http_failure(e.code, raw, url)
         raise ApiError(message) from None
     except urllib.error.URLError as e:
         raise ApiError("Could not reach %s (%s)." % (url, e.reason)) from None
@@ -296,6 +441,30 @@ def call_api(server, api_key, messages, timeout=180):
     if not text.strip():
         raise ApiError("The model sent an empty reply. Try again.")
     return text
+
+
+def _http_failure(code, body, url):
+    """A sentence for an HTTP error that did not come from the app.
+
+    The app always answers /v1 errors as JSON, so a non-JSON error came
+    from something in front of it - and those are the ones a bare "the
+    server answered 403" leaves nobody able to fix.
+    """
+    if code == 403 and "1010" in body:
+        # Measured against the live site: Cloudflare answers the default
+        # Python-urllib agent with 403 "error code: 1010". This add-on
+        # sends its own agent, so reaching here means something between
+        # Blender and the site replaced it.
+        return ("Cloudflare blocked the request as an automated browser "
+                "(error 1010). A proxy or VPN on this computer may be "
+                "changing requests - try without it.")
+    if code == 404:
+        return ("%s does not exist on that server. Check the server "
+                "address in the add-on's preferences." % url)
+    if code in (502, 503, 504, 520, 521, 522, 523, 524):
+        return ("The site is not answering right now (%d). Try again in "
+                "a minute." % code)
+    return "The server answered %d." % code
 
 
 # ------------------------------------------------------------------ #
@@ -531,7 +700,7 @@ def _prefs(context):
 # main thread picks it up, because bpy may only be touched from there.
 _results = queue.Queue()
 _state = {"busy": False, "status": "", "history": [], "last_mode": None,
-          "last_error": None, "findings": []}
+          "last_error": None, "findings": [], "guide": None, "agent": None}
 
 
 def _tag_redraw():
@@ -574,6 +743,7 @@ def _poll():
     _state["busy"] = False
     if kind == "error":
         _state["status"] = payload
+        _state["agent"] = None
         _tag_redraw()
         return None
     if remember:
@@ -583,6 +753,15 @@ def _poll():
         ])
         del _state["history"][:-HISTORY_TURNS]
     reply = _text(REPLY_TEXT, payload)
+    handler = {"GUIDE": _on_guide, "AGENT": _on_agent}.get(mode)
+    if handler:
+        handler(payload)
+        _tag_redraw()
+        # Make it for me sends its next request from inside the handler,
+        # while this timer is still registered - so _start_request did
+        # not register another, and returning None here would strand
+        # that reply in the queue forever.
+        return 0.3 if _state["busy"] else None
     script = extract_script(payload) if mode == "BUILD" else None
     if script:
         _text(SCRIPT_TEXT, script)
@@ -600,6 +779,231 @@ def _poll():
         pass
     _tag_redraw()
     return None
+
+
+# ------------------------------------------------------------------ #
+# Running generated code
+# ------------------------------------------------------------------ #
+
+def _view3d_override():
+    """A window/area/region for the first 3D Viewport, or {}.
+
+    Generated scripts are told to prefer bpy.data, but bpy.ops is what
+    most tutorials use, and an operator run from a timer or the sidebar
+    has no 3D Viewport in its context and fails with "context is
+    incorrect". Running inside this override gives it one.
+    """
+    wm = bpy.context.window_manager
+    for window in wm.windows:
+        for area in window.screen.areas:
+            if area.type != "VIEW_3D":
+                continue
+            region = next((r for r in area.regions if r.type == "WINDOW"),
+                          None)
+            if region:
+                return {"window": window, "screen": window.screen,
+                        "area": area, "region": region}
+    return {}
+
+
+def run_code(code, label, push_undo=True):
+    """Run generated code on the main thread. -> None, or the traceback.
+
+    One undo step whichever way it was started, so Ctrl+Z always takes
+    back exactly what the assistant did. An operator with the UNDO flag
+    makes its own step, so it passes push_undo=False.
+    """
+    obj = bpy.context.view_layer.objects.active
+    if obj is not None and obj.mode != "OBJECT":
+        try:
+            bpy.ops.object.mode_set(mode="OBJECT")
+        except RuntimeError:
+            pass
+    override = _view3d_override()
+    try:
+        compiled = compile(code, label, "exec")
+        namespace = {"__name__": "__main__", "bpy": bpy}
+        if override and hasattr(bpy.context, "temp_override"):
+            with bpy.context.temp_override(**override):
+                exec(compiled, namespace)
+        else:
+            exec(compiled, namespace)
+    except Exception:                                   # noqa: BLE001
+        return traceback.format_exc(limit=4)
+    finally:
+        if push_undo:
+            try:
+                bpy.ops.ed.undo_push(message="RandomGenerals: " + label)
+            except RuntimeError:
+                pass    # no undo stack in background mode
+    return None
+
+
+# ------------------------------------------------------------------ #
+# Make it for me: write, run, fix, look, without a click per step
+# ------------------------------------------------------------------ #
+
+def _scene_summary():
+    try:
+        return stats_summary(collect_stats(bpy.context))
+    except Exception:                                   # noqa: BLE001
+        return ""
+
+
+def _agent_send(request_text, summary=""):
+    agent = _state["agent"]
+    agent["rounds"] += 1
+    _state["status"] = "%s (step %d of up to %d)" % (
+        agent["phase"], agent["rounds"], MAX_AGENT_ROUNDS)
+    _start_request(bpy.context, "AGENT", request_text, summary, True)
+
+
+def _on_agent(reply):
+    agent = _state["agent"]
+    if agent is None:
+        return
+    if agent["reviewing"] and reply.strip().upper().startswith("DONE"):
+        done = reply.strip()[4:].strip(" :-\n") or "Finished."
+        if done[-1] not in ".!":
+            done += "."
+        _state["agent"] = None
+        _state["status"] = "Done: %s Ctrl+Z undoes each step." % done
+        return
+    script = extract_script(reply)
+    if not script:
+        _state["agent"] = None
+        _state["status"] = ("The assistant answered without a script - see "
+                            "'%s'." % REPLY_TEXT)
+        return
+    _text(SCRIPT_TEXT, script)
+    risky = risky_lines(script)
+    if risky:
+        # Never run unattended. It is still one click away, through the
+        # same confirmation Run script always shows.
+        _state["agent"] = None
+        _state["status"] = ("Stopped: line %d %s. Read '%s', then press Run "
+                            "if you trust it." % (risky[0][0], risky[0][1],
+                                                  SCRIPT_TEXT))
+        return
+    error = run_code(script, "Make it (step %d)" % agent["rounds"])
+    if error:
+        _state["last_error"] = error
+        if agent["rounds"] >= MAX_AGENT_ROUNDS:
+            _state["agent"] = None
+            _state["status"] = ("Still failing after %d tries. Press Fix it, "
+                                "or ask differently." % agent["rounds"])
+            return
+        agent["phase"] = "Fixing an error"
+        _agent_send(FIX_REQUEST.format(version=_version(),
+                                       error=error[-2000:]))
+        return
+    _state["last_error"] = None
+    if agent["reviewing"] or agent["rounds"] >= MAX_AGENT_ROUNDS:
+        _state["agent"] = None
+        _state["status"] = "Done. Ctrl+Z undoes each step."
+        return
+    agent["reviewing"] = True
+    agent["phase"] = "Checking the result"
+    _agent_send(REVIEW_REQUEST.format(scene=_scene_summary(),
+                                      request=agent["request"]))
+
+
+def start_agent(request_text):
+    _state["agent"] = {"request": request_text, "rounds": 0,
+                       "reviewing": False, "phase": "Writing a script"}
+    _agent_send(request_text, _scene_summary())
+
+
+# ------------------------------------------------------------------ #
+# Guide me: one step at a time, watched, pointed at, or done for you
+# ------------------------------------------------------------------ #
+
+def _on_guide(reply):
+    guide = parse_guide(reply)
+    if not guide:
+        _state["status"] = ("Could not read the steps from the answer - see "
+                            "'%s', or try again." % REPLY_TEXT)
+        return
+    guide["index"] = 0
+    guide["done"] = [False] * len(guide["steps"])
+    _state["guide"] = guide
+    _state["status"] = "%s: %d steps. Do each one - it ticks itself off." % (
+        guide["title"], len(guide["steps"]))
+    if not bpy.app.timers.is_registered(_guide_tick):
+        bpy.app.timers.register(_guide_tick, first_interval=1.0)
+
+
+def guide_step():
+    guide = _state.get("guide")
+    if not guide:
+        return None
+    return guide["steps"][guide["index"]]
+
+
+def guide_move(delta):
+    guide = _state.get("guide")
+    if not guide:
+        return
+    guide["index"] = max(0, min(len(guide["steps"]) - 1,
+                                guide["index"] + delta))
+
+
+def _guide_tick():
+    """Watch the scene and tick the current step off once it is done.
+
+    Runs every second while a guide is open. The check is a read-only
+    expression (check_is_safe), so this never changes anything itself.
+    """
+    guide = _state.get("guide")
+    if not guide:
+        return None
+    i = guide["index"]
+    step = guide["steps"][i]
+    if not guide["done"][i] and step["check"]:
+        if evaluate_check(step["check"], {"bpy": bpy, "C": bpy.context,
+                                          "D": bpy.data}):
+            guide["done"][i] = True
+            if i + 1 < len(guide["steps"]):
+                guide["index"] = i + 1
+                _state["status"] = "Step %d done - on to step %d." % (
+                    i + 1, i + 2)
+            else:
+                _state["status"] = "All done - that is %s." % guide["title"]
+            _tag_redraw()
+    return 1.0
+
+
+def point_at(step):
+    """Move the mouse pointer to where the step happens. -> sentence.
+
+    Blender will say where an editor is, not where a button inside it
+    is, so this points at the editor (and opens the right Properties
+    tab), and the step's text says which button.
+    """
+    wm = bpy.context.window_manager
+    for window in wm.windows:
+        for area in window.screen.areas:
+            if area.type != step["area"]:
+                continue
+            if step["area"] == "PROPERTIES" and step["tab"]:
+                try:
+                    area.spaces.active.context = step["tab"]
+                except (TypeError, AttributeError):
+                    pass
+            window.cursor_warp(area.x + area.width // 2,
+                               area.y + area.height // 2)
+            area.tag_redraw()
+            return "Pointer moved to the %s." % _AREA_NAMES.get(
+                step["area"], step["area"])
+    return ("There is no %s open. Change an editor's type in its top-left "
+            "menu." % _AREA_NAMES.get(step["area"], step["area"]))
+
+
+_AREA_NAMES = {"VIEW_3D": "3D Viewport", "PROPERTIES": "Properties editor",
+               "OUTLINER": "Outliner", "NODE_EDITOR": "Shader Editor",
+               "TEXT_EDITOR": "Text Editor", "TIMELINE": "Timeline",
+               "DOPESHEET_EDITOR": "Dope Sheet",
+               "IMAGE_EDITOR": "Image Editor"}
 
 
 if bpy is not None:
@@ -627,8 +1031,12 @@ if bpy is not None:
         bl_label = "Ask"
 
         mode: EnumProperty(items=[
-            ("TEACH", "Teach me", "Step-by-step instructions"),
-            ("BUILD", "Build it", "Write a script that builds it"),
+            ("GUIDE", "Guide me", "Coach me through it one step at a "
+             "time, and tick each step off as I do it"),
+            ("TEACH", "Explain", "Written step-by-step instructions"),
+            ("BUILD", "Write script", "Write a script I can read, then run"),
+            ("AGENT", "Make it for me", "Write, run, fix and check a "
+             "script until the model is built"),
         ])
 
         def execute(self, context):
@@ -639,11 +1047,13 @@ if bpy is not None:
             if not request_text:
                 self.report({"WARNING"}, "Type what you want first.")
                 return {"CANCELLED"}
-            try:
-                summary = stats_summary(collect_stats(context))
-            except Exception:                           # noqa: BLE001
-                summary = ""
-            _start_request(context, self.mode, request_text, summary, True)
+            if self.mode == "AGENT":
+                start_agent(request_text)
+                return {"FINISHED"}
+            if self.mode == "GUIDE":
+                _state["guide"] = None
+            _start_request(context, self.mode, request_text,
+                           _scene_summary(), True)
             return {"FINISHED"}
 
     class RG_OT_run_script(bpy.types.Operator):
@@ -675,17 +1085,8 @@ if bpy is not None:
             text = bpy.data.texts.get(SCRIPT_TEXT)
             if not text:
                 return {"CANCELLED"}
-            code = text.as_string()
-            if bpy.context.object and bpy.context.object.mode != "OBJECT":
-                try:
-                    bpy.ops.object.mode_set(mode="OBJECT")
-                except RuntimeError:
-                    pass
-            try:
-                exec(compile(code, SCRIPT_TEXT, "exec"),
-                     {"__name__": "__main__", "bpy": bpy})
-            except Exception:                           # noqa: BLE001
-                err = traceback.format_exc(limit=4)
+            err = run_code(text.as_string(), SCRIPT_TEXT, push_undo=False)
+            if err:
                 _state["last_error"] = err
                 _state["status"] = "The script failed. Press Fix it."
                 self.report({"ERROR"}, err.strip().splitlines()[-1])
@@ -714,6 +1115,67 @@ if bpy is not None:
             _start_request(context, "BUILD", request_text, "", True)
             return {"FINISHED"}
 
+    class RG_OT_guide(bpy.types.Operator):
+        """Move through the guide, point at where a step happens, or do it"""
+        bl_idname = "randomgenerals.guide"
+        bl_label = "Guide"
+        bl_options = {"REGISTER", "UNDO"}
+
+        action: EnumProperty(items=[
+            ("NEXT", "Next", "Go to the next step"),
+            ("BACK", "Back", "Go to the previous step"),
+            ("POINT", "Show me where", "Move the mouse pointer to the "
+             "editor this step happens in"),
+            ("DO", "Do it for me", "Let the assistant do this step - "
+             "Ctrl+Z takes it back"),
+            ("CLOSE", "Close", "Close the guide"),
+        ])
+
+        @classmethod
+        def poll(cls, context):
+            return bool(_state.get("guide"))
+
+        def execute(self, context):
+            guide = _state["guide"]
+            if self.action in ("NEXT", "BACK"):
+                guide_move(1 if self.action == "NEXT" else -1)
+                return {"FINISHED"}
+            if self.action == "CLOSE":
+                _state["guide"] = None
+                _state["status"] = ""
+                return {"FINISHED"}
+            step = guide_step()
+            if self.action == "POINT":
+                _state["status"] = point_at(step)
+                return {"FINISHED"}
+            if not step["do"]:
+                self.report({"WARNING"}, "This step has to be done by hand.")
+                return {"CANCELLED"}
+            risky = risky_lines(step["do"])
+            if risky:
+                # Same rule as Make it for me: never unattended. It goes
+                # where Run script can show it and ask.
+                _text(SCRIPT_TEXT, step["do"] + "\n")
+                _state["status"] = ("That step's code %s - it is in '%s' "
+                                    "for you to read and Run." % (
+                                        risky[0][1], SCRIPT_TEXT))
+                return {"CANCELLED"}
+            err = run_code(step["do"], "guide step %d" % (
+                guide["index"] + 1), push_undo=False)
+            if err:
+                _state["last_error"] = err
+                _text(SCRIPT_TEXT, step["do"] + "\n")
+                _state["status"] = ("That did not work (%s). Try the step "
+                                    "by hand, or press Fix it." %
+                                    err.strip().splitlines()[-1][:80])
+                return {"CANCELLED"}
+            i = guide["index"]
+            guide["done"][i] = True
+            guide_move(1)
+            _state["status"] = "Did step %d for you. Ctrl+Z undoes it." % (
+                i + 1)
+            return {"FINISHED"}
+
     class RG_OT_new_chat(bpy.types.Operator):
         """Forget the conversation so far"""
         bl_idname = "randomgenerals.new_chat"
@@ -721,6 +1183,8 @@ if bpy is not None:
 
         def execute(self, context):
             _state["history"].clear()
+            _state["guide"] = None
+            _state["agent"] = None
             _state["status"] = "Started fresh."
             return {"FINISHED"}
 
@@ -841,18 +1305,29 @@ if bpy is not None:
                 box.label(text="Site: Settings > Blender > Create key")
 
             box = layout.box()
-            box.label(text="Ask", icon="QUESTION")
+            box.label(text="What do you want to make?", icon="QUESTION")
             box.prop(context.window_manager, "rg_prompt", text="")
+            col = box.column(align=True)
+            col.enabled = not _state["busy"]
+            col.scale_y = 1.3
+            col.operator("randomgenerals.ask", text="Guide me through it",
+                         icon="HAND").mode = "GUIDE"
+            col.operator("randomgenerals.ask", text="Make it for me",
+                         icon="MESH_MONKEY").mode = "AGENT"
             row = box.row(align=True)
             row.enabled = not _state["busy"]
-            row.operator("randomgenerals.ask", text="Teach me",
+            row.operator("randomgenerals.ask", text="Explain",
                          icon="HELP").mode = "TEACH"
-            row.operator("randomgenerals.ask", text="Build it",
-                         icon="MESH_MONKEY").mode = "BUILD"
+            row.operator("randomgenerals.ask", text="Write script",
+                         icon="TEXT").mode = "BUILD"
             row = box.row(align=True)
             row.operator("randomgenerals.run_script", icon="PLAY")
             row.operator("randomgenerals.fix", icon="TOOL_SETTINGS")
             box.operator("randomgenerals.new_chat", icon="FILE_REFRESH")
+
+            guide = _state.get("guide")
+            if guide:
+                _draw_guide(layout, guide)
 
             box = layout.box()
             box.label(text="Reduce lag", icon="SORTTIME")
@@ -874,6 +1349,44 @@ if bpy is not None:
                 _wrap(layout, _state["status"],
                       "TIME" if _state["busy"] else "BLANK1")
 
+    def _draw_guide(layout, guide):
+        box = layout.box()
+        i, steps = guide["index"], guide["steps"]
+        step = steps[i]
+        head = box.row()
+        head.label(text="%s - step %d of %d" % (guide["title"], i + 1,
+                                                len(steps)), icon="HAND")
+        head.operator("randomgenerals.guide", text="",
+                      icon="X").action = "CLOSE"
+        _wrap(box, step["say"], "CHECKMARK" if guide["done"][i] else "RIGHTARROW")
+        if step["keys"]:
+            _wrap(box, step["keys"], "EVENT_SHIFT"
+                  if "shift" in step["keys"].lower() else "MOUSE_LMB")
+        if step["mode"] in ("OBJECT", "EDIT"):
+            box.label(text="In %s Mode (Tab switches)" % step["mode"].title(),
+                      icon="OBJECT_DATAMODE" if step["mode"] == "OBJECT"
+                      else "EDITMODE_HLT")
+        if not step["check"]:
+            box.label(text="Press Next when you have done this.",
+                      icon="INFO")
+        row = box.row(align=True)
+        row.operator("randomgenerals.guide", text="Show me where",
+                     icon="RESTRICT_SELECT_OFF").action = "POINT"
+        sub = row.row(align=True)
+        sub.enabled = bool(step["do"])
+        sub.operator("randomgenerals.guide", text="Do it for me",
+                     icon="PLAY").action = "DO"
+        row = box.row(align=True)
+        back = row.row(align=True)
+        back.enabled = i > 0
+        back.operator("randomgenerals.guide", text="Back",
+                      icon="TRIA_LEFT").action = "BACK"
+        nxt = row.row(align=True)
+        nxt.enabled = i + 1 < len(steps)
+        nxt.operator("randomgenerals.guide", text="Next",
+                     icon="TRIA_RIGHT").action = "NEXT"
+        box.label(text="%d of %d done" % (sum(guide["done"]), len(steps)))
+
     _FIX_LABELS = {"SUBDIV": "Cap viewport subdivision",
                    "SIMPLIFY": "Turn on Simplify",
                    "SAMPLES": "Lower viewport samples",
@@ -893,7 +1406,7 @@ if bpy is not None:
             col.label(text=line, icon=icon if first else "BLANK1")
 
     _CLASSES = (RG_Preferences, RG_OT_ask, RG_OT_run_script, RG_OT_fix,
-                RG_OT_new_chat, RG_OT_analyze_lag, RG_OT_explain_lag,
+                RG_OT_guide, RG_OT_new_chat, RG_OT_analyze_lag, RG_OT_explain_lag,
                 RG_OT_lag_fix, RG_PT_panel)
 
 
@@ -906,8 +1419,9 @@ def register():
 
 
 def unregister():
-    if bpy.app.timers.is_registered(_poll):
-        bpy.app.timers.unregister(_poll)
+    for timer in (_poll, _guide_tick):
+        if bpy.app.timers.is_registered(timer):
+            bpy.app.timers.unregister(timer)
     del bpy.types.WindowManager.rg_prompt
     for cls in reversed(_CLASSES):
         bpy.utils.unregister_class(cls)

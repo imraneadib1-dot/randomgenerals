@@ -683,6 +683,12 @@ appmod.PROVIDER_TURNS["openrouter"] = lambda *a, **k: ({"content": "", "finish_r
 # argument /api/providers passes; give it one.
 appmod.ollama_provider = lambda plan=None: {"id": "ollama", "label": "local", "available": True,
                                             "models": ["fake-local"], "model_info": [], "note": ""}
+# And Groq, the chat bay's channel. Without this the check below passed
+# only on a machine whose .env held a GROQ_API_KEY and failed everywhere
+# else - a result about the machine, not the routing.
+appmod.groq_api.configured = lambda: True
+appmod.groq_api.models = lambda: ["openai/gpt-oss-120b"]
+appmod.groq_api.budget_state = lambda: (8000, 0.0)
 rec = client.get("/api/providers").get_json()["recommended"]
 check("the code bay is recommended DeepSeek V3 on OpenRouter",
       rec.get("code"), {"provider": "openrouter", "model": "deepseek/deepseek-v3.2"})

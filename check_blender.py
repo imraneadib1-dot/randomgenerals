@@ -57,6 +57,7 @@ SCRIPT_REPLY = (
 
 class FakeV1(http.server.BaseHTTPRequestHandler):
     seen = []
+    replies = []        # queued answers; SCRIPT_REPLY once it is empty
 
     def do_POST(self):                                  # noqa: N802
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -66,8 +67,9 @@ class FakeV1(http.server.BaseHTTPRequestHandler):
         if self.headers.get("Authorization") != "Bearer good-key":
             self._send(401, {"error": {"message": "Invalid API key."}})
             return
+        content = FakeV1.replies.pop(0) if FakeV1.replies else SCRIPT_REPLY
         self._send(200, {"choices": [{"message": {
-            "role": "assistant", "content": SCRIPT_REPLY}}]})
+            "role": "assistant", "content": content}}]})
 
     def _send(self, code, obj):
         raw = json.dumps(obj).encode()
@@ -79,6 +81,35 @@ class FakeV1(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, *a):
         pass
+
+
+GUIDE = {"title": "Guide cube", "steps": [
+    {"say": "Add a cube.", "keys": "Shift+A > Mesh > Cube",
+     "area": "VIEW_3D", "mode": "OBJECT",
+     "check": "'GuideCube' in D.objects",
+     "do": "import bpy\nm = bpy.data.meshes.new('GuideCube')\n"
+           "o = bpy.data.objects.new('GuideCube', m)\n"
+           "bpy.context.scene.collection.objects.link(o)\n"
+           "bpy.context.view_layer.objects.active = o"},
+    {"say": "Add a Bevel modifier.", "area": "PROPERTIES", "tab": "MODIFIER",
+     "keys": "Add Modifier > Generate > Bevel",
+     "check": "C.object is not None and any(m.type == 'BEVEL' for m in "
+              "C.object.modifiers)",
+     "do": ""},
+    {"say": "Admire it.", "area": "SPACESHIP",
+     "check": "D.objects.remove(D.objects[0])"},
+]}
+
+
+def wait_reply(rg, polls=1):
+    """Stand in for the timer, which never fires in the bpy module."""
+    import time
+    for _ in range(polls):
+        for _ in range(200):
+            if not rg._results.empty():
+                break
+            time.sleep(0.05)
+        rg._poll()
 
 
 def start_fake():
@@ -168,6 +199,37 @@ def plain_checks():
     check("summary lists the heaviest object first",
           summary.splitlines()[1].startswith("- Sculpt"), True)
 
+    guide = rg.parse_guide("Sure!\n```json\n" + json.dumps(GUIDE) + "\n```")
+    check("guide read out of a fenced, chatty reply",
+          (guide["title"], len(guide["steps"])), ("Guide cube", 3))
+    check("unknown editor falls back to the 3D Viewport",
+          guide["steps"][2]["area"], "VIEW_3D")
+    check("a check that changes the scene is dropped",
+          guide["steps"][2]["check"], "")
+    check("not JSON is no guide", rg.parse_guide("Press Tab."), None)
+    check("no usable steps is no guide",
+          rg.parse_guide('{"steps": [{"keys": "Tab"}]}'), None)
+    for expr, want in (("'Mug' in D.objects", True),
+                       ("C.object and any(m.type == 'BEVEL' for m in "
+                        "C.object.modifiers)", True),
+                       ("bpy.ops.mesh.primitive_cube_add()", False),
+                       ("D.objects.remove(D.objects[0])", False),
+                       ("__import__('os')", False),
+                       ("(x := 1)", False),
+                       ("a = 1", False),
+                       ("", False)):
+        check("check_is_safe(%r)" % expr[:30], rg.check_is_safe(expr), want)
+    check("a check that raises counts as not done",
+          rg.evaluate_check("D.missing.attr", {"D": object()}), False)
+    check("a check cannot reach builtins it was not given",
+          rg.evaluate_check("print('x') or True", {}), False)
+
+    check("Cloudflare 1010 is explained",
+          "1010" in rg._http_failure(403, "error code: 1010", "u"), True)
+    check("404 names the address",
+          "https://x/v1" in rg._http_failure(404, "<html>", "https://x/v1"),
+          True)
+
     url = start_fake()
     reply = rg.call_api(url, "good-key", [{"role": "user", "content": "hi"}])
     check("round trip returns the reply", reply, SCRIPT_REPLY)
@@ -212,6 +274,63 @@ def route_checks():
           True)
     check("settings has the create-key button",
           'id="setApiKeyCreate"' in page, True)
+
+    # /v1 end to end with a real account and key, the way the add-on
+    # calls it. Only the model is stubbed.
+    import providers
+    import time as _time
+    client.post("/api/auth/signup", json={
+        "email": "blender@example.com", "password": "password123",
+        "name": "Blender Test", "age": 30})
+    key = client.post("/api/account/api-key").get_json()["api_key"]
+    appmod._v1_route = lambda requested: ("groq", "openai/gpt-oss-120b")
+    appmod._failover_chain = lambda provider, mode: []
+    calls = []
+
+    def streamer(refusals):
+        def stream(model, history, options=None, usage=None, **kw):
+            calls.append(_time.time())
+            if len(calls) <= refusals:
+                raise providers.RateLimited("per-minute budget spent")
+            if usage is not None:
+                usage["eval_count"] = 10
+            yield "```python\nimport bpy\n```"
+        return stream
+
+    def ask():
+        return client.post("/v1/chat/completions", json={
+            "model": "randomgenerals", "stream": False,
+            "messages": [{"role": "system", "content": "s"},
+                         {"role": "user", "content": "a cube"}]},
+            headers={"Authorization": "Bearer " + key})
+
+    check("a wrong key is refused", client.post(
+        "/v1/chat/completions", json={"messages": [
+            {"role": "user", "content": "x"}]},
+        headers={"Authorization": "Bearer rg-nope"}).status_code, 401)
+    appmod.PROVIDER_STREAMERS["groq"] = streamer(0)
+    res = ask()
+    check("a real key gets an answer", (res.status_code, "import bpy" in
+          res.get_json()["choices"][0]["message"]["content"]), (200, True))
+
+    # The bug: a spent per-minute budget failed the request at once,
+    # where the chat bay waits for the refill.
+    calls.clear()
+    appmod.groq_api.budget_state = lambda: (0, 1.0)
+    appmod.PROVIDER_STREAMERS["groq"] = streamer(1)
+    res = ask()
+    check("a short rate limit is waited out, not failed",
+          (res.status_code, len(calls)), (200, 2))
+    check("and the wait was about the refill time",
+          0.9 < calls[1] - calls[0] < 5, True)
+
+    calls.clear()
+    appmod.groq_api.budget_state = lambda: (0, 600.0)
+    appmod.PROVIDER_STREAMERS["groq"] = streamer(5)
+    res = ask()
+    check("a long one is reported at once, with when to retry",
+          (res.status_code, len(calls),
+           "refills" in res.get_json()["error"]["message"]), (503, 1, True))
 
 
 # ------------------------------------------------------------------ #
@@ -331,6 +450,128 @@ def blender_checks():
     rg._poll()
     check("a refused key shows the server's message",
           rg._state["status"], "Invalid API key.")
+
+    # ---- Guide me ----
+    prefs.api_key = "good-key"
+    FakeV1.replies[:] = [json.dumps(GUIDE)]
+    bpy.context.window_manager.rg_prompt = "a bevelled cube"
+    bpy.ops.randomgenerals.ask(mode="GUIDE")
+    wait_reply(rg)
+    guide = rg._state["guide"]
+    check("guide opened on step 1", (guide is not None and guide["index"]),
+          0)
+    check("guide request used the guide prompt",
+          "MODE: GUIDE" in FakeV1.seen[-1]["body"]["messages"][0]["content"],
+          True)
+    rg._guide_tick()
+    check("an undone step is not ticked", guide["done"][0], False)
+    point = rg.point_at(rg.guide_step())
+    check("pointing with no window says so, does not crash",
+          point.startswith(("There is no", "Pointer moved")), True)
+    bpy.ops.randomgenerals.guide(action="DO")
+    check("Do it for me did the step and moved on",
+          ("GuideCube" in bpy.data.objects, guide["index"], guide["done"][0]),
+          (True, 1, True))
+    result = bpy.ops.randomgenerals.guide(action="DO")
+    check("a step with no code is left to the user", result, {"CANCELLED"})
+    # The user does step 2 by hand; the watcher notices.
+    bpy.data.objects["GuideCube"].modifiers.new("Bevel", "BEVEL")
+    rg._guide_tick()
+    check("doing it by hand ticks it off and advances",
+          (guide["done"][1], guide["index"]), (True, 2))
+    rg._guide_tick()
+    check("the unsafe check never ran", len(bpy.data.objects) > 0 and
+          "GuideCube" in bpy.data.objects, True)
+    bpy.ops.randomgenerals.guide(action="BACK")
+    check("Back goes back", guide["index"], 1)
+    bpy.ops.randomgenerals.guide(action="CLOSE")
+    check("Close closes", rg._state["guide"], None)
+
+    # ---- Make it for me: error -> fix -> look -> done ----
+    broken = "```python\nimport bpy\nbpy.data.objects['Missing'].name\n```"
+    fixed = ("```python\nimport bpy\nm = bpy.data.meshes.new('Robot')\n"
+             "o = bpy.data.objects.new('Robot', m)\n"
+             "bpy.context.scene.collection.objects.link(o)\n```")
+    FakeV1.replies[:] = [broken, fixed, "DONE Built a robot."]
+    before = len(FakeV1.seen)
+    bpy.context.window_manager.rg_prompt = "a robot"
+    bpy.ops.randomgenerals.ask(mode="AGENT")
+    wait_reply(rg, polls=3)
+    check("made it: fixed its own error, checked, finished",
+          ("Robot" in bpy.data.objects, rg._state["agent"],
+           rg._state["status"]),
+          (True, None, "Done: Built a robot. Ctrl+Z undoes each step."))
+    sent = [s["body"]["messages"][-1]["content"]
+            for s in FakeV1.seen[before:]]
+    check("three calls: ask, fix with the traceback, review with the scene",
+          (len(sent), "KeyError" in sent[1], "Robot" in sent[2]),
+          (3, True, True))
+
+    FakeV1.replies[:] = ["```python\nimport os\nos.remove('x')\n```"]
+    bpy.ops.randomgenerals.ask(mode="AGENT")
+    wait_reply(rg)
+    check("a risky script is never run unattended",
+          (rg._state["agent"], rg._state["status"].startswith("Stopped")),
+          (None, True))
+
+    FakeV1.replies[:] = [broken] * 5
+    bpy.ops.randomgenerals.ask(mode="AGENT")
+    wait_reply(rg, polls=rg.MAX_AGENT_ROUNDS)
+    check("gives up after MAX_AGENT_ROUNDS",
+          (rg._state["agent"], "Still failing" in rg._state["status"]),
+          (None, True))
+
+    # A bad icon name raises inside draw() and blanks the whole panel,
+    # which nothing above would notice without a screen to draw on.
+    import re as _re
+    valid = set(bpy.types.UILayout.bl_rna.functions["label"]
+                .parameters["icon"].enum_items.keys())
+    with open(ADDON, encoding="utf-8") as f:
+        src = f.read()
+    used = set(_re.findall(r'icon="([A-Z0-9_]+)"', src))
+    used |= set(_re.findall(r'"([A-Z0-9_]+)" if', src))
+    used |= set(_re.findall(r'else "([A-Z0-9_]+)"', src))
+    used |= set(_re.findall(r'get\(\s*severity, "([A-Z0-9_]+)"\)', src))
+    used |= set(_re.findall(r'"(?:high|medium)": "([A-Z0-9_]+)"', src))
+    used -= rg.GUIDE_AREAS      # editor types in ternaries, not icons
+    check("every icon the panel uses exists", sorted(used - valid), [])
+
+    # The panel's draw() itself, with a guide open and lag findings
+    # shown. There is no screen here, so a stand-in layout records every
+    # call - enough to catch a typo or a wrong argument in draw code,
+    # which otherwise only shows up as an empty sidebar.
+    class Op:
+        pass
+
+    class Layout:
+        calls = []
+
+        def __getattr__(self, name):
+            if name in ("box", "row", "column"):
+                return lambda *a, **k: Layout()
+            if name == "operator":
+                def operator(idname, **k):
+                    Layout.calls.append(("operator", idname, k.get("text")))
+                    return Op()
+                return operator
+            return lambda *a, **k: Layout.calls.append((name, k.get("text")))
+
+    FakeV1.replies[:] = [json.dumps(GUIDE)]
+    bpy.ops.randomgenerals.ask(mode="GUIDE")
+    wait_reply(rg)
+    bpy.ops.randomgenerals.analyze_lag()
+    panel = type("P", (), {"layout": Layout()})()
+    try:
+        rg.RG_PT_panel.draw(panel, bpy.context)
+        drew = None
+    except Exception as e:                              # noqa: BLE001
+        drew = repr(e)
+    check("the panel draws with a guide open", drew, None)
+    labels = [c[-1] for c in Layout.calls if c[-1]]
+    check("the guide's step and buttons are on it",
+          all(t in labels for t in ("Guide me through it", "Make it for me",
+                                    "Show me where", "Do it for me",
+                                    "Guide cube - step 1 of 3")), True)
 
     bpy.ops.preferences.addon_disable(module="randomgenerals_blender")
     check("disables cleanly",

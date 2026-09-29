@@ -11,9 +11,11 @@ between conversations, accounts with two-factor authentication, and
 subscriptions through Paddle. It installs as an app from the browser.
 
 A Blender add-on (`blender/`, downloadable from Settings > Blender) puts
-the same assistant in Blender's sidebar: it teaches a model step by step,
-writes a script that builds one, and measures what is making a scene lag
-with one-click, undoable fixes. `check_blender.py` tests it, inside real
+the same assistant in Blender's sidebar: it guides you through a model
+one step at a time (pointing at the editor, ticking steps off as you do
+them), or makes it for you - writing, running, fixing and checking its
+own script - and measures what is making a scene lag, with one-click,
+undoable fixes. `check_blender.py` tests it, inside real
 Blender when `BLENDER_PY` points at a Python with `pip install bpy`.
 
 ---
