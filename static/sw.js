@@ -10,10 +10,15 @@
  * and nothing that is about a particular person.
  *
  * The version string is what expires the old shell. Bump it whenever the
- * cached asset list changes; the activate handler deletes every cache that
- * is not the current one.
+ * cached asset list changes, or how anything is cached; the activate
+ * handler deletes every cache that is not the current one.
+ *
+ * v2: v1 answered every same-origin file from its cache for good,
+ * versioned or not, so an icon, the manifest or a module fetched without
+ * ?v= stayed whatever the first visit got. Only versioned URLs are cache
+ * first now, and moving to v2 throws out everything v1 had pinned.
  */
-const VERSION = "rg-shell-v1";
+const VERSION = "rg-shell-v2";
 
 /* Deliberately short. Anything that can be fetched on demand is fetched on
  * demand - a precache list that mirrors the whole static folder means a
@@ -112,20 +117,31 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Static assets: cache first. They carry a ?v= cache-buster from the
-  // app's asset() helper, so a changed file arrives under a new URL and
-  // never collides with the stored copy.
+  const store = (response) => {
+    if (response.ok && response.type === "basic") {
+      const copy = response.clone();
+      caches.open(VERSION).then((c) => c.put(request, copy));
+    }
+    return response;
+  };
+
+  // Versioned assets: cache first. They carry a ?v= cache-buster from
+  // the app's asset() helper, so a changed file arrives under a new URL
+  // and never collides with the stored copy.
+  if (url.searchParams.has("v")) {
+    event.respondWith(
+      caches.match(request).then((hit) => hit || fetch(request).then(store)),
+    );
+    return;
+  }
+
+  // Anything else: network first, like documents. Nothing in its URL
+  // says when it changed, so a stored copy is only good for offline.
   event.respondWith(
-    caches.match(request).then(
-      (hit) =>
-        hit ||
-        fetch(request).then((response) => {
-          if (response.ok && response.type === "basic") {
-            const copy = response.clone();
-            caches.open(VERSION).then((c) => c.put(request, copy));
-          }
-          return response;
-        }),
-    ),
+    fetch(request)
+      .then(store)
+      .catch(() =>
+        caches.match(request).then((hit) => hit || Response.error()),
+      ),
   );
 });

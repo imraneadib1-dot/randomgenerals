@@ -1656,13 +1656,34 @@ def module_map() -> str:
 
 
 @app.after_request
-def _module_cache_headers(response):
-    """Modules revalidate rather than cache. The import map above is
-    what actually keeps them fresh; this is for the browsers that do
-    not read it, and it costs a 304 per module for them, not a
-    download - Flask sends an ETag with every static file."""
+def _cache_policy(response):
+    """Say how long everything may be kept, rather than letting
+    Cloudflare decide.
+
+    Modules revalidate rather than cache. The import map above is what
+    actually keeps them fresh; this is for the browsers that do not
+    read it, and it costs a 304 per module for them, not a download -
+    Flask sends an ETag with every static file.
+
+    Pages are never stored, anywhere. The page is the one thing no
+    ?v= can version: it is where the versioned URLs come from, so a
+    copy of it kept by the browser, by Cloudflare or by the mobile
+    app's WebView pins every script and stylesheet it names to the
+    build it was rendered by. Pages used to go out with no
+    Cache-Control at all, which leaves the lifetime to whatever the
+    zone's cache settings say. no-store rather than no-cache: a
+    rendered page has no ETag, so revalidating it downloads it anyway,
+    and no-store is the directive no layer treats as a hint.
+
+    JSON is about a person - a balance, a session, a thread - and a
+    shared cache holding one is somebody else's answer. Routes that
+    set their own header (the streams) keep it.
+    """
     if request.path.startswith("/static/js/"):
         response.headers["Cache-Control"] = "no-cache"
+    elif (response.mimetype in ("text/html", "application/json")
+          and "Cache-Control" not in response.headers):
+        response.headers["Cache-Control"] = "no-store"
     return response
 
 
@@ -1702,6 +1723,19 @@ BUILD_ID: str = _read_build_id()
 @app.template_global()
 def build_id() -> str:
     return BUILD_ID
+
+
+@app.route("/api/build")
+def api_build():
+    """Which build is answering, for a page that has been open a while.
+
+    Fresh headers only reach a page when it is loaded, and the app is
+    the kind of page people leave open - a pinned tab, the installed
+    app, the phone app resumed from the background - for days, running
+    whatever build it started with. update.js compares this with the
+    rg-build the page was rendered with, and offers the new one.
+    """
+    return jsonify({"build": BUILD_ID})
 
 
 # ----------------------------------------------------------------------

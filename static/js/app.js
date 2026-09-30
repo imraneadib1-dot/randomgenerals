@@ -28,6 +28,7 @@ import { mountAccount } from "./account.js";
 import { mountConnectors } from "./connectors.js";
 import { mountInstall } from "./install.js";
 import { mountProfile } from "./profile.js";
+import { mountUpdate } from "./update.js";
 import { boot } from "./boot.js";
 import { installErrorReporting } from "./toast.js";
 
@@ -57,6 +58,7 @@ mountAccount();
 mountConnectors();
 mountInstall();
 mountProfile();
+mountUpdate();
 
 // Anything nobody caught becomes a toast, not a console line.
 installErrorReporting();

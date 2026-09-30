@@ -18,8 +18,10 @@
 #      process dead. The site is then down rather than stale, and
 #      nothing said so.
 #
-# This names the branch explicitly, shows what actually moved, and then
-# checks the running site for a string that only exists in the new code.
+# This names the branch explicitly, shows what actually moved, checks
+# the running server is on the new build, then empties Cloudflare's
+# cache and checks the public site is on it too - the site people see
+# is Cloudflare's copy, and it can lag the server by hours.
 
 set -u
 
@@ -144,8 +146,105 @@ if printf '%s' "$BODY" | grep -q "moon-face"; then
     fail=$((fail + 1))
 fi
 
+if [ "$fail" -ne 0 ]; then
+    echo ""
+    echo "The service is up but is serving old markup ($fail checks failed)."
+    echo "Check that the service runs from $APP_DIR:"
+    echo "  systemctl cat $SERVICE | grep -E 'WorkingDirectory|ExecStart'"
+    exit 1
+fi
+
+# ----------------------------------------------------------------------
+# Everything above talks to gunicorn on 127.0.0.1. Nobody else does:
+# visitors reach the site through Cloudflare, which keeps its own
+# copies, so "the server is serving the new build" and "people are
+# getting the new build" are two different claims. This used to prove
+# the first and print DEPLOYED, while the site kept answering with the
+# build before.
+
+# Read one value from .env without sourcing it: .env is the service's
+# EnvironmentFile, not a shell script, and a value with a $ or a space
+# in it would be run rather than read.
+env_value() {
+    grep -E "^$1=" "$APP_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2- \
+        | sed -e 's/\r$//' -e 's/^["'"'"']//' -e 's/["'"'"']$//'
+}
+
+CF_ZONE_ID="${CF_ZONE_ID:-$(env_value CF_ZONE_ID)}"
+CF_PURGE_TOKEN="${CF_PURGE_TOKEN:-$(env_value CF_PURGE_TOKEN)}"
+PUBLIC_URL="${PUBLIC_URL:-$(env_value PUBLIC_SITE_URL)}"
+PUBLIC_URL="${PUBLIC_URL:-https://randomgenerals.com}"
+PUBLIC_PAGE="${PUBLIC_URL%/}/app"
+
 echo ""
-if [ "$fail" -eq 0 ]; then
+echo "== Cloudflare =="
+if [ -n "$CF_ZONE_ID" ] && [ -n "$CF_PURGE_TOKEN" ]; then
+    RESP="$(curl -s --max-time 20 -X POST \
+        "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/purge_cache" \
+        -H "Authorization: Bearer $CF_PURGE_TOKEN" \
+        -H "Content-Type: application/json" \
+        --data '{"purge_everything":true}')"
+    if printf '%s' "$RESP" | grep -q '"success":[[:space:]]*true'; then
+        echo "  purged   : everything Cloudflare had cached for this zone"
+    else
+        echo "  PURGE FAILED - Cloudflare said:"
+        printf '%s\n' "${RESP:-(nothing - api.cloudflare.com did not answer)}" \
+            | head -c 400 | sed 's/^/    /'
+        echo ""
+        echo "  (the token needs Zone / Cache Purge / Purge on this zone)"
+    fi
+else
+    echo "  not purging: CF_ZONE_ID and CF_PURGE_TOKEN are not in .env"
+    echo "  (see .env.example - without them Cloudflare empties its"
+    echo "   cache on its own schedule, not on a deploy)"
+fi
+
+# A purge takes a few seconds to reach every data centre, so the public
+# page is given a little while to catch up before it is called stale.
+PUBLIC_GOT=""
+for i in $(seq 1 10); do
+    PUBLIC_BODY="$(curl -s --max-time 15 "$PUBLIC_PAGE" 2>/dev/null)"
+    PUBLIC_GOT="$(printf '%s' "$PUBLIC_BODY" \
+                  | grep -o 'name="rg-build" content="[^"]*"' \
+                  | sed 's/.*content="//; s/"$//')"
+    [ "$PUBLIC_GOT" = "$WANT" ] && break
+    sleep 3
+done
+
+# What each layer is doing with the page and with the app's entry
+# script, so a stale site can be diagnosed from this output instead of
+# guessed at. cf-cache-status HIT on the page means a Cloudflare rule
+# is caching HTML; the fix is in the dashboard (Caching > Cache Rules),
+# not here.
+show_headers() {
+    curl -s -o /dev/null -D - --max-time 15 "$1" 2>/dev/null \
+        | grep -iE '^(cf-cache-status|cache-control|age):' \
+        | tr -d '\r' | sed 's/^/      /'
+}
+ENTRY="$(printf '%s' "$PUBLIC_BODY" \
+         | grep -o 'type="module" src="[^"]*"' | head -1 \
+         | sed 's/.*src="//; s/"$//; s/&amp;/\&/g')"
+echo "  page     : $PUBLIC_PAGE"
+show_headers "$PUBLIC_PAGE"
+if [ -n "$ENTRY" ]; then
+    echo "  script   : $ENTRY"
+    show_headers "${PUBLIC_URL%/}$ENTRY"
+fi
+
+public_fail=0
+if [ -z "$PUBLIC_BODY" ]; then
+    echo "  could not fetch $PUBLIC_PAGE from this machine - public"
+    echo "  build not checked (set PUBLIC_URL if the address is different)"
+elif [ "$PUBLIC_GOT" = "$WANT" ]; then
+    echo "  serving  : build $PUBLIC_GOT to the public (matches HEAD)"
+else
+    echo "  STALE    : the public page says build ${PUBLIC_GOT:-none}, the server is on $WANT"
+    echo "             Cloudflare is answering with a copy it kept."
+    public_fail=1
+fi
+
+echo ""
+if [ "$public_fail" -eq 0 ]; then
     echo "DEPLOYED. Now at $(git log --oneline -1)"
     echo ""
     echo "Worth running next:"
@@ -154,7 +253,9 @@ if [ "$fail" -eq 0 ]; then
     exit 0
 fi
 
-echo "The service is up but is serving old markup ($fail checks failed)."
-echo "Check that the service runs from $APP_DIR:"
-echo "  systemctl cat $SERVICE | grep -E 'WorkingDirectory|ExecStart'"
+echo "The server is on the new build, but the public site is not."
+echo "  - set CF_ZONE_ID and CF_PURGE_TOKEN in .env and deploy again, or"
+echo "    purge by hand: Cloudflare dashboard > Caching > Purge Everything"
+echo "  - if it happens again after a purge, a Cache Rule is caching HTML:"
+echo "    Caching > Cache Rules, and take /app and / out of it"
 exit 1

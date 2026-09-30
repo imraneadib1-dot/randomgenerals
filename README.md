@@ -127,7 +127,11 @@ Built for an Oracle Always Free ARM VM behind a Cloudflare Tunnel.
 `deploy/ORACLE.md` has the full setup. `deploy.sh` does updates and
 checks the live page afterwards for markup that only exists in the new
 build — so it cannot report success when a stale process is still
-serving.
+serving. It then empties Cloudflare's cache (with `CF_ZONE_ID` and
+`CF_PURGE_TOKEN` in `.env`) and checks the public site is on the new
+build too, since that is the copy people actually get. Pages already
+open in a browser or the phone app notice the new build themselves
+(`static/js/update.js`).
 
 ## Honest limitations
 

@@ -28,13 +28,17 @@ get it live.
 The site runs on an Oracle VM behind a Cloudflare tunnel. `deploy.sh`
 pulls `main`, compiles the modules, restarts the service and verifies
 that `<meta name="rg-build">` on the live page equals `git rev-parse
---short HEAD`. From this machine:
+--short HEAD` - first on the server itself, then, after purging
+Cloudflare's cache, through the public address. From this machine:
 
 1. `git push origin main` - only if the person asked for a push.
 2. Tell them the exact command to run on the VM:
    `bash /opt/randomgenerals/deploy.sh`
    and what a good run prints (`up after Ns`, the build id matching
-   HEAD). You cannot run it from here.
+   HEAD, and `serving : build ... to the public`). A `STALE` line
+   under `== Cloudflare ==` means Cloudflare is still answering with
+   the old build; the script prints what to do. You cannot run it
+   from here.
 3. If a change needs a new environment variable, say which, pointing at
    its entry in `.env.example`. Never suggest a value for a secret.
 4. If a change adds a table or column, say that `db.py` migrates it on

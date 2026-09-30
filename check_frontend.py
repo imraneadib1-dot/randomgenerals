@@ -118,6 +118,26 @@ check("the old path is gone from the page",
 check("and from disk",
       os.path.exists(os.path.join(HERE, "static", "script.js")), False)
 check("the build marker is present", 'name="rg-build"' in html, True)
+
+print("\n== nothing stale can be kept ==")
+page = client.get("/app")
+check("the page is never stored (it names every versioned URL)",
+      page.headers.get("Cache-Control"), "no-store")
+check("nor any other page", client.get("/terms").headers.get("Cache-Control"),
+      "no-store")
+build = client.get("/api/build")
+check("the running build answers", build.get_json(),
+      {"build": appmod.BUILD_ID})
+check("and is never stored either", build.headers.get("Cache-Control"),
+      "no-store")
+check("it is the build the page was rendered with",
+      'name="rg-build" content="%s"' % appmod.BUILD_ID in html, True)
+check("an open page checks it (update.js is mounted)",
+      "mountUpdate();" in open(os.path.join(JS_DIR, "app.js"),
+                               encoding="utf-8").read(), True)
+sw = open(os.path.join(HERE, "static", "sw.js"), encoding="utf-8").read()
+check("the worker is cache-first only for versioned URLs",
+      'url.searchParams.has("v")' in sw, True)
 head = html.split("</head>")[0]
 check("the theme bootstrap runs in the head, before the stylesheet",
       head.find('localStorage.getItem("theme")') != -1
