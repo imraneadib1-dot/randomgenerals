@@ -321,13 +321,13 @@ def _file_messages(name: str, brief: str, plan: dict, photos: list[dict],
         task = ("Write styles.css for this exact index.html: style every class and element it uses. "
                 "Define the plan's palette and fonts as :root custom properties and use them everywhere. "
                 "Make it look like a top studio built it, and make it work from 360px to wide desktop.")
-        ctx = "Plan:\n" + plan_json + "\n\nindex.html:\n" + files.get("index.html", "")
+        ctx = "Plan:\n" + plan_json + "\n\nPage outline (every tag, class and id of index.html):\n" + _html_outline(files.get("index.html", ""))
     elif name == "script.js":
         task = ("Write script.js: plain modern JavaScript (no libraries), wrapped so nothing leaks into globals. "
                 "Do exactly what the contract says for the menu, reveal, year and forms, with clear messages, "
                 "disabled submit buttons while sending, and graceful failure if the network is down.")
         ctx = ("Forms (fields and success messages):\n" + json.dumps(plan.get("forms"), indent=1)
-               + "\n\nindex.html:\n" + files.get("index.html", ""))
+               + "\n\nPage outline:\n" + _html_outline(files.get("index.html", "")))
     elif name == "app.py":
         task = ("Write app.py: a small, production-sensible Flask backend for this site, to run it yourself. "
                 "Serve index.html at / and the other files by name with send_from_directory (only files in this folder; 404 otherwise). "
@@ -352,7 +352,7 @@ def _file_messages(name: str, brief: str, plan: dict, photos: list[dict],
 def _fix_messages(name: str, plan: dict, files: dict, problems: list[str]) -> list[dict]:
     ctx = ""
     if name in ("styles.css", "script.js"):
-        ctx = "index.html:\n" + files.get("index.html", "") + "\n\n"
+        ctx = "Page outline:\n" + _html_outline(files.get("index.html", "")) + "\n\n"
     return [
         {"role": "system", "content": DESIGN + "\n\n" + CONTRACT},
         {"role": "user", "content": (
@@ -437,20 +437,29 @@ class EmptyFileError(RuntimeError):
     """The model would not produce a usable file, even when asked again."""
 
 
-def _write(llm, name, label, messages, max_tokens, effort, small=False):
-    """One file, continued if the model ran out of room. Generator; returns text."""
+def _write(llm, name, label, messages, max_tokens, effort, small=False, min_chars=None):
+    """One file, continued if the model ran out of room. Generator; returns text.
+    `min_chars` overrides the size below which a reply counts as empty -
+    a handful of CSS rules added in review is short, and still real."""
+    floor = MIN_FILE_CHARS.get(name, 1) if min_chars is None else min_chars
     text, finish = yield from llm(name, label, messages, max_tokens, effort, small)
     body = _fenced(text)
-    if len(body.strip()) < MIN_FILE_CHARS.get(name, 1):
+    if len(body.strip()) < floor:
         # Almost always the thinking ate the allowance. Ask again with
         # less of it, and say plainly that the file itself is wanted.
         log("%s came back with %d chars; asking again" % (name, len(body.strip())))
-        text, finish = yield from llm(
-            name, label + " (second attempt)",
-            messages + [{"role": "user", "content": "Your reply contained no file. Write the complete " + name + " now, in a single ```" + lang_of(name) + " block. Keep your reasoning brief."}],
-            max_tokens, "low", small)
+        # The instruction is added to the SAME request, not sent as a new
+        # message: a third message lets the budget fitter drop the task
+        # itself to make room, and the model then writes a file from
+        # nothing - which is how a live build replaced a 22 KB stylesheet
+        # with a generic 8 KB one that matched none of the page.
+        retry = messages[:-1] + [{"role": "user", "content": messages[-1]["content"]
+                                  + "\n\nIMPORTANT: write the file itself now, complete, in a single ```"
+                                  + lang_of(name) + " block. Keep your reasoning brief."}]
+        text, finish = yield from llm(name, label + " (second attempt)", retry,
+                                      max_tokens, "low", small)
         body = _fenced(text)
-        if len(body.strip()) < MIN_FILE_CHARS.get(name, 1):
+        if len(body.strip()) < floor:
             raise EmptyFileError("The model did not write %s - try again in a minute." % name)
     rounds = 0
     # No practical ceiling on a file: continue until it is finished. Each
@@ -550,25 +559,110 @@ def revise(instruction: str, project: dict, photos: list[dict], llm):
 
 def _review(llm, plan, files):
     yield ("step", "review", "start", "Reviewing the files against each other")
-    issues = check_files(files, plan)
-    fixed = []
-    for name in ["index.html", "styles.css", "script.js", "app.py"]:
-        problems = issues.get(name)
-        if not problems:
-            continue
-        yield ("step", "fix-" + name, "start", "Fixing %s (%d issue%s)" % (
-            name, len(problems), "" if len(problems) == 1 else "s"))
-        files[name] = yield from _write(llm, name, "Fixing " + name,
-                                        _fix_messages(name, plan, files, problems),
-                                        6500, "low", name in ("script.js", "app.py"))
-        fixed.append(name)
-        yield ("step", "fix-" + name, "done", "Fixed " + name)
+    fixed = yield from _fix_all(llm, plan, files, premium=False)
     left = check_files(files, plan)
-    yield ("step", "review", "done",
-           "Review passed" if not left else "Reviewed (%d minor issue%s left)" % (
-               sum(len(v) for v in left.values()), "" if sum(len(v) for v in left.values()) == 1 else "s"))
+    n = sum(len(v) for v in left.values())
+    yield ("step", "review", "done", "Review passed" if not n else
+           "Reviewed (%d minor issue%s left)" % (n, "" if n == 1 else "s"))
     return fixed
 
+
+# ---- fixing what the review found ---------------------------------------
+# PATCH, DON'T REWRITE. The first live build with this review asked the
+# model to rewrite a complete 22 KB stylesheet to fix one missing rule.
+# Page plus stylesheet did not fit in one request's budget, the reply
+# allowance was squeezed to nothing, and the retry lost the task: the
+# project shipped a generic 8 KB stylesheet that styled none of its own
+# page. So the review now repairs what it can by itself (a missing
+# <link> or <script> is a line, not a rewrite), ADDS the CSS rules that
+# are missing instead of regenerating the sheet, rewrites only files
+# small enough to fit, and refuses any rewrite that comes back much
+# smaller than what it replaces. A fix that fails leaves the file as it
+# was; it never stops the build.
+REWRITE_LIMIT = 14000
+
+
+def _repair_html(html: str, premium: bool) -> str:
+    """Insert missing stylesheet links and script tags - no model needed."""
+    css = ["css/tokens.css", "css/main.css"] if premium else ["styles.css"]
+    js = PREMIUM_JS if premium else ["script.js"]
+    for href in css:
+        if 'href="%s"' % href not in html and "</head>" in html:
+            html = html.replace("</head>", '<link rel="stylesheet" href="%s">\n</head>' % href, 1)
+    for src in js:
+        if 'src="%s"' % src not in html and "</body>" in html:
+            html = html.replace("</body>", '<script src="%s" defer></script>\n</body>' % src, 1)
+    return html
+
+
+def _css_additions_messages(name, plan, files, problems, premium):
+    tokens = files.get("css/tokens.css", "") if premium else ""
+    current = files.get(name, "")
+    root = (re.search(r":root\s*\{[^}]*\}", tokens or current) or [""])[0] if (tokens or current) else ""
+    return [
+        {"role": "system", "content": (PREMIUM_DESIGN if premium else DESIGN) + "\n\n"
+         + (PREMIUM_CONTRACT if premium else CONTRACT)},
+        {"role": "user", "content": (
+            "The stylesheet " + name + " already exists and is good; do NOT rewrite it. "
+            "A review found it is missing rules:\n- " + "\n- ".join(problems) + "\n\n"
+            "Design tokens in use:\n" + root[:2500] + "\n\n"
+            "Page outline:\n" + _html_outline(files.get("index.html", ""), 8000) + "\n\n"
+            "Write ONLY the additional CSS rules that fix these problems, in the same visual style, "
+            "using the existing custom properties. They will be appended to the file. "
+            "Reply with a single ```css block and nothing else.")},
+    ]
+
+
+def _fix_one(llm, name, plan, files, problems, premium):
+    """Fix one file. Generator; returns True when the file changed."""
+    before = files.get(name, "")
+    try:
+        if name == "index.html":
+            repaired = _repair_html(before, premium)
+            if repaired != before:
+                files[name] = before = repaired
+                left = (check_premium if premium else check_files)(files, plan).get(name)
+                if not left:
+                    return True
+                problems = left
+        if name in ("styles.css", "css/main.css"):
+            more = yield from _write(llm, name, "Adding the missing styles",
+                                     _css_additions_messages(name, plan, files, problems, premium),
+                                     4000, "low", False, min_chars=15)
+            files[name] = before.rstrip() + "\n\n/* Added in review */\n" + more.strip() + "\n"
+            return True
+        if len(before) > REWRITE_LIMIT:
+            log("%s is %d chars - too big to rewrite safely; left as written" % (name, len(before)))
+            return False
+        messages = (_premium_fix_messages if premium else _fix_messages)(name, plan, files, problems)
+        after = yield from _write(llm, name, "Fixing " + name, messages, 6500, "low",
+                                  name.startswith(("js/core", "js/forms", "backend/"))
+                                  or name in ("script.js", "app.py"))
+        if before and len(after) < 0.6 * len(before):
+            log("rewrite of %s shrank %d -> %d chars; kept the original" % (name, len(before), len(after)))
+            return False
+        files[name] = after
+        return True
+    except EmptyFileError as e:
+        log("could not fix %s: %s" % (name, e))
+        files[name] = before
+        return False
+
+
+def _fix_all(llm, plan, files, premium):
+    issues = (check_premium if premium else check_files)(files, plan)
+    fixed = []
+    for name in list(issues):
+        if name not in files:
+            continue
+        problems = issues[name]
+        yield ("step", "fix-" + name, "start", "Fixing %s (%d issue%s)" % (
+            name, len(problems), "" if len(problems) == 1 else "s"))
+        changed = yield from _fix_one(llm, name, plan, files, problems, premium)
+        if changed:
+            fixed.append(name)
+        yield ("step", "fix-" + name, "done", ("Fixed " if changed else "Kept ") + name)
+    return fixed
 
 # =====================================================================
 # PREMIUM BUILDS
@@ -1062,26 +1156,12 @@ def _premium_order(name: str):
 
 def _review_premium(llm, plan, files):
     yield ("step", "review", "start", "Reviewing every file against the others")
-    issues = check_premium(files, plan)
-    fixed = []
-    for name in list(issues):
-        problems = issues[name]
-        target = name if name in files else None
-        if not target:
-            continue
-        yield ("step", "fix-" + name, "start", "Fixing %s (%d issue%s)" % (
-            name, len(problems), "" if len(problems) == 1 else "s"))
-        files[name] = yield from _write(llm, name, "Fixing " + name,
-                                        _premium_fix_messages(name, plan, files, problems),
-                                        7000, "low", name.startswith(("js/core", "js/forms", "backend/")))
-        fixed.append(name)
-        yield ("step", "fix-" + name, "done", "Fixed " + name)
+    fixed = yield from _fix_all(llm, plan, files, premium=True)
     left = check_premium(files, plan)
     n = sum(len(v) for v in left.values())
     yield ("step", "review", "done", "Review passed" if not n else
            "Reviewed (%d minor issue%s left)" % (n, "" if n == 1 else "s"))
     return fixed
-
 
 def revise_premium(instruction: str, project: dict, photos: list[dict], llm):
     """A change to a premium project: only the touched files are rewritten."""

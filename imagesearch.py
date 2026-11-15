@@ -227,7 +227,12 @@ _STOREFRONT = re.compile(
     r"geograph|shop ?front|store ?front|facade|façade|exterior|"
     r"\b\d+[a-z]?,?\s+[a-z][\w'.-]*(?:\s+[a-z][\w'.-]*)?\s+"
     r"(?:road|rd|street|st|avenue|ave|lane|ln|place|pl|boulevard|blvd|"
-    r"way|square|sq|drive|dr|parade|terrace|row)\b",
+    r"way|square|sq|drive|dr|parade|terrace|row)\b|"
+    # Streets elsewhere, named before the number or without one: the live
+    # Lyon bakery build used "Boulangerie Chez Jules, rue Victor Hugo".
+    r"\b(?:rue|quai|chemin|cours|calle|carrer|avenida|rua|via|viale|corso|"
+    r"piazza|plaza|platz|stra(?:ss|ß)e|gasse|laan|straat)\s+\w|"
+    r"\bchez\s+\w",
     re.IGNORECASE)
 
 
