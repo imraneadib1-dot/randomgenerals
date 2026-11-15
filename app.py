@@ -5272,6 +5272,28 @@ def _groq_model_for(mode: str) -> str | None:
     return next((m for m in groq_api.PREFERRED if m in names), names[0])
 
 
+def _groq_only() -> bool:
+    """GROQ, AND NOTHING ELSE, wherever Groq is set up.
+
+    Decided by the owner: the slower channels - the free OpenRouter
+    models, the local model on two CPU cores, pip 1.0 while its engine
+    is not running - answered "make me a website" in minutes or not at
+    all. With a Groq key present every chat and code reply goes to
+    Groq, and the picker offers nothing else. A server without a key
+    keeps the old routing, so it is never left with no model at all.
+    """
+    return groq_api.configured() and bool(groq_api.models())
+
+
+def _groq_fallbacks(model: str) -> list[tuple[str, str]]:
+    """Other Groq text models to try when `model` is rate-limited.
+    Groq meters each model separately, so the smaller one usually still
+    has room when the big one is at its per-minute ceiling."""
+    have = set(groq_api.catalogue() or [])
+    return [("groq", m) for m in groq_api.PREFERRED
+            if m != model and m in have and m not in groq_api.VISION_MODELS]
+
+
 def _groq_has_room(plan) -> bool:
     """Whether this plan may spend the shared per-minute budget now.
     Pro skips the reserve: when the site is busy the fast channel is
@@ -5333,6 +5355,8 @@ def _failover_chain(provider: str, mode: str) -> list[tuple[str, str]]:
     it. Checking budget here would only refuse a channel a second
     before it refused itself.
     """
+    if _groq_only():
+        return _groq_fallbacks(_groq_model_for(mode) or "")
     chain: list[tuple[str, str]] = []
     if provider in ("ollama", "openrouter", "groq"):
         engine_model = _pip_model_for(mode)
@@ -5625,6 +5649,8 @@ def list_providers():
                      "account and are capped at about 50 requests a day."),
         })
 
+    if _groq_only():
+        providers = [p for p in providers if p["id"] == "groq"]
     live = [p for p in providers if p["available"]]
     if live:
         providers = live
@@ -7525,6 +7551,15 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
         if seer_provider and seer_model:
             provider, model = seer_provider, seer_model
 
+    if _groq_only() and (provider != "groq" or not (
+            model in groq_api.models() or model in groq_api.vision_models())):
+        wants_sight = may_see and any(f["kind"] == "image" for f in files)
+        seer = (_vision_route() if wants_sight else (None, None))
+        if seer[0] == "groq":
+            provider, model = seer
+        else:
+            provider = "groq"
+            model = _groq_model_for(mode) or groq_api.PREFERRED[0]
     vision_available = may_see and is_vision_model(model)
     images_b64 = [
         b64 for f in files if f["kind"] == "image" and vision_available
