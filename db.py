@@ -557,6 +557,39 @@ CREATE TABLE IF NOT EXISTS threads (
     -- pattern to justify them.
     messages_json TEXT NOT NULL DEFAULT '[]'
 );
+
+-- Websites the builder made (sitebuilder.py). files_json is the working
+-- copy - every revision in the chat replaces it; published_json is the
+-- copy served at <slug>.<PUBLISH_DOMAIN>, and changes only when the
+-- owner presses Publish. Keeping them apart means a half-finished edit
+-- in the chat never reaches the live site by itself.
+CREATE TABLE IF NOT EXISTS sites (
+    id             TEXT PRIMARY KEY,
+    owner_id       TEXT NOT NULL,
+    thread_id      TEXT,
+    name           TEXT NOT NULL,
+    plan_json      TEXT NOT NULL DEFAULT '{}',
+    files_json     TEXT NOT NULL DEFAULT '{}',
+    version        INTEGER NOT NULL DEFAULT 1,
+    slug           TEXT UNIQUE,
+    published_json TEXT,
+    published_version INTEGER,
+    published_at   TEXT,
+    created        TEXT NOT NULL,
+    updated        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sites_owner ON sites(owner_id, updated);
+
+-- What visitors sent through a published site's forms. The site's own
+-- app.py stores the same thing in its own SQLite when self-hosted.
+CREATE TABLE IF NOT EXISTS site_submissions (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    site_id   TEXT NOT NULL,
+    form      TEXT NOT NULL,
+    data_json TEXT NOT NULL,
+    created   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_site_submissions ON site_submissions(site_id, created);
 """
 
 
@@ -606,6 +639,11 @@ def _migrate_columns(conn):
             conn.execute(
                 f"ALTER TABLE user_settings ADD COLUMN {col} {ddl}")
             conn.commit()
+
+    site_cols = {row["name"] for row in conn.execute("PRAGMA table_info(sites)")}
+    if site_cols and "published_version" not in site_cols:
+        conn.execute("ALTER TABLE sites ADD COLUMN published_version INTEGER")
+        conn.commit()
 
     verify_cols = {row["name"] for row in
                    conn.execute("PRAGMA table_info(verification_codes)")}
@@ -2538,3 +2576,113 @@ def save_custom_instructions(owner_id, text):
             (owner_id, text),
         )
         conn.commit()
+
+
+# ---------------------------------------------------------------- sites
+def _site_row(row):
+    if row is None:
+        return None
+    d = dict(row)
+    d["plan"] = json.loads(d.pop("plan_json") or "{}")
+    d["files"] = json.loads(d.pop("files_json") or "{}")
+    pub = d.pop("published_json")
+    d["published_files"] = json.loads(pub) if pub else None
+    return d
+
+
+def site_save(site_id, owner_id, thread_id, name, plan, files, now):
+    """Insert a site, or replace its working copy and bump the version."""
+    conn = _connect()
+    with _lock:
+        conn.execute(
+            "INSERT INTO sites (id, owner_id, thread_id, name, plan_json, "
+            "files_json, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET name = excluded.name, "
+            "plan_json = excluded.plan_json, files_json = excluded.files_json, "
+            "version = sites.version + 1, updated = excluded.updated",
+            (site_id, owner_id, thread_id, name, json.dumps(plan),
+             json.dumps(files), now, now))
+        conn.commit()
+
+
+def site_get(site_id):
+    return _site_row(_connect().execute(
+        "SELECT * FROM sites WHERE id = ?", (site_id,)).fetchone())
+
+
+def site_by_slug(slug):
+    return _site_row(_connect().execute(
+        "SELECT * FROM sites WHERE slug = ? AND published_json IS NOT NULL",
+        (slug,)).fetchone())
+
+
+def sites_for(owner_id):
+    rows = _connect().execute(
+        "SELECT * FROM sites WHERE owner_id = ? ORDER BY updated DESC",
+        (owner_id,)).fetchall()
+    return [_site_row(r) for r in rows]
+
+
+def site_publish(site_id, slug, now):
+    """Point `slug` at this site's current working copy. -> False when the
+    slug belongs to another site."""
+    conn = _connect()
+    with _lock:
+        taken = conn.execute("SELECT id FROM sites WHERE slug = ? AND id != ?",
+                             (slug, site_id)).fetchone()
+        if taken:
+            return False
+        conn.execute(
+            "UPDATE sites SET slug = ?, published_json = files_json, "
+            "published_version = version, published_at = ? WHERE id = ?",
+            (slug, now, site_id))
+        conn.commit()
+        return True
+
+
+def site_unpublish(site_id):
+    conn = _connect()
+    with _lock:
+        conn.execute("UPDATE sites SET published_json = NULL, published_at = NULL, "
+                     "published_version = NULL, slug = NULL WHERE id = ?",
+                     (site_id,))
+        conn.commit()
+
+
+def published_count(owner_id):
+    row = _connect().execute(
+        "SELECT COUNT(*) AS n FROM sites WHERE owner_id = ? "
+        "AND published_json IS NOT NULL", (owner_id,)).fetchone()
+    return row["n"] if row else 0
+
+
+def reassign_sites(from_owner, to_owner):
+    conn = _connect()
+    with _lock:
+        cur = conn.execute("UPDATE sites SET owner_id = ? WHERE owner_id = ?",
+                           (to_owner, from_owner))
+        conn.commit()
+        return cur.rowcount
+
+
+def submission_add(site_id, form, data, now):
+    conn = _connect()
+    with _lock:
+        conn.execute("INSERT INTO site_submissions (site_id, form, data_json, created) "
+                     "VALUES (?, ?, ?, ?)", (site_id, form, json.dumps(data), now))
+        conn.commit()
+
+
+def submissions_for(site_id, limit=200):
+    rows = _connect().execute(
+        "SELECT form, data_json, created FROM site_submissions WHERE site_id = ? "
+        "ORDER BY id DESC LIMIT ?", (site_id, limit)).fetchall()
+    return [{"form": r["form"], "data": json.loads(r["data_json"]),
+             "created": r["created"]} for r in rows]
+
+
+def submission_count(site_id):
+    row = _connect().execute(
+        "SELECT COUNT(*) AS n FROM site_submissions WHERE site_id = ?",
+        (site_id,)).fetchone()
+    return row["n"] if row else 0

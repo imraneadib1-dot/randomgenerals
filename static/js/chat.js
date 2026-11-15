@@ -5,6 +5,7 @@ import { chatForm, chatLog, messageInput, modelSelect, sendBtn, topbarModelChip 
 import { regenerateLast, sendImagePrompt } from "./image.js";
 import { explain, postJSON } from "./api.js";
 import { StreamRenderer } from "./markdown.js";
+import { renderSiteCard } from "./sites.js";
 import { toast } from "./toast.js";
 import { addMessage, addMessageActions, renderContent, renderMsgAttachments, renderSourceChips } from "./message.js";
 import { loadThreadList } from "./sidebar.js";
@@ -43,7 +44,11 @@ export function toolStatusStrip(msgEl) {
 }
 
 export function handleToolEvent(msgEl, evt) {
-  const [running, finished] = TOOL_LABELS[evt.tool] || [evt.tool, evt.tool];
+  // The website builder names each step itself ("Writing styles.css",
+  // "Wrote styles.css (8.1 KB)"), so its label wins over the table.
+  const [running, finished] = evt.label
+    ? [evt.label, evt.label]
+    : TOOL_LABELS[evt.tool] || [evt.tool, evt.tool];
   const strip = toolStatusStrip(msgEl);
   const id = "tool-" + evt.tool;
   let row = strip.querySelector(`[data-tool="${CSS.escape(id)}"]`);
@@ -54,7 +59,9 @@ export function handleToolEvent(msgEl, evt) {
     strip.appendChild(row);
   }
   row.classList.toggle("is-running", evt.status === "start");
-  row.textContent = evt.status === "start" ? running + "…" : finished;
+  row.textContent = evt.status === "start"
+    ? (running.endsWith("…") ? running : running + "…")
+    : finished;
 
   if (evt.status !== "done" || !evt.display) return;
   renderToolDisplay(msgEl, evt.display);
@@ -77,6 +84,8 @@ export function renderToolDisplay(msgEl, d) {
     img.alt = d.prompt || "Generated image";
     img.loading = "lazy";
     msgEl.appendChild(img);
+  } else if (d.kind === "site") {
+    renderSiteCard(msgEl, d);
   } else if (d.kind === "code") {
     const box = document.createElement("div");
     box.className = "tool-code";

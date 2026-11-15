@@ -1,0 +1,158 @@
+<!doctype html>
+{# Your sites: what the website builder made for you, what is live, and
+   what visitors sent through the forms. Rendered on the server from the
+   same rows the chat's project cards read. #}
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Your sites — RandomGenerals</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" href="{{ asset('favicon.svg') }}" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg: #09090b; --glass: rgba(255,255,255,.04); --glass-2: rgba(255,255,255,.07);
+        --line: rgba(255,255,255,.08); --line-2: rgba(255,255,255,.16);
+        --ink: #fafafa; --ink-2: #a1a1aa; --ink-3: #71717a; --accent: #a5b4fc;
+        --danger: #ff8f8f;
+      }
+      @media (prefers-color-scheme: light) {
+        :root:not([data-theme="dark"]) {
+          --bg: #fafafa; --glass: rgba(255,255,255,.7); --glass-2: #fff;
+          --line: rgba(0,0,0,.08); --line-2: rgba(0,0,0,.16);
+          --ink: #09090b; --ink-2: #52525b; --ink-3: #71717a; --accent: #4338ca; --danger: #b42318;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; min-height: 100vh; font: 15px/1.55 Inter, system-ui, sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(70% 45% at 50% -10%, rgba(99,102,241,.16), transparent 70%),
+          radial-gradient(40% 40% at 0% 100%, rgba(168,85,247,.08), transparent 70%),
+          var(--bg);
+      }
+      a { color: var(--accent); }
+      .wrap { max-width: 920px; margin: 0 auto; padding: 32px 20px 80px; }
+      .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 28px; }
+      .top a.back { color: var(--ink-2); text-decoration: none; font-size: 14px; }
+      .top a.back:hover { color: var(--ink); }
+      h1 { margin: 0 0 6px; font-size: clamp(26px, 4vw, 34px); letter-spacing: -.03em; }
+      .sub { margin: 0 0 28px; color: var(--ink-2); }
+      .site {
+        border: 1px solid var(--line); background: var(--glass); border-radius: 18px;
+        padding: 18px 20px; margin-bottom: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+        backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+      }
+      .site-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+      .site-head h2 { margin: 0; font-size: 18px; letter-spacing: -.01em; flex: 1 1 200px; }
+      .pill { font-size: 12px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--ink-2); }
+      .pill.live { color: #4ade80; border-color: rgba(74,222,128,.35); background: rgba(74,222,128,.08); }
+      .meta { margin: 8px 0 0; font-size: 13px; color: var(--ink-3); }
+      .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+      .btn {
+        display: inline-flex; align-items: center; height: 34px; padding: 0 13px; border-radius: 10px;
+        border: 1px solid var(--line-2); background: transparent; color: var(--ink-2);
+        font: 500 13px Inter, system-ui, sans-serif; text-decoration: none; cursor: pointer;
+        transition: all .2s ease;
+      }
+      .btn:hover { color: var(--ink); background: var(--glass-2); }
+      .btn.danger:hover { color: var(--danger); border-color: var(--danger); }
+      details { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+      summary { cursor: pointer; color: var(--ink-2); font-size: 14px; }
+      .table-wrap { overflow-x: auto; margin-top: 10px; }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+      th { color: var(--ink-3); font-weight: 500; white-space: nowrap; }
+      td.data { font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--ink-2); white-space: pre-wrap; word-break: break-word; }
+      .empty {
+        text-align: center; padding: 48px 20px; border: 1px dashed var(--line-2); border-radius: 18px; color: var(--ink-2);
+      }
+      .empty a.cta {
+        display: inline-block; margin-top: 14px; padding: 10px 18px; border-radius: 999px;
+        background: var(--ink); color: var(--bg); text-decoration: none; font-weight: 600;
+      }
+      .note { color: var(--ink-3); font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <div class="top">
+        <a class="back" href="/app">&larr; Back to chat</a>
+      </div>
+      <h1>Your sites</h1>
+      <p class="sub">
+        Websites the builder made for you. Publish them at
+        <strong>your-name.{{ domain }}</strong> from their card in the chat;
+        what visitors send through the forms shows up here.
+        {% if not signed_in %}<br /><span class="note">Sign in to publish - and to keep these if you clear your browser.</span>{% endif %}
+      </p>
+
+      {% if not sites %}
+        <div class="empty">
+          <p>No sites yet. Ask for one in the chat - for example
+          <em>&ldquo;Build a website for a bakery in Lyon with online orders&rdquo;</em>.</p>
+          <a class="cta" href="/app">Build a website</a>
+        </div>
+      {% endif %}
+
+      {% for s in sites %}
+        <section class="site" data-id="{{ s.id }}">
+          <div class="site-head">
+            <h2>{{ s.name }}</h2>
+            {% if s.url %}
+              <span class="pill live">Live</span>
+            {% else %}
+              <span class="pill">Draft</span>
+            {% endif %}
+            <span class="pill">v{{ s.version }}</span>
+          </div>
+          <p class="meta">
+            {% if s.url %}<a href="{{ s.url }}" target="_blank" rel="noopener">{{ s.url }}</a> &middot;
+            {% if s.published_version and s.version > s.published_version %}live is v{{ s.published_version }}, publish v{{ s.version }} from its card &middot; {% endif %}{% endif %}
+            {{ s.files|length }} files &middot; {{ s.submissions }} form {{ "entry" if s.submissions == 1 else "entries" }}
+            &middot; updated {{ s.updated[:16].replace("T", " ") }}
+          </p>
+          <div class="actions">
+            {% if s.url %}<a class="btn" href="{{ s.url }}" target="_blank" rel="noopener">Open site</a>{% endif %}
+            <a class="btn" href="/api/sites/{{ s.id }}/zip">Download .zip</a>
+            {% if s.url %}<button class="btn danger" type="button" data-unpublish="{{ s.id }}">Unpublish</button>{% endif %}
+          </div>
+          {% if s.recent %}
+            <details>
+              <summary>Form entries ({{ s.submissions }})</summary>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>When</th><th>Form</th><th>What they sent</th></tr></thead>
+                  <tbody>
+                    {% for r in s.recent %}
+                      <tr>
+                        <td>{{ r.created[:16].replace("T", " ") }}</td>
+                        <td>{{ r.form }}</td>
+                        <td class="data">{% for k, v in r.data.items() %}{{ k }}: {{ v }}
+{% endfor %}</td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          {% endif %}
+        </section>
+      {% endfor %}
+    </main>
+    <script>
+      document.addEventListener("click", async (e) => {
+        const btn = e.target.closest("[data-unpublish]");
+        if (!btn) return;
+        if (!confirm("Take this site offline? You can publish it again from its card in the chat.")) return;
+        btn.disabled = true;
+        const r = await fetch("/api/sites/" + encodeURIComponent(btn.dataset.unpublish) + "/unpublish", { method: "POST" });
+        if (r.ok) location.reload();
+        else { btn.disabled = false; alert("Could not unpublish it - try again."); }
+      });
+    </script>
+  </body>
+</html>

@@ -1,6 +1,7 @@
 from flask import (Flask, render_template, request, Response, jsonify,
                    session, stream_with_context, redirect, url_for, abort,
-                   send_from_directory)
+                   send_from_directory, send_file)
+from flask.sessions import SecureCookieSessionInterface
 from dotenv import load_dotenv
 import hashlib
 import hmac
@@ -12,6 +13,10 @@ import json
 import os
 import re
 import uuid
+import io
+import zipfile
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 import threading
 import datetime
 import urllib.parse
@@ -52,6 +57,7 @@ import keystore  # noqa: E402  provider-key encryption + TOTP
 import openrouter_api  # noqa: E402  DeepSeek for the code bay - see openrouter_api.py
 import groq_api  # noqa: E402  the fast channel - see groq_api.py
 import imagesearch  # noqa: E402  real photos for generated sites
+import sitebuilder  # noqa: E402  plans and writes whole website projects
 import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
 import pixverse  # noqa: E402  paid text-to-video - see pixverse.py
 import hfvideo  # noqa: E402  free-tier text-to-video - see hfvideo.py
@@ -321,6 +327,49 @@ app.config.update(
     # chances to persist it.
     SESSION_REFRESH_EACH_REQUEST=True,
 )
+
+
+# A COOKIE A SUBDOMAIN CANNOT OVERWRITE.
+#
+# Published sites live at <slug>.randomgenerals.com and run whatever
+# their author wrote. A page there may set a cookie for the whole
+# domain - document.cookie = "session=...; domain=randomgenerals.com" -
+# and the browser would then send it here, logging a visitor into
+# someone else's session or out of their own. A cookie named with the
+# __Host- prefix can only ever be set by this exact host, over HTTPS,
+# for path /, so no subdomain can forge or shadow it.
+#
+# Only where cookies are Secure (production); a plain-http local run
+# keeps the old name, because the prefix requires Secure. The old
+# cookie is read once and re-issued under the new name, so nobody is
+# signed out by the change.
+class _HostOnlySessionInterface(SecureCookieSessionInterface):
+    LEGACY = "session"
+
+    def open_session(self, app, request):
+        sess = super().open_session(app, request)
+        name = self.get_cookie_name(app)
+        legacy = request.cookies.get(self.LEGACY)
+        if name != self.LEGACY and not request.cookies.get(name) and legacy:
+            try:
+                data = self.get_signing_serializer(app).loads(
+                    legacy, max_age=int(app.permanent_session_lifetime.total_seconds()))
+                sess = self.session_class(data)
+                sess.modified = True
+            except Exception:                    # noqa: BLE001 - a stale
+                pass                             # cookie is just no session
+        return sess
+
+    def save_session(self, app, session, response):
+        super().save_session(app, session, response)
+        if (self.get_cookie_name(app) != self.LEGACY
+                and request.cookies.get(self.LEGACY)):
+            response.delete_cookie(self.LEGACY, path="/")
+
+
+if app.config["SESSION_COOKIE_SECURE"]:
+    app.config["SESSION_COOKIE_NAME"] = "__Host-session"
+app.session_interface = _HostOnlySessionInterface()
 
 
 # Paths that are never a person arriving. Assets, polling and the
@@ -2566,6 +2615,7 @@ def _migrate_guest_threads(uid):
             t["owner_id"] = uid
     if moved:
         db.reassign_threads(guest_id, uid)
+        db.reassign_sites(guest_id, uid)
 
 
 # WHERE ACCOUNTS AND BILLING ACTUALLY LIVE.
@@ -7771,7 +7821,9 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     if files:
         system_prompt = system_prompt + "\n\n" + _attachment_context_block(
             files, vision_available)
-    site_block = _website_block(thread, asked)
+    site_job = _site_job_for(thread, asked, bool(files and any(
+        f.get("kind") == "image" for f in files)))
+    site_block = "" if site_job else _website_block(thread, asked)
     if site_block:
         system_prompt = system_prompt + "\n\n" + site_block
     elif _DIAGRAM_HINT.search(asked or ""):
@@ -7894,7 +7946,7 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # a model that had not been shown it, whichever vision route had
     # been chosen with such care just above. A picture goes straight to
     # the model that can see it; the tools are back on the next turn.
-    if (provider in PROVIDER_TURNS
+    if (site_job is None and provider in PROVIDER_TURNS
             and features.FEATURES[plan]["builtin_tools"]
             and wants["tools"]
             and not images_b64
@@ -7969,6 +8021,18 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
         reply_kind = "text"
         tools_used = ToolLoopResult(convo=history)
         try:
+            if site_job is not None:
+                # A website: planned, written file by file and reviewed
+                # by sitebuilder.py, then saved as a project with a card.
+                full_reply, display = yield from _run_site_job(
+                    site_job, thread, asked, usage)
+                tools_used.displays.append(display)
+                usage["eval_count"] = usage.get("tokens", 0)
+                yield full_reply
+                yield stream_event({"tool": "build-saved", "status": "done",
+                                    "label": "Saved the project",
+                                    "display": display})
+                return
             if tool_specs is not None:
                 # The loop's own turns use the reply's real options, not
                 # a short generic ceiling: when the first turn IS the
@@ -8227,6 +8291,491 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # answer, so the failure is invisible from the browser; it just means
     # credits were silently never deducted.
     return streaming_response(generate())
+
+
+# =====================================================================
+# WEBSITES: BUILD, STORE, PUBLISH, SERVE
+#
+# A website request is built by sitebuilder.py - planned, written file
+# by file, reviewed - and saved as a project. Its owner can download it
+# or publish it at <slug>.<PUBLISH_DOMAIN>, where this app serves the
+# files and answers the forms itself (the "built-in backend"): the
+# project's own app.py is for self-hosting, and no AI-written Python
+# ever runs on this server.
+# =====================================================================
+PUBLISH_DOMAIN = (os.environ.get("PUBLISH_DOMAIN") or "randomgenerals.com").strip().lower()
+sitebuilder.log = lambda message: app.logger.warning("[sitebuilder] %s", message)
+
+# Names that would look like part of this service, or that it may need.
+RESERVED_SLUGS = set("""
+www api app apps admin administrator root mail email smtp imap pop ftp ns ns1 ns2
+static assets cdn media img images files download downloads dashboard status stats
+help support docs blog news about legal terms privacy security secure login logout
+signin signup auth account accounts billing pay payment payments checkout store shop
+randomgenerals pip dev staging test beta demo preview sites site my me you official
+""".split())
+SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$")
+SITE_LIMITS = {"free": 3, "pro": 20}
+
+# A follow-up in a thread that already has a site, asking for a change.
+_REVISION_HINT = re.compile(
+    r"\b(make|change|add|remove|delete|replace|use|turn|update|fix|put|move|"
+    r"swap|increase|decrease|bigger|smaller|darker|lighter|redesign|rewrite|"
+    r"rename|translate|instead|more|less|another|new section|new page)\b",
+    re.IGNORECASE)
+
+
+def _signed_in() -> bool:
+    """A real account, not just a user_id left in the cookie - the same
+    test current_owner_id() applies, so "may publish" and "owns this
+    site" can never disagree."""
+    uid = session.get("user_id")
+    return bool(uid and uid in USERS)
+
+
+def _site_slug_for_host(host: str) -> str | None:
+    """The site a request is for, from its Host. None for the app itself."""
+    host = (host or "").split(":")[0].strip().lower().rstrip(".")
+    for base in (PUBLISH_DOMAIN, "localhost"):
+        if host.endswith("." + base):
+            sub = host[: -len(base) - 1]
+            if sub and sub != "www" and "." not in sub:
+                return sub
+    return None
+
+
+def site_url(slug: str) -> str:
+    """Where a published site lives. A local run points at
+    <slug>.localhost, which every browser resolves to this machine."""
+    host = (request.host or "") if request else ""
+    if host.split(":")[0] in ("localhost", "127.0.0.1"):
+        port = host.split(":")[1] if ":" in host else "80"
+        return "http://%s.localhost:%s" % (slug, port)
+    return "https://%s.%s" % (slug, PUBLISH_DOMAIN)
+
+
+def _thread_site_id(thread) -> str | None:
+    """The newest site built in this thread, from the cards on its replies."""
+    for m in reversed(thread.get("messages") or []):
+        for d in (m.get("tool_displays") or []):
+            if isinstance(d, dict) and d.get("kind") == "site" and d.get("id"):
+                return d["id"]
+    return None
+
+
+def _site_job_for(thread, asked: str, has_images: bool):
+    """Whether this message builds a site, revises one, or neither."""
+    if has_images or not asked:
+        return None
+    site_id = _thread_site_id(thread)
+    if site_id and _REVISION_HINT.search(asked) and not asked.rstrip().endswith("?"):
+        site = db.site_get(site_id)
+        if site and site["owner_id"] == current_owner_id():
+            return {"kind": "revise", "site": site}
+    if _is_website_request(asked):
+        return {"kind": "build"}
+    return None
+
+
+def _builder_llm(usage: dict):
+    """The model call the builder makes, as a generator: yields progress
+    while it waits, returns (text, finish_reason).
+
+    Groq when it is set up - the big model for planning, markup and
+    styling, the smaller one (metered separately) for the script and the
+    backend - and the free OpenRouter model otherwise. A rate limit is
+    waited out, visibly, rather than failed: the builder is allowed to
+    take its time, and the next minute's budget is usually seconds away.
+    """
+    def llm(key, label, messages, max_tokens, effort, small):
+        if _groq_only() or (groq_api.configured() and groq_api.models()):
+            big = _groq_model_for("code") or groq_api.PREFERRED[0]
+            smaller = next((m for _, m in _groq_fallbacks(big)), None)
+            order = [("groq", smaller), ("groq", big)] if small and smaller else \
+                    [("groq", big)] + ([("groq", smaller)] if smaller else [])
+        else:
+            free = _openrouter_model_for("code")
+            order = [("openrouter", free)] if free else []
+        if not order:
+            raise RuntimeError("No model is available to build with.")
+        opts = {"num_predict": max_tokens, "temperature": 0.4,
+                "reasoning_effort": effort}
+        attempts = 0
+        idx = 0
+        while True:
+            provider, model = order[idx % len(order)]
+            pool = ThreadPoolExecutor(max_workers=1)
+            fut = pool.submit(PROVIDER_TURNS[provider], model, messages,
+                              None, opts, 240)
+            # A model call is a quiet half-minute. Something has to cross
+            # the wire meanwhile, or the tunnel decides the reply died.
+            while True:
+                try:
+                    msg, err = fut.result(timeout=8)
+                    break
+                except FuturesTimeout:
+                    yield ("tick",)
+                except providers.ProviderUnavailable as e:
+                    msg, err = None, e
+                    break
+            pool.shutdown(wait=False)
+            if isinstance(err, providers.ProviderUnavailable) or (
+                    err and "429" in str(err)):
+                attempts += 1
+                if attempts > 6:
+                    raise RuntimeError("The model stayed busy for too long.")
+                _left, resets_in = (groq_api.budget_state() if provider == "groq"
+                                    else (None, None))
+                wait = int(min(60, max(5, (resets_in or 12) + 1)))
+                if attempts % 2 == 0 and len(order) > 1:
+                    idx += 1          # try the other model next time
+                for remaining in range(wait, 0, -1):
+                    yield ("wait", key, label, remaining)
+                    time.sleep(1)
+                continue
+            if err:
+                attempts += 1
+                if attempts > 3:
+                    raise RuntimeError(str(err))
+                idx += 1
+                continue
+            text = (msg or {}).get("content") or ""
+            usage["tokens"] = usage.get("tokens", 0) + len(text) // 4
+            return text, (msg or {}).get("finish_reason")
+    return llm
+
+
+def _drive(gen):
+    """Run a builder generator, turning its events into stream events.
+    Returns what the builder returns."""
+    try:
+        ev = next(gen)
+        while True:
+            kind = ev[0]
+            if kind == "step":
+                _, key, status, label = ev
+                yield stream_event({"tool": "build-" + key, "status": status,
+                                    "label": label})
+            elif kind == "wait":
+                _, key, label, seconds = ev
+                yield stream_event({"tool": "build-" + key, "status": "start",
+                                    "label": "%s - waiting %ds for the model" % (label, seconds)})
+            else:
+                yield stream_event({"event": "tick"})
+            ev = next(gen)
+    except StopIteration as stop:
+        return stop.value
+
+
+def _site_reply_text(project: dict, revised: list[str] | None) -> str:
+    plan = project["plan"]
+    files = project["files"]
+    if revised is None:
+        lines = ["Built **%s** - planned first, then each file written and "
+                 "reviewed against the others%s." % (
+                     plan["name"], " (and %s fixed in review)" % ", ".join(project["fixed"])
+                     if project.get("fixed") else "")]
+        if plan.get("tagline"):
+            lines.append("_%s_" % plan["tagline"])
+        lines.append("")
+        lines.append("- **index.html** - %s" % ", ".join(s["title"] for s in plan["sections"]))
+        lines.append("- **styles.css** - %s with %s, one accent (%s), responsive down to phones"
+                     % (plan["fonts"]["display"], plan["fonts"]["body"], plan["palette"]["accent"]))
+        lines.append("- **script.js** - mobile menu, scroll reveal, and working forms (%s)"
+                     % ", ".join(f["name"] for f in plan["forms"]))
+        lines.append("- **app.py** - a Flask backend that stores the form submissions, to run it yourself")
+        lines.append("")
+        lines.append("Preview it in the panel, then publish it from the card below - "
+                     "or download the whole project as a .zip.")
+    else:
+        lines = ["Updated **%s**: %s. Publish again from the card to put the "
+                 "new version live." % (plan["name"], ", ".join(revised))]
+    lines.append("")
+    comment = {"index.html": "<!-- %s -->", "styles.css": "/* %s */",
+               "script.js": "// %s", "app.py": "# %s", "requirements.txt": "# %s",
+               "README.md": "<!-- %s -->"}
+    for name, body in files.items():
+        lang = sitebuilder.LANG.get(name, "text")
+        fence = "````" if name == "README.md" else "```"
+        lines.append("%s%s\n%s\n%s\n%s" % (fence, lang, comment.get(name, "# %s") % name,
+                                           body.rstrip("\n"), fence))
+    return "\n".join(lines)
+
+
+def _run_site_job(job, thread, asked, usage):
+    """The whole build or revision, streamed. Returns (reply, display)."""
+    owner = current_owner_id()
+    llm = _builder_llm(usage)
+    if job["kind"] == "build":
+        yield stream_event({"tool": "build-photos", "status": "start",
+                            "label": "Finding real photos"})
+        photos = imagesearch.photos_for(asked, 8)
+        yield stream_event({"tool": "build-photos", "status": "done",
+                            "label": "Found %d photos" % len(photos) if photos
+                            else "No photos found - using illustration instead"})
+        credit = imagesearch.credit_line(photos) if photos else ""
+        project = yield from _drive(sitebuilder.build(asked, photos, credit, llm))
+        site_id = uuid.uuid4().hex[:16]
+        revised = None
+    else:
+        site = job["site"]
+        photos = []
+        if _WANTS_PHOTOS.search(asked):
+            photos = imagesearch.photos_for(
+                (site["plan"].get("name") or "") + " " + asked, 8)
+        project = yield from _drive(sitebuilder.revise(
+            asked, {"plan": site["plan"], "files": site["files"]}, photos, llm))
+        site_id = site["id"]
+        revised = project.get("touched") or []
+    db.site_save(site_id, owner, thread.get("id"), project["name"],
+                 project["plan"], project["files"], now_iso())
+    saved = db.site_get(site_id)
+    display = {"kind": "site", "id": site_id, "name": project["name"],
+               "slug": project["plan"]["slug"], "version": saved["version"],
+               "files": list(project["files"].keys())}
+    return _site_reply_text(project, revised), display
+
+
+def _own_site(site_id):
+    site = db.site_get(site_id)
+    if not site or site["owner_id"] != current_owner_id():
+        return None
+    return site
+
+
+def _site_view(site) -> dict:
+    return {
+        "id": site["id"], "name": site["name"], "version": site["version"],
+        "slug": site["slug"], "suggested_slug": site["plan"].get("slug") or "",
+        "url": site_url(site["slug"]) if site["slug"] else None,
+        "published_version": site.get("published_version"),
+        "published_at": site.get("published_at"), "updated": site["updated"],
+        "files": list(site["files"].keys()),
+        "forms": [f["name"] for f in site["plan"].get("forms", [])],
+        "submissions": db.submission_count(site["id"]),
+        "domain": PUBLISH_DOMAIN,
+    }
+
+
+@app.route("/api/sites", methods=["GET"])
+def list_sites():
+    return jsonify({"sites": [_site_view(s) for s in db.sites_for(current_owner_id())],
+                    "signed_in": _signed_in()})
+
+
+@app.route("/api/sites/<site_id>", methods=["GET"])
+def get_site(site_id):
+    site = _own_site(site_id)
+    if not site:
+        return jsonify({"error": "No such site."}), 404
+    view = _site_view(site)
+    view["signed_in"] = _signed_in()
+    return jsonify(view)
+
+
+@app.route("/api/sites/<site_id>/publish", methods=["POST"])
+@limited("chat", LIMIT_CHAT, key=_limit_key_account)
+def publish_site(site_id):
+    site = _own_site(site_id)
+    if not site:
+        return jsonify({"error": "No such site."}), 404
+    if not _signed_in():
+        return jsonify({"error": "Sign in to publish - your site stays here "
+                                 "until you do.", "signin": True}), 401
+    payload = request.get_json(force=True, silent=True) or {}
+    slug = str(payload.get("slug") or site["slug"] or site["plan"].get("slug") or "").strip().lower()
+    if not SLUG_RE.match(slug):
+        return jsonify({"error": "Use 3-32 letters, numbers and dashes, "
+                                 "starting and ending with a letter or number."}), 400
+    if slug in RESERVED_SLUGS:
+        return jsonify({"error": "That name is reserved. Try another."}), 400
+    plan = features.normalize_plan(current_account()[0].get("plan"))
+    limit = SITE_LIMITS.get(plan, SITE_LIMITS["free"])
+    if not site["slug"] and db.published_count(site["owner_id"]) >= limit:
+        return jsonify({"error": "Your plan can keep %d sites live. Unpublish "
+                                 "one first%s." % (limit, "" if plan == "pro"
+                                                   else ", or upgrade to Pro")}), 402
+    blocked = moderation.check_message(
+        " ".join(re.sub(r"<[^>]+>", " ", site["files"].get("index.html", ""))
+                 .split())[:6000])
+    if blocked is not None:
+        return jsonify({"error": "This site can't be published: " + blocked}), 400
+    if not db.site_publish(site_id, slug, now_iso()):
+        return jsonify({"error": "%s.%s is taken. Try another name."
+                                 % (slug, PUBLISH_DOMAIN)}), 409
+    return jsonify(_site_view(db.site_get(site_id)))
+
+
+@app.route("/api/sites/<site_id>/unpublish", methods=["POST"])
+def unpublish_site(site_id):
+    site = _own_site(site_id)
+    if not site:
+        return jsonify({"error": "No such site."}), 404
+    db.site_unpublish(site_id)
+    return jsonify(_site_view(db.site_get(site_id)))
+
+
+@app.route("/api/sites/<site_id>/zip", methods=["GET"])
+def download_site(site_id):
+    site = _own_site(site_id)
+    if not site:
+        abort(404)
+    buf = io.BytesIO()
+    folder = site["plan"].get("slug") or "site"
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, body in site["files"].items():
+            z.writestr(folder + "/" + name, body)
+    buf.seek(0)
+    return send_file(buf, mimetype="application/zip", as_attachment=True,
+                     download_name=folder + ".zip")
+
+
+@app.route("/api/sites/<site_id>/submissions", methods=["GET"])
+def site_submissions(site_id):
+    site = _own_site(site_id)
+    if not site:
+        return jsonify({"error": "No such site."}), 404
+    return jsonify({"submissions": db.submissions_for(site_id)})
+
+
+@app.route("/sites")
+def sites_page():
+    sites = []
+    for s in db.sites_for(current_owner_id()):
+        view = _site_view(s)
+        view["recent"] = db.submissions_for(s["id"], limit=50)
+        sites.append(view)
+    return render_template("sites.html", sites=sites,
+                           signed_in=_signed_in(),
+                           domain=PUBLISH_DOMAIN)
+
+
+# ---- serving a published site --------------------------------------
+_SITE_TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
+               ".js": "text/javascript; charset=utf-8", ".txt": "text/plain; charset=utf-8",
+               ".json": "application/json", ".svg": "image/svg+xml"}
+_SITE_HIDDEN = {"app.py", "requirements.txt", "README.md"}
+_form_hits: dict[str, list[float]] = {}
+_form_lock = threading.Lock()
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+# On every published page: who made it, and where to report it. A site
+# on this domain carries this domain's name, so it also carries the way
+# to say it should not.
+_SITE_BADGE = (
+    '<a href="https://%s/?ref=site" target="_blank" rel="noopener" '
+    'style="position:fixed;right:12px;bottom:12px;z-index:2147483000;'
+    'font:500 12px/1 system-ui,sans-serif;color:#fafafa;background:rgba(9,9,11,.82);'
+    'padding:8px 11px;border-radius:999px;text-decoration:none;'
+    'box-shadow:0 4px 16px rgba(0,0,0,.25)">Made with RandomGenerals</a>'
+    '<a href="https://%s/contact?report=%s" target="_blank" rel="noopener" '
+    'style="position:fixed;left:12px;bottom:12px;z-index:2147483000;'
+    'font:500 11px/1 system-ui,sans-serif;color:#a1a1aa;text-decoration:none">Report</a>')
+
+
+def _site_response(body, ctype, status=200):
+    resp = Response(body, status=status, content_type=ctype)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    resp.headers["Cache-Control"] = "public, max-age=60"
+    return resp
+
+
+def _site_not_found(slug):
+    page = ("<!doctype html><meta charset=utf-8><title>Nothing here yet</title>"
+            "<body style=\"font:16px system-ui;display:grid;place-items:center;min-height:90vh;"
+            "background:#09090b;color:#fafafa;text-align:center\"><div><h1>Nothing here yet</h1>"
+            "<p style=\"color:#a1a1aa\">%s.%s isn't a published site.</p>"
+            "<p><a style=\"color:#a5b4fc\" href=\"https://%s\">Build one with RandomGenerals</a></p>"
+            "</div></body>" % (escape(slug), PUBLISH_DOMAIN, PUBLISH_DOMAIN))
+    return _site_response(page, _SITE_TYPES[".html"], 404)
+
+
+def _site_form(site, form_name):
+    form = next((f for f in site["plan"].get("forms", []) if f["name"] == form_name), None)
+    if not form:
+        return jsonify({"ok": False, "error": "There is no such form."}), 404
+    ip = request.headers.get("CF-Connecting-IP") or request.remote_addr or "?"
+    key = "%s|%s" % (site["id"], ip)
+    now = time.time()
+    with _form_lock:
+        hits = [t for t in _form_hits.get(key, []) if now - t < 600]
+        if len(hits) >= 10:
+            return jsonify({"ok": False, "error": "Too many messages - try again "
+                                                  "in a few minutes."}), 429
+        hits.append(now)
+        _form_hits[key] = hits
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict) or len(data) > 30:
+        return jsonify({"ok": False, "error": "That didn't arrive as a form."}), 400
+    clean = {}
+    for fld in form["fields"]:
+        value = str(data.get(fld["name"]) or "").strip()[:2000]
+        if fld.get("required") and not value:
+            return jsonify({"ok": False, "error": "Please fill in %s." % fld["label"]}), 400
+        if value and fld["type"] == "email" and not _EMAIL_RE.match(value):
+            return jsonify({"ok": False, "error": "That email address doesn't look right."}), 400
+        clean[fld["name"]] = value
+    for k, v in data.items():                 # extra fields the page added
+        k = str(k)[:40]
+        if k not in clean and isinstance(v, (str, int, float, bool)):
+            clean[k] = str(v)[:2000]
+    db.submission_add(site["id"], form_name, clean, now_iso())
+    return jsonify({"ok": True, "message": form.get("success") or "Thanks - it's on its way."})
+
+
+def _serve_published_site():
+    """Answer requests for <slug>.<PUBLISH_DOMAIN> before anything else
+    runs: no session, no visit counting, and none of the app's own routes
+    - a published page shares nothing with the app but the server."""
+    slug = _site_slug_for_host(request.host)
+    if slug is None:
+        return None
+    site = db.site_by_slug(slug)
+    if not site:
+        return _site_not_found(slug)
+    path = request.path
+    if path.startswith("/api/forms/"):
+        if request.method != "POST":
+            return jsonify({"ok": False, "error": "Send the form with POST."}), 405
+        return _site_form(site, path[len("/api/forms/"):].strip("/"))
+    if request.method not in ("GET", "HEAD"):
+        return _site_response("Method not allowed", "text/plain", 405)
+    files = site["published_files"] or {}
+    name = path.lstrip("/") or "index.html"
+    if name.endswith("/"):
+        name += "index.html"
+    if name not in files and name + ".html" in files:
+        name += ".html"
+    if name not in files or name in _SITE_HIDDEN:
+        return _site_not_found(slug) if name == "index.html" else \
+            _site_response("Not found", "text/plain; charset=utf-8", 404)
+    ext = os.path.splitext(name)[1].lower()
+    body = files[name]
+    if ext == ".html":
+        badge = _SITE_BADGE % (PUBLISH_DOMAIN, PUBLISH_DOMAIN, escape(slug))
+        body = (body.replace("</body>", badge + "</body>", 1)
+                if "</body>" in body else body + badge)
+    return _site_response(body, _SITE_TYPES.get(ext, "application/octet-stream"))
+
+
+# First, ahead of every other before_request hook.
+app.before_request_funcs.setdefault(None, []).insert(0, _serve_published_site)
+
+
+@app.before_request
+def _refuse_published_site_origins():
+    """A published site shares this app's registrable domain, so the
+    browser treats its requests here as same-site and sends the login
+    cookie with them. Any state-changing request whose Origin is a
+    published site is refused: those pages may run anything their
+    author wrote, and none of it should act as the visitor here."""
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return None
+    origin = request.headers.get("Origin") or ""
+    if origin and _site_slug_for_host(urllib.parse.urlparse(origin).hostname or ""):
+        return jsonify({"error": "Cross-site request refused."}), 403
+    return None
 
 
 @app.route("/api/feedback", methods=["POST"])

@@ -1671,3 +1671,205 @@ html[data-motion="reduced"] .artifact-inner {
 .mermaid-view * {
   line-height: 1.2;
 }
+
+/* ============================================================
+   The website project card (sites.js)
+   ============================================================ */
+.site-card {
+  margin-top: 16px;
+  padding: 14px 16px 12px;
+  border-radius: 16px;
+  background: var(--ws-glass);
+  border: 1px solid var(--ws-glass-border);
+  box-shadow: var(--ws-glass-hi);
+  -webkit-backdrop-filter: var(--ws-blur);
+  backdrop-filter: var(--ws-blur);
+  max-width: 640px;
+  animation: wsPanelIn 220ms var(--ws-ease) both;
+}
+.site-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.site-card-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  color: #c7d2fe;
+  background: rgba(99, 102, 241, 0.16);
+  border: 1px solid rgba(129, 140, 248, 0.25);
+}
+:root[data-theme="light"] .site-card-icon {
+  color: #4338ca;
+}
+.site-card-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.site-card-name {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ws-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.site-card-meta {
+  font-size: 12px;
+  color: var(--ws-ink-3);
+}
+.site-card-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0 2px;
+}
+.site-file {
+  padding: 3px 8px;
+  border-radius: 7px;
+  background: var(--ws-3);
+  color: var(--ws-ink-2);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.site-card-body {
+  margin-top: 12px;
+}
+.site-publish,
+.site-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.site-actions {
+  margin-top: 10px;
+}
+.site-slug {
+  display: flex;
+  align-items: center;
+  flex: 1 1 220px;
+  min-width: 0;
+  height: 36px;
+  padding: 0 4px 0 10px;
+  border-radius: 10px;
+  border: 1px solid var(--ws-glass-border);
+  background: var(--ws-3);
+  transition: border-color 200ms var(--ws-ease), box-shadow 200ms var(--ws-ease);
+}
+.site-slug:focus-within {
+  border-color: var(--ws-glass-border-strong);
+  box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.14);
+}
+.site-slug input {
+  flex: 1;
+  min-width: 60px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ws-ink);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  text-align: right;
+}
+.site-slug-domain {
+  padding-right: 8px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ws-ink-3);
+  white-space: nowrap;
+}
+.site-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 200ms var(--ws-ease);
+}
+.site-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.site-btn-primary {
+  background: var(--ws-primary);
+  color: var(--ws-on-primary);
+}
+.site-btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(255, 255, 255, 0.12);
+}
+.site-btn-ghost {
+  background: transparent;
+  border-color: var(--ws-glass-border);
+  color: var(--ws-ink-2);
+}
+.site-btn-ghost:hover {
+  color: var(--ws-ink);
+  background: var(--ws-hover);
+  border-color: var(--ws-glass-border-strong);
+}
+.site-live {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  color: var(--ws-ink-2);
+}
+.site-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 0 4px rgba(74, 222, 128, 0.15);
+}
+.site-live-link {
+  color: #a5b4fc;
+  font-weight: 500;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+:root[data-theme="light"] .site-live-link {
+  color: #4338ca;
+}
+.site-live-link:hover {
+  text-decoration: underline;
+}
+.site-card-note {
+  flex: 1 1 200px;
+  font-size: 13px;
+  color: var(--ws-ink-3);
+}
+.site-card-status {
+  margin: 8px 0 0;
+  min-height: 1em;
+  font-size: 12.5px;
+  color: var(--ws-ink-3);
+}
+.site-card-status:empty {
+  display: none;
+}
+.site-card-status.is-error {
+  color: var(--danger);
+}
+
+a.profile-menu-item {
+  text-decoration: none;
+}

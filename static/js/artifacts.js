@@ -262,7 +262,7 @@ function render() {
   if (sig !== drawnSig) {
     drawnSig = sig;
     if (view.mode === "code") drawCode(a.lang, v.content);
-    else drawPreview(kind, v.content);
+    else drawPreview(kind, v.content, v.block);
   }
 
   // Which block in the chat this is, so the eye can find it.
@@ -306,7 +306,7 @@ function drawCode(lang, content) {
   gutter.textContent = nums;
 }
 
-function drawPreview(kind, content) {
+function drawPreview(kind, content, block) {
   previewView.innerHTML = "";
   if (kind === "markdown") {
     const doc = document.createElement("div");
@@ -325,11 +325,51 @@ function drawPreview(kind, content) {
   // it cannot read this document, its cookies or the visitor's session.
   frame.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-modals");
   frame.setAttribute("referrerpolicy", "no-referrer");
-  frame.srcdoc = pageFor(kind, content);
+  frame.srcdoc = pageFor(kind, content, block);
   previewView.appendChild(frame);
 }
 
-function pageFor(kind, content) {
+/* A PROJECT, PREVIEWED WHOLE.
+   A page the website builder wrote links styles.css and script.js by
+   name, and an iframe drawn from a string has no folder to find them
+   in - it rendered unstyled and inert. The sibling files from the same
+   reply are inlined in their place. Its forms post to /api/forms/...,
+   which only exists once the site is published, so the preview answers
+   them itself: the form can be tried end to end before it goes live. */
+const FORM_SHIM =
+  "<script>(function(){var f=window.fetch;window.fetch=function(u,o){" +
+  "if(typeof u==='string'&&u.indexOf('/api/forms/')===0){" +
+  "return Promise.resolve(new Response(JSON.stringify({ok:true,message:" +
+  "'Preview: the form works. Once published, entries arrive in Your sites.'})," +
+  "{status:200,headers:{'Content-Type':'application/json'}}));}" +
+  "return f.apply(this,arguments);};})();<\/script>";
+
+function withSiblings(html, block) {
+  const msg = block && block.closest(".msg");
+  if (!msg) return html;
+  /** @type {Record<string, string>} */
+  const byName = {};
+  msg.querySelectorAll(".code-block").forEach((/** @type {HTMLElement} */ b) => {
+    const code = b.querySelector("pre code");
+    const f = b.dataset.filename;
+    if (f && code) byName[f.split("/").pop()] = code.textContent || "";
+  });
+  let out = html.replace(/<link\b[^>]*href=["']([^"']+\.css)["'][^>]*>/gi,
+    (tag, href) => (byName[href] != null ? "<style>\n" + byName[href] + "\n</style>" : tag));
+  out = out.replace(/<script\b[^>]*src=["']([^"']+\.js)["'][^>]*>\s*<\/script>/gi,
+    (tag, src) => (byName[src] != null
+      ? "<script>\n" + byName[src].replace(/<\/script/gi, "<\\/script") + "\n<\/script>"
+      : tag));
+  if (out.includes("/api/forms/") || /\/api\/forms\//.test(byName["script.js"] || "")) {
+    out = /<head[^>]*>/i.test(out)
+      ? out.replace(/<head[^>]*>/i, (h) => h + FORM_SHIM)
+      : FORM_SHIM + out;
+  }
+  return out;
+}
+
+function pageFor(kind, content, block) {
+  if (kind === "html" && block) content = withSiblings(content, block);
   if (kind === "svg") {
     return '<!doctype html><meta charset="utf-8"><body style="margin:0;min-height:100vh;' +
       'display:grid;place-items:center;background:#fff">' + content + "</body>";
@@ -521,7 +561,7 @@ function mountToolbar() {
     const cur = current();
     if (!cur) return;
     const kind = previewKind(cur.a.lang, cur.v.content);
-    const blob = new Blob([pageFor(kind, cur.v.content)], { type: "text/html" });
+    const blob = new Blob([pageFor(kind, cur.v.content, cur.v.block)], { type: "text/html" });
     window.open(URL.createObjectURL(blob), "_blank", "noopener");
   });
 
@@ -569,16 +609,15 @@ export function mountArtifacts() {
     if (!(bubble instanceof HTMLElement)) return;
     const added = collect(bubble);
     const live = /** @type {CustomEvent} */ (e).detail?.live;
+    // A whole project arrives as several files; the page is what to
+    // show first, not whichever file happened to come last (the README).
+    const pick = added.find((a) => /^(html|htm)$/i.test(artifacts.get(a.key)?.lang || ""))
+      || added[added.length - 1];
     if (isOpen()) {
-      if (live && added.length) {
-        const last = added[added.length - 1];
-        openArtifact(last.key, last.index);
-      } else {
-        render();
-      }
-    } else if (live && added.length && isWide()) {
-      const last = added[added.length - 1];
-      openArtifact(last.key, last.index);
+      if (live && pick) openArtifact(pick.key, pick.index);
+      else render();
+    } else if (live && pick && isWide()) {
+      openArtifact(pick.key, pick.index);
     }
   });
 

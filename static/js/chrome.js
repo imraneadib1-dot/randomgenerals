@@ -204,7 +204,8 @@ function mountProfile() {
   menu.addEventListener("keydown", (e) => {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     e.preventDefault();
-    const list = /** @type {HTMLElement[]} */ ([...menu.querySelectorAll("button:not([hidden])")]);
+    const list = /** @type {HTMLElement[]} */ (
+      [...menu.querySelectorAll('button:not([hidden]), a[role="menuitem"]')]);
     const i = list.indexOf(/** @type {HTMLElement} */ (document.activeElement));
     list[(i + (e.key === "ArrowDown" ? 1 : -1) + list.length) % list.length]?.focus();
   });
