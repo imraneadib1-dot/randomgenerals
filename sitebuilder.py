@@ -60,7 +60,7 @@ def lang_of(name: str) -> str:
 
 CONTRACT = """PROJECT CONTRACT - every file must follow it exactly.
 - Files: index.html, styles.css, script.js, app.py. index.html links styles.css in <head> (<link rel="stylesheet" href="styles.css">) and loads script.js with <script src="script.js" defer></script> right before </body>. No inline <style>, no style= attributes, no inline event handlers, no other local files.
-- Header: <header class="site-header"> with a brand link and <nav id="site-nav" class="site-nav"> linking to each section id. A <button class="nav-toggle" aria-controls="site-nav" aria-expanded="false" aria-label="Menu"> is visible only below 768px. script.js toggles the class "nav-open" on <body> and keeps aria-expanded in step; styles.css hides the nav links below 768px unless body.nav-open, and closes nothing above 768px.
+- Header: <header class="site-header"> with a brand link and <nav id="site-nav" class="site-nav"> linking to each section id. A <button class="nav-toggle" aria-controls="site-nav" aria-expanded="false" aria-label="Menu"> containing a visible hamburger icon (an inline SVG of three lines) is shown only below 768px. script.js toggles the class "nav-open" on <body> and keeps aria-expanded in step; styles.css hides the nav links below 768px unless body.nav-open, and closes nothing above 768px.
 - Sections: one <section id="..."> per planned section, in plan order. The hero holds the page's only <h1>.
 - Reveal: elements with class "reveal" start hidden and fade up when script.js adds "is-visible" (IntersectionObserver); with prefers-reduced-motion they are simply visible.
 - Forms: <form class="rg-form" data-rg-form="FORM_NAME" novalidate> with a <label> and a named field for every planned field, a submit button, and <p class="form-status" role="status" aria-live="polite"></p> inside the form. script.js checks required fields and email format, POSTs JSON {"field": "value", ...} to "/api/forms/FORM_NAME" with Content-Type application/json, shows "Sending…" in .form-status, then the server's "message" on success (and resets the form) or its "error". The server answers {"ok": true, "message": "..."} or, with status 400, {"ok": false, "error": "..."}.
@@ -81,11 +81,25 @@ SAFETY_CSS = (SAFETY_MARK + "\n"
               "img { height: auto; }\n")
 
 
+MENU_ICON = ('<svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+             '<path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2" '
+             'stroke-linecap="round" fill="none"/></svg>')
+
+
 def add_safety(files: dict) -> None:
-    """Append the safety net to the site's stylesheet, once."""
+    """The guarantees every build ships with, whatever the model wrote:
+    the stylesheet's safety net, once, and a menu button you can see.
+    A live build wrote <button class="nav-toggle"></button> - empty, no
+    icon, no CSS to draw one - so on a phone the menu could not be
+    opened at all. An empty button gets an icon that needs no CSS."""
     for name in ("styles.css", "css/main.css"):
         if name in files and SAFETY_MARK not in files[name]:
             files[name] = files[name].rstrip() + "\n\n" + SAFETY_CSS
+    html = files.get("index.html")
+    if html:
+        files["index.html"] = re.sub(
+            r'(<button\b[^>]*class="[^"]*\bnav-toggle\b[^"]*"[^>]*>)\s*(</button>)',
+            lambda m: m.group(1) + MENU_ICON + m.group(2), html, count=1)
 
 
 # ---------------------------------------------------------------- helpers
@@ -729,7 +743,7 @@ Served to visitors (no build step - browsers run these files as written):
   ui.js: the menu (toggles body.nav-open, keeps aria-expanded in step), reveal (.reveal gets .is-visible via IntersectionObserver; visible at once under prefers-reduced-motion), Site.modal.open(id) / Site.modal.close() for <dialog class="modal" id="..."> elements with focus return and Escape, Site.toast(message), and [data-year].
   forms.js: every form[data-rg-form] - required fields and email checked, JSON POSTed to "/api/forms/" + its name, "Sending…" then the server's message (resetting the form) or its error, shown in the form's .form-status; the submit button disabled while sending. The server answers {"ok": true, "message": "..."} or, with status 400, {"ok": false, "error": "..."}.
   app.js: the site's own features from the plan (cart, quick view, filters, bookings...). Each planned dataset is fetched from data/NAME.json and rendered into every [data-list="NAME"] container, with a loading state and a friendly error state. State that should survive a reload uses Site.store.
-- Header: <header class="site-header"> with a brand link, <nav id="site-nav" class="site-nav">, and <button class="nav-toggle" aria-controls="site-nav" aria-expanded="false" aria-label="Menu"> shown only below 768px.
+- Header: <header class="site-header"> with a brand link, <nav id="site-nav" class="site-nav">, and <button class="nav-toggle" aria-controls="site-nav" aria-expanded="false" aria-label="Menu"> containing a visible hamburger icon (an inline SVG of three lines), shown only below 768px.
 - Sections: one <section id="..."> per planned section in plan order; the hero holds the only <h1>. Sections and cards carry class "reveal".
 - Forms: <form class="rg-form" data-rg-form="NAME" novalidate> with a <label> and named field per planned field, a submit button and <p class="form-status" role="status" aria-live="polite"></p>.
 - Footer: <footer class="site-footer"> with the photo credit line in <small class="credits"> and <span data-year></span>.
