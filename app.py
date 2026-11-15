@@ -7561,7 +7561,12 @@ def _generation_options(mode: str, strength: str, plan: str,
 _WEBSITE_HINT = re.compile(
     r"\b(web ?sites?|web ?pages?|landing ?pages?|home ?pages?|one[- ]pager|"
     r"portfolio (?:site|page)|html (?:page|site|file)|(?:site|page) for|"
-    r"web ?app|online store|e-?commerce site)\b",
+    r"web ?app|web ?shop|store ?front|e-?commerce|"
+    r"online (?:store|shop|boutique|menu|portfolio)|"
+    # "build a modern, minimalist ... store/shop/site/blog" - the thing
+    # being built is named a few words after the verb.
+    r"(?:build|make|create|design|code|develop)\s+(?:me\s+)?(?:a|an|the|my|our)\s+"
+    r"(?:[\w,'&-]+\s+){0,5}(?:site|store|shop|portfolio|blog|dashboard))\b",
     re.IGNORECASE)
 
 # A follow-up that asks for pictures, in a thread that is already a site.
@@ -7937,7 +7942,7 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
         system_prompt = system_prompt + "\n\n" + _attachment_context_block(
             files, vision_available)
     site_job = _site_job_for(thread, asked, bool(files and any(
-        f.get("kind") == "image" for f in files)))
+        f.get("kind") == "image" for f in files)), strength)
     site_block = "" if site_job else _website_block(thread, asked)
     if site_block:
         system_prompt = system_prompt + "\n\n" + site_block
@@ -8446,6 +8451,16 @@ randomgenerals pip dev staging test beta demo preview sites site my me you offic
 SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$")
 SITE_LIMITS = {"free": 3, "pro": 20}
 
+_BUILD_VERB = re.compile(r"\b(build|make|create|design|code|develop|generate|write|set up)\b",
+                         re.IGNORECASE)
+
+# The words that ask for the premium build (sitebuilder.build_premium).
+_PREMIUM_HINT = re.compile(
+    r"\b(premium|sick|amazing|high[- ]end|luxury|luxurious|world[- ]class|"
+    r"production[- ](?:grade|ready)|state[- ]of[- ]the[- ]art|insane|stunning|"
+    r"top[- ]tier|best possible|award[- ]winning|elite)\b",
+    re.IGNORECASE)
+
 # A follow-up in a thread that already has a site, asking for a change.
 _REVISION_HINT = re.compile(
     r"\b(make|change|add|remove|delete|replace|use|turn|update|fix|put|move|"
@@ -8492,7 +8507,7 @@ def _thread_site_id(thread) -> str | None:
     return None
 
 
-def _site_job_for(thread, asked: str, has_images: bool):
+def _site_job_for(thread, asked: str, has_images: bool, strength: str = "quick"):
     """Whether this message builds a site, revises one, or neither."""
     if has_images or not asked:
         return None
@@ -8501,8 +8516,13 @@ def _site_job_for(thread, asked: str, has_images: bool):
         site = db.site_get(site_id)
         if site and site["owner_id"] == current_owner_id():
             return {"kind": "revise", "site": site}
+    # "What is a storefront?" names a website without asking for one. A
+    # question only starts a build when it also asks for something made.
+    if asked.rstrip().endswith("?") and not _BUILD_VERB.search(asked):
+        return None
     if _is_website_request(asked):
-        return {"kind": "build"}
+        return {"kind": "build",
+                "premium": bool(_PREMIUM_HINT.search(asked)) or strength == "deep"}
     return None
 
 
@@ -8599,7 +8619,28 @@ def _drive(gen):
 def _site_reply_text(project: dict, revised: list[str] | None) -> str:
     plan = project["plan"]
     files = project["files"]
-    if revised is None:
+    if revised is None and plan.get("premium"):
+        lines = ["Built **%s** as a premium project - researched, architected, then %d files "
+                 "written one at a time and reviewed against each other%s." % (
+                     plan["name"], len(files), " (%s fixed in review)" % ", ".join(project["fixed"])
+                     if project.get("fixed") else "")]
+        if plan.get("design_direction"):
+            lines.append("")
+            lines.append("_%s_" % plan["design_direction"])
+        lines.append("")
+        lines.append("- **The site** - index.html, a token-based design system (css/tokens.css + css/main.css), "
+                     "and type-checked JavaScript modules: %s" % ", ".join(plan.get("features") or ["menu, reveal, forms"]))
+        if plan.get("datasets"):
+            lines.append("- **Content as data** - %s, rendered by js/app.js"
+                         % ", ".join("data/%s.json" % d["name"] for d in plan["datasets"]))
+        lines.append("- **Backend** - a Flask service (backend/) that serves the site and stores form entries in SQLite")
+        if plan.get("needs_compute"):
+            lines.append("- **Rust/WASM** - wasm/ computes %s; app.js has a JavaScript fallback until you build it"
+                         % plan.get("compute"))
+        lines.append("- **Ready to ship** - Dockerfile, docker-compose.yml, .env.example, package.json + tsconfig.json for `npm run typecheck`, and a README")
+        lines.append("")
+        lines.append("Preview it in the panel, publish it from the card below, or download the whole workspace as a .zip.")
+    elif revised is None:
         lines = ["Built **%s** - planned first, then each file written and "
                  "reviewed against the others%s." % (
                      plan["name"], " (and %s fixed in review)" % ", ".join(project["fixed"])
@@ -8620,15 +8661,54 @@ def _site_reply_text(project: dict, revised: list[str] | None) -> str:
         lines = ["Updated **%s**: %s. Publish again from the card to put the "
                  "new version live." % (plan["name"], ", ".join(revised))]
     lines.append("")
-    comment = {"index.html": "<!-- %s -->", "styles.css": "/* %s */",
-               "script.js": "// %s", "app.py": "# %s", "requirements.txt": "# %s",
-               "README.md": "<!-- %s -->"}
     for name, body in files.items():
-        lang = sitebuilder.LANG.get(name, "text")
-        fence = "````" if name == "README.md" else "```"
-        lines.append("%s%s\n%s\n%s\n%s" % (fence, lang, comment.get(name, "# %s") % name,
-                                           body.rstrip("\n"), fence))
+        lang = sitebuilder.lang_of(name)
+        fence = "````" if name.endswith(".md") else "```"
+        ext = os.path.splitext(name)[1].lower()
+        if ext in (".html", ".md"):
+            label = "<!-- %s -->" % name
+        elif ext in (".css",):
+            label = "/* %s */" % name
+        elif ext in (".js", ".ts", ".rs"):
+            label = "// %s" % name
+        elif ext == ".json":
+            # JSON has no comments; the file's name goes on a line of its
+            # own that the page reads and strips (see readFilename).
+            label = "// %s" % name
+        else:
+            label = "# %s" % name
+        lines.append("%s%s\n%s\n%s\n%s" % (fence, lang, label, body.rstrip("\n"), fence))
     return "\n".join(lines)
+
+
+def _site_research(brief: str) -> tuple[str, int]:
+    """Web results on what a site like this should be, for the premium
+    planner. Several searches at once, eight seconds at most - the
+    person is watching the build. -> (notes, how many results)."""
+    topic = imagesearch.topic_of(brief) or brief[:60]
+    queries = ["best %s website design" % topic,
+               "%s what customers expect" % topic,
+               topic]
+    found: list[dict] = []
+    pool = ThreadPoolExecutor(max_workers=len(queries))
+    futures = [pool.submit(websearch.search, q, 4) for q in queries]
+    try:
+        for fut in futures:
+            try:
+                found += fut.result(timeout=8) or []
+            except Exception:                       # noqa: BLE001
+                continue
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+    seen, lines = set(), []
+    for r in found:
+        url = r.get("url") or ""
+        if url in seen:
+            continue
+        seen.add(url)
+        lines.append("- %s (%s): %s" % ((r.get("title") or "")[:100], url[:100],
+                                         (r.get("snippet") or "")[:300]))
+    return "\n".join(lines[:12]), len(lines[:12])
 
 
 def _run_site_job(job, thread, asked, usage):
@@ -8636,14 +8716,26 @@ def _run_site_job(job, thread, asked, usage):
     owner = current_owner_id()
     llm = _builder_llm(usage)
     if job["kind"] == "build":
+        premium = job.get("premium")
+        notes = ""
+        if premium:
+            yield stream_event({"tool": "build-research", "status": "start",
+                                "label": "Researching the domain on the web"})
+            notes, count = _site_research(asked)
+            yield stream_event({"tool": "build-research", "status": "done",
+                                "label": "Read %d sources" % count if count
+                                else "No research found - designing from the brief"})
         yield stream_event({"tool": "build-photos", "status": "start",
                             "label": "Finding real photos"})
-        photos = imagesearch.photos_for(asked, 8)
+        photos = imagesearch.photos_for(asked, 12 if premium else 8)
         yield stream_event({"tool": "build-photos", "status": "done",
                             "label": "Found %d photos" % len(photos) if photos
                             else "No photos found - using illustration instead"})
         credit = imagesearch.credit_line(photos) if photos else ""
-        project = yield from _drive(sitebuilder.build(asked, photos, credit, llm))
+        if premium:
+            project = yield from _drive(sitebuilder.build_premium(asked, photos, credit, notes, llm))
+        else:
+            project = yield from _drive(sitebuilder.build(asked, photos, credit, llm))
         site_id = uuid.uuid4().hex[:16]
         revised = None
     else:
@@ -8652,7 +8744,9 @@ def _run_site_job(job, thread, asked, usage):
         if _WANTS_PHOTOS.search(asked):
             photos = imagesearch.photos_for(
                 (site["plan"].get("name") or "") + " " + asked, 8)
-        project = yield from _drive(sitebuilder.revise(
+        reviser = (sitebuilder.revise_premium if site["plan"].get("premium")
+                   else sitebuilder.revise)
+        project = yield from _drive(reviser(
             asked, {"plan": site["plan"], "files": site["files"]}, photos, llm))
         site_id = site["id"]
         revised = project.get("touched") or []
@@ -8783,7 +8877,19 @@ def sites_page():
 _SITE_TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
                ".js": "text/javascript; charset=utf-8", ".txt": "text/plain; charset=utf-8",
                ".json": "application/json", ".svg": "image/svg+xml"}
-_SITE_HIDDEN = {"app.py", "requirements.txt", "README.md"}
+_SITE_HIDDEN = {"app.py", "requirements.txt", "README.md", "package.json",
+                "tsconfig.json", "docker-compose.yml", "Dockerfile", ".env.example",
+                ".dockerignore"}
+
+
+def _site_public(name: str) -> bool:
+    """Whether a project file is part of the site a visitor loads. The
+    backend, the Rust crate and the tooling are the downloadable
+    workspace, not the website."""
+    if name in _SITE_HIDDEN or name.startswith(("backend/", "wasm/", "types/", ".")):
+        return False
+    return os.path.splitext(name)[1].lower() in (".html", ".css", ".js", ".json",
+                                                 ".svg", ".txt", ".webmanifest")
 _form_hits: dict[str, list[float]] = {}
 _form_lock = threading.Lock()
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -8876,7 +8982,7 @@ def _serve_published_site():
         name += "index.html"
     if name not in files and name + ".html" in files:
         name += ".html"
-    if name not in files or name in _SITE_HIDDEN:
+    if name not in files or not _site_public(name):
         return _site_not_found(slug) if name == "index.html" else \
             _site_response("Not found", "text/plain; charset=utf-8", 404)
     ext = os.path.splitext(name)[1].lower()

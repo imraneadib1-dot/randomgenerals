@@ -336,34 +336,53 @@ function drawPreview(kind, content, block) {
    reply are inlined in their place. Its forms post to /api/forms/...,
    which only exists once the site is published, so the preview answers
    them itself: the form can be tried end to end before it goes live. */
-const FORM_SHIM =
-  "<script>(function(){var f=window.fetch;window.fetch=function(u,o){" +
-  "if(typeof u==='string'&&u.indexOf('/api/forms/')===0){" +
-  "return Promise.resolve(new Response(JSON.stringify({ok:true,message:" +
-  "'Preview: the form works. Once published, entries arrive in Your sites.'})," +
-  "{status:200,headers:{'Content-Type':'application/json'}}));}" +
-  "return f.apply(this,arguments);};})();<\/script>";
+/* The preview's stand-in server: form posts succeed, and data/*.json
+   files from the same reply (a premium build's catalogue, menu...) are
+   answered from the reply itself. */
+function previewShim(data) {
+  return "<script>(function(){var D=" + JSON.stringify(data).replace(/</g, "\\u003c") +
+    ";var f=window.fetch;window.fetch=function(u,o){var s=String(u&&u.url||u);" +
+    "var k=s.replace(/^https?:\\/\\/[^/]+/,'').replace(/^\\.?\\//,'').split('?')[0];" +
+    "if(k.indexOf('api/forms/')===0){return Promise.resolve(new Response(JSON.stringify({ok:true," +
+    "message:'Preview: the form works. Once published, entries arrive in Your sites.'})," +
+    "{status:200,headers:{'Content-Type':'application/json'}}));}" +
+    "if(Object.prototype.hasOwnProperty.call(D,k)){return Promise.resolve(new Response(D[k]," +
+    "{status:200,headers:{'Content-Type':'application/json'}}));}" +
+    "return f.apply(this,arguments);};})();<\/script>";
+}
+
+/** "./css/main.css", "/css/main.css" and "css/main.css" are one file. */
+function normPath(p) {
+  return String(p || "").replace(/^\.?\//, "").split(/[?#]/)[0];
+}
 
 function withSiblings(html, block) {
   const msg = block && block.closest(".msg");
   if (!msg) return html;
   /** @type {Record<string, string>} */
-  const byName = {};
+  const byPath = {};
   msg.querySelectorAll(".code-block").forEach((/** @type {HTMLElement} */ b) => {
     const code = b.querySelector("pre code");
     const f = b.dataset.filename;
-    if (f && code) byName[f.split("/").pop()] = code.textContent || "";
+    if (f && code) byPath[normPath(f)] = code.textContent || "";
   });
+  const find = (p) => (byPath[normPath(p)] != null ? byPath[normPath(p)]
+    : byPath[normPath(p).split("/").pop()]);
   let out = html.replace(/<link\b[^>]*href=["']([^"']+\.css)["'][^>]*>/gi,
-    (tag, href) => (byName[href] != null ? "<style>\n" + byName[href] + "\n</style>" : tag));
+    (tag, href) => (find(href) != null ? "<style>\n" + find(href) + "\n</style>" : tag));
   out = out.replace(/<script\b[^>]*src=["']([^"']+\.js)["'][^>]*>\s*<\/script>/gi,
-    (tag, src) => (byName[src] != null
-      ? "<script>\n" + byName[src].replace(/<\/script/gi, "<\\/script") + "\n<\/script>"
+    (tag, src) => (find(src) != null
+      ? "<script>\n" + find(src).replace(/<\/script/gi, "<\\/script") + "\n<\/script>"
       : tag));
-  if (out.includes("/api/forms/") || /\/api\/forms\//.test(byName["script.js"] || "")) {
+  /** @type {Record<string, string>} */
+  const data = {};
+  Object.keys(byPath).forEach((p) => { if (/\.json$/i.test(p)) data[p] = byPath[p]; });
+  const scripts = Object.keys(byPath).filter((p) => /\.js$/i.test(p)).map((p) => byPath[p]).join("\n");
+  if (Object.keys(data).length || /\/api\/forms\//.test(out + scripts)) {
+    const shim = previewShim(data);
     out = /<head[^>]*>/i.test(out)
-      ? out.replace(/<head[^>]*>/i, (h) => h + FORM_SHIM)
-      : FORM_SHIM + out;
+      ? out.replace(/<head[^>]*>/i, (h) => h + shim)
+      : shim + out;
   }
   return out;
 }

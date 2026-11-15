@@ -191,8 +191,10 @@ const FILENAME_BY_LANG = {
    so a real first line is never eaten by mistake. */
 function readFilename(content) {
   const first = (content.split("\n")[0] || "").trim();
+  // A path of name.ext parts, a dotfile (.env.example, .dockerignore),
+  // or one of the build files that have no extension at all.
   const m = first.match(
-    /^(?:#|\/\/|<!--|\/\*)\s*([\w.\-\/]+\.[a-z]{1,4})\s*(?:-->|\*\/)?$/i);
+    /^(?:#|\/\/|<!--|\/\*)\s*((?:[\w-]+\/)*(?:\.?[\w-]+(?:\.[\w-]+)+|\.[\w-]+|Dockerfile|Makefile|Procfile))\s*(?:-->|\*\/)?$/i);
   return m ? m[1] : null;
 }
 
