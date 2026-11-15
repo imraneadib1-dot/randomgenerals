@@ -27,6 +27,7 @@ import json
 
 import codeexec
 import imagegen
+import imagesearch
 import websearch
 
 # Roughly 4 chars per token, so 6000 chars is ~1500 tokens per tool
@@ -66,6 +67,35 @@ WEB_SEARCH = {
                     "type": "string",
                     "description": "Search terms, as you would type "
                                    "them into a search engine.",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+FIND_IMAGES = {
+    "type": "function",
+    "function": {
+        "name": "find_images",
+        "description": (
+            "Find real photos on the internet: openly licensed images with "
+            "URLs that load. Use it whenever the person wants pictures of "
+            "something, or a page you are building needs photos. Put the "
+            "returned URLs straight into <img src> or markdown images; "
+            "never invent an image URL."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "What the photos should show, in 1-4 "
+                                   "words, e.g. 'coffee shop interior'.",
+                },
+                "count": {
+                    "type": "integer",
+                    "description": "How many photos, 1-8. Default 6.",
                 },
             },
             "required": ["query"],
@@ -138,6 +168,7 @@ def available_specs(allow_images=True, allow_code=True, allow_web=True):
     specs = []
     if allow_web:
         specs.append(WEB_SEARCH)
+        specs.append(FIND_IMAGES)
     if allow_code:
         specs.append(RUN_PYTHON)
     # imagegen.available(), which is unconditionally true: the default
@@ -171,6 +202,26 @@ def _do_web_search(args):
         # rather than the user having to take the model's word for it.
         "display": {"kind": "sources", "sources": results},
     }
+
+
+def _do_find_images(args):
+    query = (args.get("query") or "").strip()
+    if not query:
+        return {"text": "No query given.", "display": None}
+    try:
+        n = max(1, min(8, int(args.get("count") or 6)))
+    except (TypeError, ValueError):
+        n = 6
+    photos = imagesearch.search(query, n)
+    if not photos:
+        return {"text": f"No photos found for {query!r}. Try simpler words.",
+                "display": None}
+    lines = []
+    for i, p in enumerate(photos, 1):
+        lines.append(f"[{i}] {p['url']}\n    {p['title']} - "
+                     f"{p['credit']} ({p['license']})")
+    lines.append(imagesearch.credit_line(photos))
+    return {"text": _truncate("\n".join(lines)), "display": None}
 
 
 def _do_run_python(args):
@@ -233,6 +284,7 @@ def _do_generate_image(args):
 
 HANDLERS = {
     "web_search": _do_web_search,
+    "find_images": _do_find_images,
     "run_python": _do_run_python,
     "generate_image": _do_generate_image,
 }

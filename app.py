@@ -51,6 +51,7 @@ import connectors  # noqa: E402  pasted links, turned into tools
 import keystore  # noqa: E402  provider-key encryption + TOTP
 import openrouter_api  # noqa: E402  DeepSeek for the code bay - see openrouter_api.py
 import groq_api  # noqa: E402  the fast channel - see groq_api.py
+import imagesearch  # noqa: E402  real photos for generated sites
 import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
 import pixverse  # noqa: E402  paid text-to-video - see pixverse.py
 import hfvideo  # noqa: E402  free-tier text-to-video - see hfvideo.py
@@ -7470,6 +7471,106 @@ def _generation_options(mode: str, strength: str, plan: str,
     return options, wants
 
 
+# ---------------------------------------------------------------------
+# WEBSITE MODE
+#
+# Building websites is what most people come here for, and the hosted
+# models cannot be fine-tuned - so the "training" is this playbook, sent
+# with every website request, plus real photos fetched for the topic.
+# Measured against three briefs on the live site before it existed:
+# every image a placeholder URL, no mobile menu on any page, and one of
+# the three scrolling sideways on a phone.
+# ---------------------------------------------------------------------
+_WEBSITE_HINT = re.compile(
+    r"\b(web ?sites?|web ?pages?|landing ?pages?|home ?pages?|one[- ]pager|"
+    r"portfolio (?:site|page)|html (?:page|site|file)|(?:site|page) for|"
+    r"web ?app|online store|e-?commerce site)\b",
+    re.IGNORECASE)
+
+# A follow-up that asks for pictures, in a thread that is already a site.
+_WANTS_PHOTOS = re.compile(
+    r"\b(photos?|pictures?|images?|imagery|gallery|hero shot)\b", re.IGNORECASE)
+
+WEBSITE_PROMPT = """WEBSITE MODE. You are a senior web designer and front-end engineer. The person wants a website: build one that looks like it came from a top design studio, not a tutorial.
+
+Deliver:
+- One complete, self-contained HTML file in a single ```html block: <!doctype html>, inline <style> and <script>, no build step, no frameworks. Google Fonts via <link> is fine.
+- One or two sentences before the code; after it, 2-4 short bullets on what to customise. Nothing else.
+- Never stop mid-file. If the page would run long, make fewer sections and finish every one. Close every tag.
+- Asked for a change, return the whole updated file, never a fragment.
+
+Structure:
+- <header> with the name and a <nav>; on phones the links collapse behind a menu button (aria-expanded, toggled by a few lines of JS).
+- A hero: a specific headline, a one-line subhead, a primary call-to-action button and a secondary link, with a photo or a rich gradient behind or beside it.
+- 4-6 sections that fit this business (services or menu with prices, about, gallery, testimonials, pricing, FAQ, opening hours, contact form), then a <footer>.
+
+Design:
+- Palette and type as :root custom properties: one bold accent, neutrals, a dark text colour. Text contrast at least 4.5:1.
+- A distinctive Google Fonts pairing (display face for headings, clean sans for body), fluid sizes with clamp(), generous whitespace on an 8px rhythm, containers about 1200px wide.
+- CSS grid and flexbox; cards with soft shadows and rounded corners; buttons with hover and :focus-visible states; 200ms transitions.
+- Mobile-first and fully responsive: no horizontal scrolling at 360px wide, images width:100% with object-fit:cover and an aspect-ratio, grids that stack, long words that wrap.
+- Polish: smooth scrolling, a sticky translucent header, reveal-on-scroll with IntersectionObserver that respects prefers-reduced-motion.
+
+Content:
+- Real, specific copy for this business: names, services or menu items with prices, hours, testimonials with first names. No lorem ipsum, no "Your text here". Invented details must be plausible; use example.com emails and 555 phone numbers.
+- Semantic HTML, alt text on every image, a label on every form field, lang on <html>."""
+
+NO_PHOTOS_NOTE = ("No photos were found for this topic. Use rich CSS "
+                  "gradients, shapes and inline SVG instead of pictures. "
+                  "Never invent an image URL or use a placeholder service.")
+
+
+def _is_website_request(text: str) -> bool:
+    return bool(_WEBSITE_HINT.search(text or ""))
+
+
+def _website_origin(thread) -> str | None:
+    """The message that started the site in this thread, if one did -
+    so a follow-up ("make the header blue") still gets the playbook, and
+    a request for more photos searches for the site's subject rather
+    than for the words "more photos"."""
+    for m in thread.get("messages", []):
+        if m.get("role") == "user" and _is_website_request(m.get("content")):
+            return m.get("content")
+    for m in thread.get("messages", []):
+        if (m.get("role") == "assistant"
+                and "<!doctype html" in (m.get("content") or "").lower()):
+            return ""
+    return None
+
+
+def _photo_block(photos: list[dict]) -> str:
+    lines = ["REAL PHOTOS FOR THIS SITE, fetched just now. They load, and "
+             "their licences allow use on a website:"]
+    for i, p in enumerate(photos, 1):
+        size = ("%sx%s" % (p.get("width"), p.get("height"))
+                if p.get("width") and p.get("height") else "")
+        lines.append("%d. %s - %s %s" % (i, p["url"], p.get("title", ""), size))
+    lines.append(
+        "Use these exact URLs for the hero, the gallery and section images "
+        "(<img src> with descriptive alt text, or a CSS background-image). "
+        "Choose the ones that fit; the first is usually the strongest hero. "
+        "Never invent other image URLs and never use placeholder services. "
+        "Put this credit line in the footer in small text: "
+        + imagesearch.credit_line(photos))
+    return "\n".join(lines)
+
+
+def _website_block(thread, asked: str) -> str:
+    """The playbook, plus photos when a site is being started or asks
+    for pictures. Empty when this is not about a website."""
+    new = _is_website_request(asked)
+    origin = asked if new else _website_origin(thread)
+    if origin is None:
+        return ""
+    parts = [WEBSITE_PROMPT]
+    if new or _WANTS_PHOTOS.search(asked or ""):
+        photos = imagesearch.photos_for(origin or asked, 8)
+        parts.append(_photo_block(photos) if photos else NO_PHOTOS_NOTE)
+    return "\n\n".join(parts)
+
+
+
 # What a message that wants a tool tends to say: something current or
 # looked up (web_search), something to compute or run (run_python), or a
 # picture made (generate_image). A miss costs little - the model answers
@@ -7484,6 +7585,9 @@ _TOOL_HINT = re.compile(
     r"run (?:this|it|the code)|execute|calculate|compute|evaluate|"
     r"simulate|plot|"
     r"draw|paint|sketch|"
+    r"(?:find|fetch|get|grab|search for|show me|look for)(?: me)?"
+    r"(?: some| a few| a)? (?:pictures?|photos?|images?)|"
+    r"(?:pictures?|photos?|images?) of|"
     r"(?:generate|make|create) (?:me )?(?:an? )?(?:image|picture|photo|"
     r"illustration|drawing))\b",
     re.IGNORECASE)
@@ -7619,6 +7723,9 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     if files:
         system_prompt = system_prompt + "\n\n" + _attachment_context_block(
             files, vision_available)
+    site_block = _website_block(thread, asked)
+    if site_block:
+        system_prompt = system_prompt + "\n\n" + site_block
     nudge = STRENGTH_LEVELS[strength]["nudge"]
     if nudge:
         system_prompt = system_prompt + "\n\n" + nudge
@@ -7768,7 +7875,8 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
         # a picture, in Deep mode, or when the person has connected
         # apps; everything else streams from the first token.
         if not (connector_map or strength == "deep"
-                or _TOOL_HINT.search(asked or "")):
+                or (_TOOL_HINT.search(asked or "")
+                    and not _is_website_request(asked))):
             tool_specs = None
             connector_map = {}
     if tool_specs is not None:
