@@ -434,12 +434,18 @@ def _write(llm, name, label, messages, max_tokens, effort, small=False):
         if len(body.strip()) < MIN_FILE_CHARS.get(name, 1):
             raise EmptyFileError("The model did not write %s - try again in a minute." % name)
     rounds = 0
-    while finish == "length" and rounds < 2:
+    # No practical ceiling on a file: continue until it is finished. Each
+    # round sends only the END of the file so far - the whole of it would
+    # outgrow the per-minute budget within a couple of rounds.
+    while finish == "length" and rounds < 8:
         rounds += 1
+        tail = body[-9000:]
         more, finish = yield from llm(
-            name, label + " (continuing)",
-            messages + [{"role": "assistant", "content": "```" + LANG[name] + "\n" + body},
-                        {"role": "user", "content": "You stopped part-way. Continue EXACTLY where you stopped - no repetition, no fences, no commentary."}],
+            name, label + " (part %d)" % (rounds + 1),
+            messages[:1] + [messages[-1],
+                            {"role": "assistant", "content": "```" + LANG[name] + "\n"
+                             + ("/* ...earlier part above... */\n" if len(body) > 9000 else "") + tail},
+                            {"role": "user", "content": "You stopped part-way. Continue EXACTLY where you stopped - no repetition, no fences, no commentary."}],
             max_tokens, "low", small)
         body += _unfence_continuation(more)
     return body[:MAX_FILE_CHARS]

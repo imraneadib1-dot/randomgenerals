@@ -448,7 +448,7 @@ tid = new_thread()
 CALLS.clear()
 TURNS.clear()
 before = balance()
-r = send_pip(tid, "what colour is the sky?")
+r = send_pip(tid, "look up what colour the sky is")
 events, text = events_and_text(r.get_data(as_text=True))
 tool_events = [e for e in events if e.get("tool")]
 check("a start event, then a done event",
@@ -475,7 +475,7 @@ print("\n== tools: a first turn that is the whole answer ==")
 appmod.PROVIDER_TURNS["pip"] = fake_turn(
     {"content": "No tool needed: 2+2=4.", "finish_reason": "stop"})
 CALLS.clear()
-send_pip(tid, "2+2?")
+send_pip(tid, "calculate 2+2")
 check("answered from the first turn", stored(tid)[-1]["content"],
       "No tool needed: 2+2=4.")
 check("stream never opened", CALLS, [])
@@ -488,7 +488,7 @@ appmod.PROVIDER_TURNS["pip"] = fake_turn(
 appmod.PROVIDER_STREAMERS["pip"] = fake_streamer(["the full answer"],
                                                   usage={"eval_count": 500})
 CALLS.clear()
-send_pip(tid, "explain everything")
+send_pip(tid, "search and explain everything")
 check("the cut-off draft was discarded", stored(tid)[-1]["content"],
       "the full answer")
 check("and the stream regenerated it", len(CALLS), 1)

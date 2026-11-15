@@ -530,6 +530,6 @@ def stream_chat(model, history, options=None, images=None, usage=None):
 
     if usage is not None and finish:
         usage["finish_reason"] = finish
-    if finish == "length":
+    if finish == "length" and not (usage or {}).get("auto_continue"):
         yield ("\n\n_…that hit the length limit for one reply. Say "
                "**continue** and I'll pick up where I left off._")

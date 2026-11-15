@@ -6114,7 +6114,8 @@ def stream_ollama(model, history, options=None, images=None, usage=None):
                     # off at num_predict looks exactly like one that
                     # ended awkwardly, and the failover path caps this
                     # channel at 900 tokens, where it happens often.
-                    if chunk.get("done_reason") == "length":
+                    if (chunk.get("done_reason") == "length"
+                            and not (usage or {}).get("auto_continue")):
                         yield ("\n\n_…that hit the length limit for one "
                                "reply. Say **continue** and I'll pick up "
                                "where I left off._")
@@ -7572,7 +7573,7 @@ WEBSITE_PROMPT = """WEBSITE MODE. You are a senior web designer and front-end en
 Deliver:
 - One complete, self-contained HTML file in a single ```html block: <!doctype html>, inline <style> and <script>, no build step, no frameworks. Google Fonts via <link> is fine.
 - One or two sentences before the code; after it, 2-4 short bullets on what to customise. Nothing else.
-- Never stop mid-file. If the page would run long, make fewer sections and finish every one. Close every tag.
+- Build everything that was asked for, completely - every section, feature and interaction. Length is not a problem: if you run out of room you will be asked to continue, so never cut a feature to save space. Close every tag.
 - Asked for a change, return the whole updated file, never a fragment.
 
 Structure:
@@ -7706,6 +7707,120 @@ def _owner_checked(question: str, pieces):
         yield from pieces
         return
     yield pip_identity.enforce(question, "".join(pieces))
+
+
+# LONG ANSWERS DO NOT STOP AT ONE REPLY'S CEILING.
+#
+# Every model call has a ceiling - 3,500 tokens of code on the free plan,
+# and Groq's per-minute budget caps any single request near 8,000 tokens
+# prompt included. A storefront with a cart and a modal is longer than
+# that, and the reply used to stop mid-file with "Say continue". People
+# asked for it to have no limit.
+#
+# A reply has no ceiling now: when the model stops because it ran out of
+# room, the server asks it to carry on from exactly where it stopped and
+# streams the rest into the same reply, part after part, waiting out a
+# rate limit when it meets one. Each part sees the original request and
+# the END of what was written (not all of it - that would outgrow the
+# budget by the third part), which is all it needs to continue. The note
+# asking the person to say "continue" only appears if a reply runs past
+# MAX_CONTINUATIONS parts, which is tens of thousands of tokens.
+MAX_CONTINUATIONS = 12
+CONTINUE_TAIL_CHARS = 9000
+CONTINUE_PROMPT = (
+    "You ran out of room part-way through your reply. Continue EXACTLY "
+    "where you stopped - mid-line, mid-word if that is where it ended. "
+    "Do not repeat anything, do not summarise, do not apologise, and do "
+    "not add an introduction. If you were inside a code block, keep "
+    "writing the code: do not open a new ``` fence. Finish the reply "
+    "completely.")
+
+
+def _seam(so_far: str, first: str) -> str:
+    """Tidy the join between two parts. A model told not to reopen the
+    code fence sometimes does anyway; inside an open fence that line
+    would end the code block and print the rest as prose."""
+    if so_far.count("```") % 2 == 1:
+        first = re.sub(r"^\s*```[\w+-]*[ \t]*\n", "", first, count=1)
+    return first
+
+
+def _auto_continue(provider, model, history, so_far, usage, kwargs):
+    """Stream the rest of a reply that hit its ceiling. Generator;
+    returns the whole reply."""
+    system = [m for m in history[:1] if m.get("role") == "system"]
+    asked = next((m for m in reversed(history) if m.get("role") == "user"), None)
+    kwargs = {k: v for k, v in kwargs.items() if k != "images"}
+    total_tokens = usage.get("eval_count") or 0
+    part = 1
+    while usage.get("finish_reason") == "length" and part <= MAX_CONTINUATIONS:
+        part += 1
+        usage["finish_reason"] = None
+        tail = so_far[-CONTINUE_TAIL_CHARS:]
+        messages = system + ([asked] if asked else []) + [
+            {"role": "assistant",
+             "content": ("[...the earlier part of your reply is above...]\n"
+                         if len(so_far) > CONTINUE_TAIL_CHARS else "") + tail},
+            {"role": "user", "content": CONTINUE_PROMPT},
+        ]
+        row = "continue-%d" % part
+        yield stream_event({"tool": row, "status": "start",
+                            "label": "Writing part %d of the reply" % part})
+        attempts = 0
+        while True:
+            head = ""
+            started = False
+            try:
+                for piece in PROVIDER_STREAMERS[provider](model, messages, **kwargs):
+                    if not started:
+                        head += piece
+                        if len(head) < 40:
+                            continue
+                        piece = _seam(so_far, head)
+                        started = True
+                    so_far += piece
+                    yield piece
+                if not started and head:
+                    piece = _seam(so_far, head)
+                    so_far += piece
+                    yield piece
+                break
+            except providers.ProviderUnavailable as e:
+                attempts += 1
+                if attempts > 5:
+                    note = ("\n\n_…the model stayed busy, so the reply stops "
+                            "here. Say **continue** and I'll pick up where "
+                            "I left off._")
+                    so_far += note
+                    yield note
+                    usage["eval_count"] = total_tokens
+                    yield stream_event({"tool": row, "status": "done",
+                                        "label": "Stopped at part %d - the model was busy" % part})
+                    return so_far
+                wait = None
+                if provider == "groq":
+                    wait = groq_api.budget_state()[1]
+                if wait is None and isinstance(e, providers.RateLimited):
+                    try:
+                        wait = float(str(e))
+                    except ValueError:
+                        wait = None
+                wait = int(min(60, max(3, (wait or 10) + 1)))
+                for remaining in range(wait, 0, -1):
+                    yield stream_event({"tool": row, "status": "start",
+                                        "label": "Writing part %d - waiting %ds for the model"
+                                        % (part, remaining)})
+                    time.sleep(1)
+        total_tokens += usage.get("eval_count") or 0
+        yield stream_event({"tool": row, "status": "done",
+                            "label": "Wrote part %d" % part})
+    usage["eval_count"] = total_tokens
+    if usage.get("finish_reason") == "length":
+        note = ("\n\n_…this reply is very long. Say **continue** and I'll "
+                "pick up where I left off._")
+        so_far += note
+        yield note
+    return so_far
 
 
 def _stream_reply(thread, provider, model, web_results, files, strength):
@@ -7913,7 +8028,7 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     stream_kwargs: dict[str, Any] = {"options": combined_options}
     if images_b64:
         stream_kwargs["images"] = images_b64
-    usage = {}
+    usage = {"auto_continue": True}
     stream_kwargs["usage"] = usage
 
     # MODEL-DRIVEN TOOLS
@@ -8148,6 +8263,12 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                 yield stream_event({"event": "reply", "kind": reply_kind})
                 yield full_reply
                 return
+
+            # Ran out of room? Keep going - see _auto_continue.
+            if usage.get("finish_reason") == "length":
+                full_reply = yield from _auto_continue(
+                    provider, model, history, full_reply, usage,
+                    kwargs_for(provider))
 
             # AN EMPTY STREAM IS A FAILURE, NOT AN ANSWER.
             #

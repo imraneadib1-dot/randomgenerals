@@ -822,7 +822,7 @@ def stream_chat(model, history, options=None, images=None, usage=None):
 
             if usage is not None and finish:
                 usage["finish_reason"] = finish
-            if finish == "length":
+            if finish == "length" and not (usage or {}).get("auto_continue"):
                 # Said in the reply itself rather than logged, because
                 # the person reading it is the one who needs to know the
                 # answer is unfinished - and told what to do about it,
