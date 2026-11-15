@@ -5617,7 +5617,8 @@ def _recommended_routes(providers, plan=None):
                  # request will ask.
                  and (provider_id != "openrouter"
                       or openrouter_api.budget_ok(m))
-                 and (provider_id != "groq" or _groq_has_room(plan))), None)
+                 and (provider_id != "groq" or _groq_only()
+                      or _groq_has_room(plan))), None)
             if not match:
                 continue
             # A channel the router has watched fail for the last ten
@@ -9069,6 +9070,10 @@ def chat():
         return jsonify({"error": f"Unknown provider '{provider}'"}), 400
     if not model:
         model = _default_model_for(current_owner_id())
+    if not model and _groq_only():
+        # The only channel is always the answer, even in the minute its
+        # budget is spent - the reply waits it out rather than failing.
+        provider, model = "groq", _groq_model_for("code") or groq_api.PREFERRED[0]
     if not model:
         return jsonify({"error": "No model selected"}), 400
     account_credits, save_account = current_account()
@@ -9158,6 +9163,10 @@ def regenerate(tid):
         return jsonify({"error": f"Unknown provider '{provider}'"}), 400
     if not model:
         model = _default_model_for(current_owner_id())
+    if not model and _groq_only():
+        # The only channel is always the answer, even in the minute its
+        # budget is spent - the reply waits it out rather than failing.
+        provider, model = "groq", _groq_model_for("code") or groq_api.PREFERRED[0]
     if not model:
         return jsonify({"error": "No model selected"}), 400
     if not thread["messages"] or thread["messages"][-1]["role"] != "assistant":
