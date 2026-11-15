@@ -49,7 +49,8 @@ _NOT_A_PHOTO = re.compile(
     r"\b(map|logo|diagram|chart|plan|flag|coat of arms|seal|icon|svg|"
     r"poster|stamp|document|letter|page|scan|graph|sign(?:age)?|screenshot|"
     r"annotated|painting|engraving|illustration|drawing|lithograph|"
-    r"portrait of|museum|catalog(?:ue)?)\b",
+    r"portrait of|museum|catalog(?:ue)?|collage|behaviou?r|anatomy|"
+    r"specimen|casino|met dt\d+|wikipedians?|wikisocial|<div)\b",
     re.IGNORECASE)
 
 
@@ -65,6 +66,7 @@ def _commons_thumb(url: str, width: int = WIDTH) -> str:
 
 def _clean_title(title: str) -> str:
     title = unquote(title or "")
+    title = re.sub(r"<[^>]+>", " ", title)      # some titles arrive as HTML
     title = re.sub(r"^File:", "", title)
     title = re.sub(r"\.(jpe?g|png|webp|tiff?)$", "", title, flags=re.I)
     title = re.sub(r"[_]+", " ", title)
@@ -206,15 +208,39 @@ def topic_of(message: str) -> str:
     Capitalised words after "called"/"named" are a brand name, not a
     subject, and are dropped."""
     text = re.sub(r"\b(?:called|named)\s+(?:[A-Z][\w'&-]*\s*(?:&\s*)?)+", " ", message or "")
+    # "a bakery in Lyon that takes pre-orders" is about a bakery in Lyon;
+    # what it does is not what its photos show.
+    text = re.split(r"\b(?:that|which|who|where|with|so that|to let|to help|featuring|including)\b",
+                    text, maxsplit=1, flags=re.IGNORECASE)[0]
     words = re.findall(r"[A-Za-z][A-Za-z'-]+", text)
     keep = [w.lower() for w in words if w.lower() not in _STOP and len(w) > 2]
-    return " ".join(keep[:4])
+    return " ".join(keep[:3])
 
 
 _GENERIC = set("""
 shop shops store stores studio studios business businesses company service
 services center centre house place agency firm group club co ltd inc
 """.split())
+
+_BUSINESS_WORD = re.compile(
+    r"\b(bakery|boulangerie|patisserie|p\u00e2tisserie|caf\u00e9|cafe|coffee|roasters?|restaurant|"
+    r"bistro|bar|pub|brewery|hotel|inn|salon|spa|studio|gym|shop|store|boutique|market|"
+    r"pharmacy|clinic|dental|groomer|grooming|florist|bookshop|bookstore|gallery|"
+    r"barbers?|tailor|deli|pizzeria|trattoria|brasserie)\b", re.IGNORECASE)
+
+
+def _names_a_business(title: str, topic_words: set[str]) -> bool:
+    """Whether a photo title names someone's business: a business word
+    plus two or more proper names beyond the first word - "Stumptown
+    Coffee Roasters Downtown", "Diana Paiva Professional Dog Groomer".
+    Their signs would end up on somebody else's website."""
+    if not _BUSINESS_WORD.search(title):
+        return False
+    words = re.findall(r"[A-Za-z\u00c0-\u017f][\w'\u00c0-\u017f-]*", title)
+    proper = [w for w in words if w[0].isupper() and w.lower() not in topic_words
+              and not _BUSINESS_WORD.fullmatch(w)]
+    return len(proper) >= 2
+
 
 # A pre-1900 date in a title is an artwork or an archive scan, not a photo.
 _OLD_ART = re.compile(r"\((1[0-8]\d\d)\)|\b1[0-8]\d\d\b.*\bby\b")
@@ -270,11 +296,18 @@ def photos_for(message: str, n: int = 8, deadline: float = 4.0) -> list[dict]:
     # WHAT is sold is the one a photo has to be about.
     specific = [w for w in words if w not in _GENERIC and len(w) > 2] or words
     stems = [w[:-1] if w.endswith("s") and len(w) > 4 else w for w in specific]
+    # THE SUBJECT. Every photo must be about it - a place in the brief
+    # ("lyon") or an adjective ("specialty") on its own pulled in
+    # courthouses, TGVs and hospitals. The business word when there is
+    # one, otherwise the first specific word; matched by its first five
+    # letters, so "groomer" also finds "grooming".
+    subject = next((w for w in specific if _BUSINESS_WORD.fullmatch(w)), specific[0])
+    anchor = subject[:5] if len(subject) > 5 else subject
 
     # Every query at once: each is a network round trip, and the reply
     # is waiting on all of them. Merged afterwards in priority order, so
     # the narrowest search still wins.
-    queries = _queries(topic)[:5]
+    queries = [q for q in _queries(topic) if " " in q or q == subject][:5]
     results: dict[str, list[dict]] = {}
     pool = ThreadPoolExecutor(max_workers=len(queries))
     futures = {pool.submit(search, q, n): q for q in queries}
@@ -294,19 +327,28 @@ def photos_for(message: str, n: int = 8, deadline: float = 4.0) -> list[dict]:
     for q in queries:
         for p in results.get(q, []):
             title = (p.get("title") or "").lower()
+            if anchor not in title:
+                continue
             score = sum(1 for s in stems if s in title)
             # A numbered series ("... shop 01", "... shop 02") is one
             # picture three times over; a page wants different ones.
             series = re.sub(r"[\d\W_]+", " ", title).strip()[:40]
             if (p["url"] in seen or series in seen or score == 0
                     or _OLD_ART.search(title) or _STOREFRONT.search(title)
-                    or _STOREFRONT.search(p.get("page") or "")):
+                    or _STOREFRONT.search(p.get("page") or "")
+                    or _names_a_business(p.get("title") or "", set(words))):
                 continue
             seen.add(p["url"])
             seen.add(series)
             scored.append((-score, order, p))
             order += 1
     scored.sort(key=lambda t: (t[0], t[1]))
+    # When enough photos match more than one subject word ("dog" AND
+    # "groom"), the single-word matches are dropped - that is where snow
+    # groomers and laptops called Yoga come from.
+    best = max((-t[0] for t in scored), default=0)
+    if best >= 2 and sum(1 for t in scored if -t[0] >= 2) >= 3:
+        scored = [t for t in scored if -t[0] >= 2]
     return [p for _, _, p in scored[:n]]
 
 

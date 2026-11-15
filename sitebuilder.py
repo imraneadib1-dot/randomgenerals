@@ -72,6 +72,22 @@ Design standards: a distinctive Google Fonts pairing (a characterful display fac
 Content standards: real, specific copy for this business - names, services or menu items with prices, opening hours, testimonials with first names and a detail that sounds lived. No lorem ipsum, no "Your text here". Use example.com emails and 555 phone numbers for invented contact details."""
 
 
+SAFETY_MARK = "/* RandomGenerals safety net */"
+SAFETY_CSS = (SAFETY_MARK + "\n"
+              "/* Nothing may widen the page on a phone: an off-canvas menu parked at\n"
+              "   right: -100% made a live build scroll sideways. */\n"
+              "html, body { max-width: 100%; overflow-x: clip; }\n"
+              "img, video, iframe { max-width: 100%; }\n"
+              "img { height: auto; }\n")
+
+
+def add_safety(files: dict) -> None:
+    """Append the safety net to the site's stylesheet, once."""
+    for name in ("styles.css", "css/main.css"):
+        if name in files and SAFETY_MARK not in files[name]:
+            files[name] = files[name].rstrip() + "\n\n" + SAFETY_CSS
+
+
 # ---------------------------------------------------------------- helpers
 def _fenced(text: str, lang_hint: str = "") -> str:
     """The body of the first fenced block, or the text itself when the
@@ -203,7 +219,11 @@ def _photo_lines(photos: list[dict]) -> str:
     if not photos:
         return ("No photos are available. Use rich CSS gradients, shapes and "
                 "inline SVG instead of pictures. Never invent an image URL.")
-    lines = ["Photos you may use (exact URLs; the first is usually the best hero):"]
+    lines = ["Photos you may use (exact URLs). They come from open photo libraries and are not "
+             "all good: use only those whose description clearly fits this business, and skip "
+             "any that are off-topic, show another named business or its sign, or look like "
+             "archive, museum or diagram images. Fewer photos - or a rich gradient hero - are "
+             "better than a wrong one. Never invent an image URL."]
     for i, p in enumerate(photos, 1):
         lines.append("%d. %s - %s (%sx%s)" % (i, p["url"], p.get("title", ""),
                                              p.get("width") or "?", p.get("height") or "?"))
@@ -516,6 +536,7 @@ def build(brief: str, photos: list[dict], credit: str, llm):
         yield ("step", name, "done", "Wrote %s (%.1f KB)" % (name, len(files[name]) / 1024))
 
     fixed = yield from _review(llm, plan, files)
+    add_safety(files)
     files["requirements.txt"] = "flask>=3.0\n"
     files["README.md"] = readme(plan)
     return {"name": plan["name"], "slug": plan["slug"], "plan": plan,
@@ -550,6 +571,7 @@ def revise(instruction: str, project: dict, photos: list[dict], llm):
         yield ("step", name, "done", "Updated %s (%.1f KB)" % (name, len(files[name]) / 1024))
 
     fixed = yield from _review(llm, plan, files)
+    add_safety(files)
     files["requirements.txt"] = files.get("requirements.txt") or "flask>=3.0\n"
     files["README.md"] = readme(plan)
     return {"name": plan["name"], "slug": plan["slug"], "plan": plan,
@@ -1136,6 +1158,7 @@ def build_premium(brief: str, photos: list[dict], credit: str, research_notes: s
         yield ("step", name, "done", "Wrote %s (%.1f KB)" % (name, len(body) / 1024))
 
     fixed = yield from _review_premium(llm, plan, files)
+    add_safety(files)
     files.update(scaffolding(plan))
     files["README.md"] = premium_readme(plan, files)
     return {"name": plan["name"], "slug": plan["slug"], "plan": plan,
@@ -1190,6 +1213,7 @@ def revise_premium(instruction: str, project: dict, photos: list[dict], llm):
                                         7000, "low", name.startswith(("js/core", "js/forms", "backend/")))
         yield ("step", name, "done", "Updated %s (%.1f KB)" % (name, len(files[name]) / 1024))
     fixed = yield from _review_premium(llm, plan, files)
+    add_safety(files)
     files["README.md"] = premium_readme(plan, {k: v for k, v in files.items() if k != "README.md"})
     return {"name": plan["name"], "slug": plan["slug"], "plan": plan,
             "files": dict(sorted(files.items(), key=lambda kv: _premium_order(kv[0]))),
