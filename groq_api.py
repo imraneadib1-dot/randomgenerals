@@ -1,0 +1,888 @@
+"""Groq - fast open-weight models over an OpenAI-compatible API.
+
+WHY THIS IS THE FAST CHANNEL
+
+The deployment target is an Oracle Always Free VM: two ARM cores and no
+GPU. A local model there is not a slower version of a good experience, it
+is a different and worse product - a 3B answers at a few tokens a second
+while competing for the same two cores that ffmpeg needs for video
+renders, on the same box serving the web app.
+
+Groq is the honest alternative. It serves gpt-oss-120b on their own
+accelerators, free and with no card, and returns a short answer in about
+four tenths of a second - measured, not quoted. That is not merely faster
+than a local 3B on this hardware, it is a far larger model as well, so
+there is no axis on which the local option wins except the literal claim
+of locality.
+
+It is not, however, unlimited, and the limit is low enough to matter:
+8,000 tokens a minute per key, shared by every visitor at once. So this
+module tracks the remaining budget from the rate-limit headers on every
+response, and app.py routes to the local model before the ceiling rather
+than after it - see the note above _budget below. Ollama is what makes
+that survivable: one provider being rate-limited is a degradation rather
+than an outage only because there is something underneath it.
+
+Exposes configured(), models() and stream_chat(), the interface app.py
+registers every provider through.
+"""
+import json
+import os
+import time
+
+import requests
+
+import attachments  # the data-URL helper images travel in
+
+API_ROOT = "https://api.groq.com/openai/v1"
+
+# Cached for an hour. The list changes rarely and a request per page load
+# would be a rate-limit charge for information that did not change.
+MODELS_TTL = 3600
+
+# Used when the live list cannot be fetched - a network blip should not
+# empty the picker. Ordered best-first.
+FALLBACK_MODELS = [
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+]
+
+# Preference order when nothing specific was asked for.
+#
+# Taken from what this key can actually see, not from documentation:
+# Groq's catalogue does not include Llama 3.3 70B, which an initial
+# version of this file assumed. The fallback then picked whatever sorted
+# first, which was allam-2-7b - a small Arabic-tuned model that answered
+# an English test prompt with something unrelated, and looked like the
+# provider being broken rather than the wrong model being chosen.
+#
+# The 120B first: on Groq's hardware it returns in well under a second,
+# so a smaller model buys nothing except a worse answer.
+PREFERRED = [
+    "openai/gpt-oss-120b",
+    "qwen/qwen3.8-27b",
+    "openai/gpt-oss-20b",
+]
+
+# Transcription, text-to-speech, safety-classifier and embedding models
+# all answer /models but cannot hold a conversation, so without this they
+# appear in the picker and fail the moment anyone chooses one. "orpheus"
+# and "canopylabs" are Groq's TTS voices; "guard" also catches
+# gpt-oss-safeguard.
+_NON_CHAT = ("whisper", "guard", "embed", "tts", "playai",
+             "orpheus", "canopylabs")
+
+# TWO MODELS, DELIBERATELY.
+#
+# The catalogue offers seven chat models and most of them are worse at
+# everything this app does. allam-2-7b is Arabic-tuned and answered an
+# English test prompt with something unrelated; the compound models are
+# slower for no gain here; gpt-oss-20b lost to its larger sibling on
+# maths. Offering them is not choice, it is a menu of ways to get a
+# worse answer.
+#
+# So the picker shows one model: gpt-oss-120b, which serves the chat bay
+# and stands in for the code bay whenever Kimi has no key. qwen was here
+# too, on the chat bay, chosen for writing in prose rather than LaTeX -
+# but the bays are split by role now (Kimi codes, gpt-oss chats) and a
+# third model that differs only in formatting is a choice nobody asked
+# for. It stays in PREFERRED below, so a key whose catalogue lacks the
+# 120B still has somewhere to fall.
+#
+# An empty allow-list means "show everything", which is what a fresh
+# deployment against a different key should do rather than showing
+# nothing at all.
+EXPOSED_MODELS = (
+    "openai/gpt-oss-120b",     # chat, and the free channel's whole offer
+)
+
+# THE MODELS THAT CAN SEE.
+#
+# This module used to say Groq served no multimodal model, and app.py
+# repeated it, so every attached image left for OpenRouter's free tier
+# or was answered blind. Groq's own vision page
+# (console.groq.com/docs/vision) lists exactly these two - and the
+# first is already on PREFERRED above. A picture costs a flat 2,048
+# tokens against the per-minute budget, and each model caps how many
+# ride in one request; both facts are honoured in _with_images and
+# fit_to_budget rather than discovered as a 400.
+VISION_MODELS = ("qwen/qwen3.8-27b", "qwen/qwen3.6-27b")
+VISION_MAX_IMAGES = {"qwen/qwen3.8-27b": 3, "qwen/qwen3.6-27b": 5}
+IMAGE_TOKENS = 2048
+
+# THE LIMIT THAT ACTUALLY BINDS
+#
+# The free tier is 1,000 requests a day but only 8,000 TOKENS A MINUTE,
+# and it is the token budget that runs out first - measured against the
+# live x-ratelimit headers, not quoted. That ceiling is per key, so it is
+# shared by everyone using the site at once rather than being per person.
+#
+# Two consequences run through the rest of this file and app.py:
+#
+#   - Reasoning tokens are charged against it. gpt-oss thinks before it
+#     answers, and on a maths question that was 297 completion tokens at
+#     "low" effort against 683 at "high" - the same correct answer for
+#     2.3x the budget. So effort is a capacity decision as much as a
+#     quality one, and app.py sets it per bay rather than leaving it at
+#     the model default (see BAY_EFFORT there).
+#
+#   - Running out has to be survivable. A 429 here used to yield a
+#     bracketed apology, which ended the request with no answer; it now
+#     raises RateLimited before anything is streamed, so app.py can move
+#     the same conversation to Ollama and answer anyway.
+TOKENS_PER_MINUTE = 8000
+
+
+# WHY THE CHANNEL "ONLY WORKS SOME SECONDS PER MINUTE"
+#
+# That is the exact shape of an 8,000 token-per-minute cap being spent in
+# the first few seconds of each minute. A handful of requests drains it,
+# every request after that 429s, and then the window rolls over and it
+# works again - which from the outside looks like a channel that comes
+# and goes on a timer.
+#
+# It cannot be raised without paying Groq, so the fix is to stop walking
+# into it. Every response - streaming included - carries the remaining
+# budget in x-ratelimit-remaining-tokens, so the ceiling is observable
+# rather than something to be discovered by failing. This module tracks
+# it and lets the caller ask, before spending a round trip, whether a
+# request is likely to fit.
+_budget = {
+    "remaining": None,      # tokens left in the current window
+    "resets_at": 0.0,       # when the window rolls over (monotonic)
+}
+
+# Held back from free users so a paid one is not queued behind them. The
+# budget is per key, i.e. shared by everyone on the site at once, and
+# without a reserve whoever happens to type first takes it all.
+PRO_RESERVE_TOKENS = 2500
+
+# What a request costs when nothing better is known. Deliberately on the
+# high side: over-estimating routes a request to the local model that
+# might have fitted, while under-estimating produces the 429 this exists
+# to avoid.
+DEFAULT_REQUEST_TOKENS = 1200
+
+# THE WHOLE REQUEST COUNTS, NOT JUST THE REPLY.
+#
+# Groq charges prompt + max_tokens against tokens-per-minute for a
+# SINGLE request, and refuses outright with 413 when that sum exceeds
+# the limit - a different failure from running out mid-window:
+#
+#   Groq error 413. Request too large ... on tokens per minute (TPM):
+#   Limit 8000, Requested 8996, please reduce your m
+#
+# Nothing was measuring the sum, so a long enough conversation could not
+# be answered at all: every retry rebuilt the same oversized request and
+# was refused again. Raising the reply ceiling to 2600 for accuracy made
+# it arrive sooner.
+TPM_LIMIT = 8000
+
+# Headroom for what the estimate cannot see - the tool schemas, the
+# role scaffolding Groq adds, and the fact that a character-based
+# estimate is an estimate.
+TPM_MARGIN = 700
+
+# Characters per token, near enough. Real tokenisation needs the
+# model's vocabulary, which is not worth a dependency here: this is used
+# to decide how much to trim, and being slightly pessimistic only costs
+# a little context.
+CHARS_PER_TOKEN = 3.6
+
+
+def estimate_tokens(messages):
+    """Roughly how many tokens these messages will cost."""
+    total = 0
+    for m in messages or []:
+        content = m.get("content")
+        if isinstance(content, str):
+            total += len(content) / CHARS_PER_TOKEN
+        elif isinstance(content, list):
+            # Multimodal parts: count the text, and allow a flat cost per
+            # image, which is nearer the truth than ignoring them.
+            for part in content:
+                if part.get("type") == "text":
+                    total += len(part.get("text") or "") / CHARS_PER_TOKEN
+                else:
+                    total += IMAGE_TOKENS
+        # Per-message role and delimiter overhead.
+        total += 4
+    return int(total)
+
+
+def fit_to_budget(messages, want_reply_tokens):
+    """Trim history and the reply ceiling so the request is accepted.
+
+    -> (messages, reply_tokens). Drops the OLDEST turns first, and never
+    the system prompt or the newest message: losing the question being
+    asked to make room for the conversation about it would be the wrong
+    trade every time.
+    """
+    room = TPM_LIMIT - TPM_MARGIN
+    reply = max(256, int(want_reply_tokens or 0) or 256)
+
+    kept = list(messages or [])
+    prompt = estimate_tokens(kept)
+
+    # OLD CONTEXT GOES FIRST, REPLY LENGTH SECOND, and the order is the
+    # whole judgement here. Trimming the ceiling first kept every
+    # message and answered a long conversation in 512 tokens - which for
+    # "write me the CSS and the JS" is a truncated answer to a question
+    # that was fully understood. Dropping turns from six messages ago
+    # costs some memory of the conversation; capping the reply costs the
+    # answer itself.
+    #
+    # The system prompt is index 0 and the last message is the question
+    # being asked, so trimming happens strictly between them.
+    while prompt + reply > room and len(kept) > 2:
+        drop_at = 1 if kept and kept[0].get("role") == "system" else 0
+        kept.pop(drop_at)
+        prompt = estimate_tokens(kept)
+
+    # Only once there is no old context left to give up.
+    while prompt + reply > room and reply > 512:
+        reply = max(512, reply - 256)
+
+    # STILL TOO BIG MEANS ONE ENORMOUS MESSAGE - a pasted file, usually.
+    # There is nothing left to drop, and shrinking the reply cannot help
+    # when the prompt alone is over the limit: that path returned a
+    # request that was still refused, which is the failure this function
+    # exists to prevent.
+    #
+    # So the message itself is cut. That loses part of what somebody
+    # sent, which is why it is last and why the model is told - a
+    # silently truncated file would have it answering confidently about
+    # code it was never shown the end of.
+    if prompt + reply > room:
+        reply = 512
+        # PICTURES FIRST. Three images are 6,144 tokens on an 8,000
+        # budget; no amount of history-trimming makes that fit. The
+        # trailing images go, one at a time, until the request fits or
+        # one remains - and the model is told how many it was not shown,
+        # for the same reason a truncated file is announced below.
+        last = kept[-1] if kept else None
+        if last and isinstance(last.get("content"), list):
+            parts = list(last["content"])
+            dropped = 0
+            while prompt + reply > room and sum(
+                    1 for q in parts if q.get("type") != "text") > 1:
+                idx = max(i for i, q in enumerate(parts)
+                          if q.get("type") != "text")
+                parts.pop(idx)
+                dropped += 1
+                kept[-1] = dict(last, content=parts)
+                prompt = estimate_tokens(kept)
+            if dropped:
+                note = ("\n\n[%d more image(s) were attached but did not "
+                        "fit in one request. Say so rather than guessing "
+                        "at them.]" % dropped)
+                texts = [i for i, q in enumerate(parts) if q.get("type") == "text"]
+                if texts:
+                    i = texts[0]
+                    parts[i] = dict(parts[i], text=(parts[i].get("text") or "") + note)
+                else:
+                    parts.insert(0, {"type": "text", "text": note.strip()})
+                kept[-1] = dict(last, content=parts)
+                prompt = estimate_tokens(kept)
+        # Budget for the offending message alone: the room, less the
+        # reply we still intend to produce, less everything else in the
+        # request. Computed against the OTHERS rather than the total,
+        # because sizing it against the total left the sum over the
+        # limit by exactly what the other messages cost.
+        for i in range(len(kept) - 1, -1, -1):
+            content = kept[i].get("content")
+            if not isinstance(content, str):
+                continue
+            others = estimate_tokens(
+                [m for j, m in enumerate(kept) if j != i])
+            allowed_tokens = room - reply - others - 60
+            allowed_chars = int(max(400, allowed_tokens) * CHARS_PER_TOKEN)
+            if len(content) > allowed_chars:
+                kept[i] = dict(
+                    kept[i],
+                    content=content[:allowed_chars]
+                    + "\n\n[... truncated: this message was too long to "
+                      "send in one request. Say so in your reply rather "
+                      "than answering as though you saw all of it.]")
+                break
+        prompt = estimate_tokens(kept)
+        if prompt + reply > room:
+            reply = max(256, room - prompt)
+
+    return kept, reply
+
+
+def _parse_duration(text):
+    """Go's duration format ('772ms', '45.6s', '1m26.4s') -> seconds."""
+    text = (text or "").strip()
+    if not text:
+        return 0.0
+    total, number = 0.0, ""
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch.isdigit() or ch == ".":
+            number += ch
+            i += 1
+            continue
+        unit = text[i:i + 2]
+        if unit == "ms":
+            total += float(number or 0) / 1000.0
+            i += 2
+        elif ch == "s":
+            total += float(number or 0)
+            i += 1
+        elif ch == "m":
+            total += float(number or 0) * 60.0
+            i += 1
+        elif ch == "h":
+            total += float(number or 0) * 3600.0
+            i += 1
+        else:
+            i += 1
+        number = ""
+    return total
+
+
+def note_limits(headers):
+    """Record the budget from a response's rate-limit headers.
+
+    Called on every response, including error ones - a 429 carries the
+    headers too, and that is precisely the moment the numbers matter.
+    """
+    try:
+        remaining = headers.get("x-ratelimit-remaining-tokens")
+        reset = headers.get("x-ratelimit-reset-tokens")
+        if remaining is not None:
+            _budget["remaining"] = int(float(remaining))
+        if reset is not None:
+            _budget["resets_at"] = time.monotonic() + _parse_duration(reset)
+    except (TypeError, ValueError):
+        pass
+
+
+def budget_ok(need=DEFAULT_REQUEST_TOKENS, priority=False):
+    """Is there plausibly room for a request of `need` tokens?
+
+    True when nothing is known yet - the first request of a process has
+    to be allowed to discover the budget, and pessimism there would mean
+    never using the fast channel at all.
+
+    `priority` skips the reserve that is held back for paid plans.
+    """
+    if _budget["remaining"] is None:
+        return True
+    if time.monotonic() >= _budget["resets_at"]:
+        # Window has rolled over; the recorded figure is stale and the
+        # budget is full again.
+        return True
+    floor = 0 if priority else PRO_RESERVE_TOKENS
+    return _budget["remaining"] >= need + floor
+
+
+def budget_state():
+    """-> (remaining, seconds_until_reset) for display and diagnostics."""
+    if _budget["remaining"] is None:
+        return None, 0.0
+    left = max(0.0, _budget["resets_at"] - time.monotonic())
+    return _budget["remaining"], left
+
+
+# The failure contract is shared by every channel now and lives in
+# providers.py. Imported by name here on purpose: app.py and the checks
+# say groq_api.ProviderUnavailable, and this keeps that the same class.
+from providers import ProviderUnavailable, RateLimited, Unreachable  # noqa: E402,F401
+
+
+# What to ask for when the caller says nothing. "low" rather than the
+# model default: on the questions this app actually gets, low reaches the
+# same answer roughly a third faster and for a third fewer tokens.
+DEFAULT_EFFORT = "low"
+VALID_EFFORTS = ("low", "medium", "high")
+
+_models_cache = {"at": 0.0, "models": None, "error": ""}
+
+
+def api_key():
+    return os.environ.get("GROQ_API_KEY", "").strip()
+
+
+def configured():
+    return bool(api_key())
+
+
+def last_error():
+    return _models_cache.get("error", "")
+
+
+def _headers():
+    return {
+        "Authorization": "Bearer " + api_key(),
+        "Content-Type": "application/json",
+    }
+
+
+def models():
+    """Chat-capable models, fetched live and cached.
+
+    A rejected key returns nothing rather than the fallback list, for the
+    same reason gemini.py does: serving the fallback on an auth failure
+    makes the app look configured and populated, and hands the error to
+    the first person who tries to send a message instead of to whoever
+    can fix it.
+    """
+    if not configured():
+        return []
+    now = time.time()
+    cached = _models_cache
+    if cached["models"] is not None and now - cached["at"] < MODELS_TTL:
+        return cached["models"]
+    try:
+        r = requests.get(API_ROOT + "/models", headers=_headers(), timeout=8)
+        note_limits(r.headers)
+        if r.status_code in (401, 403):
+            _models_cache.update({
+                "at": now, "models": [],
+                "error": "Groq rejected the key (%d)." % r.status_code,
+            })
+            return []
+        r.raise_for_status()
+        found = [m.get("id", "") for m in r.json().get("data", [])]
+        usable = [m for m in found
+                  if m and not any(bad in m.lower() for bad in _NON_CHAT)]
+        # Narrowed to the shortlist, but only if the shortlist is
+        # actually present - a key whose catalogue does not include them
+        # gets everything it does have, rather than an empty picker.
+        shortlist = [m for m in usable if m in EXPOSED_MODELS]
+        out = sorted(shortlist) if shortlist else sorted(usable)
+        _models_cache.update({"at": now, "models": out or FALLBACK_MODELS,
+                              "all": sorted(usable), "error": ""})
+        return _models_cache["models"]
+    except requests.exceptions.RequestException as e:
+        out = cached["models"] or FALLBACK_MODELS
+        _models_cache.update({"at": now, "models": out,
+                              "error": "could not reach Groq: %s" % e})
+        return out
+
+
+def complete(system, user, max_tokens=300, temperature=0.7,
+             effort="low", timeout=15):
+    """One prompt in, one string out. -> text, or "" on any failure.
+
+    stream_chat() is the wrong shape for the short internal calls this
+    app makes on its own behalf - rewriting an image prompt, say - where
+    there is no reader waiting on the first token and a failure should
+    leave the caller's original input untouched rather than surface as a
+    bracketed apology in someone's chat.
+
+    Never raises, and never returns a partial result: every failure path
+    is "" so the caller can fall back to what it already had.
+    """
+    if not configured():
+        return ""
+    body = {
+        "model": PREFERRED[0],
+        "messages": [{"role": "system", "content": system},
+                     {"role": "user", "content": user}],
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "reasoning_effort": effort,
+    }
+    try:
+        r = requests.post(API_ROOT + "/chat/completions", json=body,
+                          headers=_headers(), timeout=timeout)
+        note_limits(r.headers)
+        if r.status_code != 200:
+            return ""
+        choices = r.json().get("choices") or []
+        if not choices:
+            return ""
+        return (choices[0].get("message", {}).get("content") or "").strip()
+    except (requests.exceptions.RequestException, ValueError, KeyError):
+        return ""
+
+
+def catalogue():
+    """Every chat-capable model the key can reach, before the picker's
+    shortlist is applied. models() is what the picker shows; this is
+    what a request may name - the vision route picks from here."""
+    models()
+    return list(_models_cache.get("all") or _models_cache["models"] or [])
+
+
+def vision_models():
+    """The multimodal models this key actually has. Empty when Groq is
+    not configured, so the route falls through to the next provider."""
+    if not configured():
+        return []
+    have = set(catalogue())
+    return [m for m in VISION_MODELS if m in have]
+
+
+def _with_images(messages, images, model):
+    """Attach base64 images to the last user turn, OpenAI-style: the
+    text becomes one part and each image another, as a data URL that
+    names its real type. Capped at what the model accepts per request;
+    the rest are announced rather than silently dropped."""
+    if not images or model not in VISION_MODELS:
+        return messages
+    cap = VISION_MAX_IMAGES.get(model, 1)
+    keep, extra = list(images[:cap]), max(0, len(images) - cap)
+    out = list(messages)
+    for i in range(len(out) - 1, -1, -1):
+        if out[i].get("role") != "user":
+            continue
+        text = out[i].get("content") or ""
+        if extra:
+            text += ("\n\n[%d more image(s) were attached than this model "
+                     "takes in one message. Say so rather than guessing at "
+                     "them.]" % extra)
+        parts = [{"type": "text", "text": text}] if text else []
+        for b64 in keep:
+            parts.append({"type": "image_url",
+                          "image_url": {"url": attachments.data_url(b64)}})
+        out[i] = {"role": "user", "content": parts}
+        break
+    return out
+
+
+def _to_messages(history):
+    """This app's message list into OpenAI chat format.
+
+    Nearly a pass-through - the shapes agree - but roles are normalised
+    and empty turns dropped, because an empty content string is rejected
+    by the API rather than ignored.
+    """
+    out = []
+    for m in history:
+        role = m.get("role")
+
+        # A tool result, and the assistant turn that asked for it, both
+        # have to survive intact or the model cannot see what came back.
+        # The old shape dropped anything that was not system/user/
+        # assistant and required non-empty content - and an assistant
+        # message carrying tool_calls has EMPTY content by design, so it
+        # was silently deleted, which broke the loop before it started.
+        if role == "tool":
+            out.append({
+                "role": "tool",
+                "tool_call_id": m.get("tool_call_id"),
+                "content": (m.get("content") or "")[:8000],
+            })
+            continue
+        if role == "assistant" and m.get("tool_calls"):
+            out.append({
+                "role": "assistant",
+                "content": m.get("content") or "",
+                "tool_calls": m["tool_calls"],
+            })
+            continue
+
+        text = (m.get("content") or "").strip()
+        if not text:
+            continue
+        if role not in ("system", "user", "assistant"):
+            role = "user"
+        out.append({"role": role, "content": text})
+    return out
+
+
+def chat_once(model, history, tools=None, options=None, timeout=120):
+    """One non-streamed turn. -> (message dict, error).
+
+    The tool loop needs the WHOLE message before it can act - a tool call
+    arrives as a name and a JSON argument blob, and half of either is
+    useless. Streaming is for the final answer, which _stream_reply()
+    still handles; this is for the turns in between, which nobody sees.
+    """
+    if not configured():
+        return None, "Groq is not configured."
+    body = {
+        "model": model,
+        "messages": _to_messages(history),
+        "stream": False,
+    }
+    if tools:
+        body["tools"] = tools
+        body["tool_choice"] = "auto"
+    opts = options or {}
+    if opts.get("num_predict"):
+        body["max_tokens"] = int(opts["num_predict"])
+    if "temperature" in opts:
+        body["temperature"] = opts["temperature"]
+    if _supports_effort(model):
+        effort = opts.get("reasoning_effort", DEFAULT_EFFORT)
+        if effort in VALID_EFFORTS:
+            body["reasoning_effort"] = effort
+
+    # The same ceiling as the streaming path, for the same reason - and
+    # this one needs it MORE. chat_once carries the tool loop, which
+    # sends the whole conversation plus every connector's operation
+    # list, so it reaches the 413 sooner than a plain reply does.
+    # Fitting only stream_chat left the tool loop failing, and that
+    # failure then cascaded into a local fallback which could not carry
+    # the oversized prompt either.
+    body["messages"], fitted = fit_to_budget(
+        body["messages"], body.get("max_tokens") or DEFAULT_REQUEST_TOKENS)
+    body["max_tokens"] = fitted
+
+    try:
+        r = requests.post(API_ROOT + "/chat/completions", json=body,
+                          headers=_headers(), timeout=timeout)
+    except requests.exceptions.RequestException as e:
+        return None, "Could not reach Groq: %s" % e
+    note_limits(r.headers)
+    if r.status_code == 429:
+        raise RateLimited("per-minute token budget exhausted")
+    if r.status_code != 200:
+        return None, "Groq error %d" % r.status_code
+    try:
+        choice = r.json()["choices"][0]
+        message = dict(choice["message"])
+    except (ValueError, KeyError, IndexError, TypeError):
+        return None, "Groq returned an unreadable response."
+    # Why it stopped, carried on the message. The tool loop uses this
+    # to tell a complete answer - which it can hand straight to the
+    # reader - from one cut off at the loop's own ceiling, which has to
+    # be regenerated at full length.
+    message["finish_reason"] = choice.get("finish_reason")
+    return message, None
+
+
+def _request_body(model, history, options=None, images=None):
+    """The JSON for one streamed request: model resolution, options,
+    images, and the budget fit. Its own function so a check can read
+    exactly what would be sent, without a network."""
+    available = models()
+    # A vision model is not on the picker's shortlist but is in the
+    # catalogue; a request may name anything the key can reach.
+    allowed = set(available) | set(catalogue())
+    chosen = model if model in allowed else None
+    if chosen is None:
+        chosen = next((m for m in PREFERRED if m in available),
+                      available[0] if available else PREFERRED[0])
+
+    body = {
+        "model": chosen,
+        "messages": _with_images(_to_messages(history), images, chosen),
+        "stream": True,
+    }
+    # Tools travel with the request when the caller supplies them. The
+    # agent loop resolves calls before this point, so by the time a
+    # stream is opened the model has what it asked for and should be
+    # writing prose - but the schemas stay attached in case it wants a
+    # second round.
+    opts = options or {}
+    if opts.get("tools"):
+        body["tools"] = opts["tools"]
+        body["tool_choice"] = "auto"
+    if "temperature" in opts:
+        body["temperature"] = opts["temperature"]
+    if "top_p" in opts:
+        body["top_p"] = opts["top_p"]
+    # This app's limits are named for Ollama; translate rather than pass
+    # through, or the ceiling is silently ignored.
+    if opts.get("num_predict"):
+        body["max_tokens"] = int(opts["num_predict"])
+
+    # Make the whole request fit inside one minute's allowance. Groq
+    # counts prompt + max_tokens together and refuses with 413 when the
+    # sum is over - see fit_to_budget. Done here rather than in app.py
+    # because the limit is a property of this provider.
+    body["messages"], fitted = fit_to_budget(
+        body["messages"], body.get("max_tokens") or DEFAULT_REQUEST_TOKENS)
+    body["max_tokens"] = fitted
+
+    # How long the model thinks before it starts answering. Ollama has no
+    # equivalent, so this arrives under its own name and is simply absent
+    # on that channel rather than being translated into something.
+    #
+    # ONLY FOR gpt-oss, AND THAT RESTRICTION IS LOAD-BEARING.
+    #
+    # Sending it to qwen3.8-27b returns an EMPTY REPLY. That model spends
+    # the token budget on reasoning first and the answer second, so with
+    # reasoning_effort set and max_tokens at 320 - which is what the
+    # "quick" strength asks for - every token goes to reasoning and the
+    # content field comes back empty. Measured: 0 characters of content
+    # against 704 of reasoning, where the same call without the parameter
+    # returned 792 characters of answer.
+    #
+    # The parameter was added here to save budget on gpt-oss, where it
+    # genuinely halves the spend. Applying it to every Groq model was the
+    # bug, and it shipped as a chat bay that returned nothing at all.
+    if _supports_effort(chosen):
+        effort = opts.get("reasoning_effort", DEFAULT_EFFORT)
+        if effort in VALID_EFFORTS:
+            body["reasoning_effort"] = effort
+
+    return body
+
+
+def stream_chat(model, history, options=None, images=None, usage=None):
+    """Stream a reply. Yields text pieces.
+
+    `images` ride with the last user turn when `model` is one of
+    VISION_MODELS (see _with_images); on a text model they are dropped
+    here rather than refused, because the caller only sends them to a
+    model app.py believes can see.
+    """
+    if not configured():
+        yield "[Groq is not configured - set GROQ_API_KEY.]"
+        return
+
+    body = _request_body(model, history, options, images)
+
+    # Whether any content has reached the caller yet. It decides what a
+    # failure is allowed to do: before the first token the whole request
+    # can still be retried on another provider, and after it the reply
+    # is already on somebody's screen and the only honest option is to
+    # say what happened at the end of it.
+    sent_any = False
+
+    try:
+        with requests.post(API_ROOT + "/chat/completions", json=body,
+                           headers=_headers(), stream=True,
+                           timeout=120) as r:
+            note_limits(r.headers)
+            if r.status_code == 429:
+                # Raised, not yielded. Nothing has been streamed yet, so
+                # the caller can still answer this from another provider
+                # - which is the whole reason a second one is configured.
+                raise RateLimited(
+                    r.headers.get("retry-after")
+                    or "token budget spent for this minute")
+            if r.status_code in (401, 403):
+                yield "[Groq rejected the key (%d).]" % r.status_code
+                return
+            if r.status_code == 413:
+                # The request did not fit in one minute's allowance,
+                # despite fit_to_budget - so the estimate was under.
+                # Raised, not yielded: nothing has streamed, so the
+                # caller can still answer this locally, and a person
+                # reading a reply should never be shown a sentence
+                # containing the words "service tier" and an
+                # organisation id.
+                raise Unreachable(
+                    "the conversation grew past what one request may "
+                    "spend in a minute")
+            if r.status_code >= 500:
+                # Groq's problem, not the request's, and nothing has
+                # streamed - so this is exactly what failover is for.
+                # It used to be yielded as "[Groq error 502.]", which
+                # made a provider outage the reply.
+                raise Unreachable("Groq returned %d" % r.status_code)
+            if r.status_code != 200:
+                # A 4xx that is not 429/413/401/403 is something wrong
+                # with THIS request - a bad model name, a malformed
+                # body. Another provider would refuse it the same way,
+                # so it is said rather than raised.
+                detail = ""
+                try:
+                    detail = (r.json().get("error", {}).get("message")
+                              or "")[:200]
+                except ValueError:
+                    pass
+                yield "[Groq error %d. %s]" % (r.status_code, detail)
+                return
+
+            # Why the model stopped. "stop" is a finished answer;
+            # "length" means it ran into max_tokens with more to say.
+            # This was read by nobody, and the difference is the whole
+            # bug: a truncated reply arrived looking exactly like a
+            # complete one that happened to end mid-sentence.
+            finish = None
+
+            for raw in r.iter_lines():
+                if not raw:
+                    continue
+                line = raw.decode("utf-8", "replace")
+                if not line.startswith("data: "):
+                    continue
+                data = line[6:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                choices = chunk.get("choices") or []
+                if choices:
+                    piece = (choices[0].get("delta") or {}).get("content")
+                    if piece:
+                        sent_any = True
+                        yield piece
+                    if choices[0].get("finish_reason"):
+                        finish = choices[0]["finish_reason"]
+                # Usage arrives on the final chunk. Reported under the
+                # name the credit accounting already reads, so metering
+                # works the same for every provider.
+                spent = chunk.get("x_groq", {}).get("usage") or chunk.get("usage")
+                if spent and usage is not None:
+                    usage["eval_count"] = spent.get("completion_tokens")
+
+            if usage is not None and finish:
+                usage["finish_reason"] = finish
+            if finish == "length":
+                # Said in the reply itself rather than logged, because
+                # the person reading it is the one who needs to know the
+                # answer is unfinished - and told what to do about it,
+                # since "continue" genuinely works from here.
+                yield ("\n\n_…that hit the length limit for one reply. "
+                       "Say **continue** and I'll pick up where I left "
+                       "off._")
+    except requests.exceptions.RequestException as e:
+        if not sent_any:
+            # Nothing has been streamed, so this can still be raised and
+            # answered by another provider instead of becoming an error
+            # message the person has to read.
+            raise Unreachable(str(e))
+        yield ("\n\n_…the connection to the model dropped part-way "
+               "through. The answer above is incomplete — ask again to "
+               "get the rest._")
+
+
+def _supports_effort(model):
+    """Whether reasoning_effort is safe to send to this model.
+
+    An allow-list rather than a deny-list: a new reasoning model appearing
+    in the catalogue should default to NOT receiving the parameter, since
+    the failure mode is an empty reply rather than a slightly worse one.
+    """
+    return "gpt-oss" in (model or "").lower()
+
+
+def effort_for(mode, strength):
+    """How hard the model should think, given the bay and the toggle.
+
+    Kept here rather than in app.py because the trade-off it encodes is a
+    property of this provider - it is the only one that charges thinking
+    against a shared per-minute budget.
+
+    CHAT WAS "low" AND THAT WAS COSTING CORRECT ANSWERS.
+
+    Measured against gpt-oss-120b, five reasoning questions, three runs
+    each, at temperature 0.2:
+
+        low     12/15   2275 tokens
+        medium  15/15   3222 tokens
+
+    The three failures were all the same question - the classic bat and
+    ball, $1.10 total with the bat $1.00 dearer - and low answered 55
+    every single time. Not a wobble: it halves the total instead of
+    solving the equation, and does it reproducibly. Medium answered 5
+    three times out of three.
+
+    42% more tokens for that is worth paying. The per-minute budget is
+    8,000 tokens shared across everyone, so this does tighten things
+    under load - but a rate limit degrades to the local model through a
+    path that already exists and is tested, whereas a confidently wrong
+    answer degrades to nothing at all.
+    """
+    # `mode` no longer changes the answer. Code was already medium/high
+    # because a wrong answer there costs a debugging session; chat has
+    # now been measured into the same place, for the reason above. The
+    # argument is kept because the two bays are separate decisions that
+    # happen to agree today, and a future measurement could separate
+    # them again without changing every call site.
+    del mode
+    return "high" if strength == "deep" else "medium"

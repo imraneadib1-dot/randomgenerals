@@ -1,6 +1,6 @@
 {
   "appId": "com.randomgenerals.ai",
-  "appName": "pip 1.0",
+  "appName": "RandomGenerals",
   "webDir": "www",
   "server": {
     "url": "https://randomgenerals.com/app",

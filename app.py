@@ -50,6 +50,7 @@ import openai_api  # noqa: E402  OpenAI-compatible API - see openai_api.py
 import connectors  # noqa: E402  pasted links, turned into tools
 import keystore  # noqa: E402  provider-key encryption + TOTP
 import openrouter_api  # noqa: E402  DeepSeek for the code bay - see openrouter_api.py
+import groq_api  # noqa: E402  the fast channel - see groq_api.py
 import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
 import pixverse  # noqa: E402  paid text-to-video - see pixverse.py
 import hfvideo  # noqa: E402  free-tier text-to-video - see hfvideo.py
@@ -1964,7 +1965,7 @@ def stats_json():
 def terms_page():
     return _legal("terms", "Terms of Service", [
         {"heading": "What this is", "body": [
-            "pip 1.0 is a hosted assistant for chat, code, image "
+            "RandomGenerals is a hosted assistant for chat, code, image "
             "generation and video editing. Using it means accepting these "
             "terms.",
             "You must be at least 16, or old enough to enter a contract "
@@ -2261,8 +2262,9 @@ def acceptable_use_page():
             "images of real people.",
         ]},
         {"heading": "What this product is", "body": [
-            "pip 1.0 is an assistant owned and operated by Imrane "
-            "Adib. Its chat model is our own: an openly licensed "
+            "RandomGenerals is an assistant owned and operated by "
+            "Imrane Adib. Its chat model, pip 1.0, is our own: an "
+            "openly licensed "
             "base model, fine-tuned by us and run on hardware we "
             "operate. The base model's licence and notice are kept "
             "with the weights.",
@@ -5014,6 +5016,11 @@ BAY_ROUTES = {
         # and then the local ones carry the bay when the ceiling is
         # reached or no OpenRouter key is set.
         ("pip", "pip-1.0"),
+        # Groq next: gpt-oss-120b on dedicated accelerators streams at
+        # hundreds of tokens a second, and the key costs nothing. It is
+        # what answers "make me a website" in seconds while the engine
+        # is down - the free OpenRouter models took minutes for that.
+        ("groq", "gpt-oss-120b"),
         ("openrouter", "deepseek-v3.2"),
         ("openrouter", "deepseek-chat-v3"),
         ("openrouter", "laguna-s-2.1:free"),
@@ -5033,6 +5040,7 @@ BAY_ROUTES = {
         # bought about $10 of credit once, 1,000 after. They are what
         # answers while the engine is down, not a second default.
         ("pip", "pip-1.0"),
+        ("groq", "gpt-oss-120b"),
         ("openrouter", "nemotron-3-ultra-550b-a55b:free"),
         ("openrouter", "glm-5.2:free"),
         ("ollama", "gemma3:1b"),
@@ -5056,6 +5064,8 @@ BAY_ROUTES = {
         # :free models, the first thing to be rate-limited on a busy
         # afternoon.
         ("pip", "pip-1.0"),
+        ("groq", "qwen3.8-27b"),
+        ("groq", "qwen3.6-27b"),
         ("openrouter", "gemma-4-31b-it:free"),
         ("openrouter", "minimax-m3:free"),
         ("ollama", "gemma3:4b"),
@@ -5151,6 +5161,13 @@ def _vision_route():
                           if pattern in m.lower()), None)
             if match:
                 return "pip", match
+        elif provider_id == "groq":
+            if not (groq_api.configured() and groq_api.budget_ok()):
+                continue
+            match = next((m for m in groq_api.vision_models()
+                          if pattern in m.lower()), None)
+            if match:
+                return "groq", match
         elif provider_id == "openrouter":
             if not (openrouter_api.configured()
                     and openrouter_api.budget_ok()):
@@ -5239,6 +5256,29 @@ def _pip_model_for(mode: str) -> str | None:
     return pip_api.PREFERRED[0]
 
 
+def _groq_model_for(mode: str) -> str | None:
+    """The Groq model this bay would pick when it arrives on the fast
+    channel by failover rather than by choice. None when Groq cannot
+    answer at all."""
+    if not (groq_api.configured() and groq_api.models()):
+        return None
+    names = groq_api.models()
+    for provider_id, pattern in BAY_ROUTES.get(mode, BAY_ROUTES["chat"]):
+        if provider_id != "groq":
+            continue
+        match = next((n for n in names if pattern in n.lower()), None)
+        if match:
+            return match
+    return next((m for m in groq_api.PREFERRED if m in names), names[0])
+
+
+def _groq_has_room(plan) -> bool:
+    """Whether this plan may spend the shared per-minute budget now.
+    Pro skips the reserve: when the site is busy the fast channel is
+    what runs out, so being the one who still gets it is the benefit."""
+    return groq_api.budget_ok(priority=(plan == features.PRO))
+
+
 def _openrouter_model_for(mode: str) -> str | None:
     """The OpenRouter model this bay would pick when it arrives there by
     failover rather than by choice. None when OpenRouter cannot answer.
@@ -5294,18 +5334,24 @@ def _failover_chain(provider: str, mode: str) -> list[tuple[str, str]]:
     before it refused itself.
     """
     chain: list[tuple[str, str]] = []
-    if provider in ("ollama", "openrouter"):
+    if provider in ("ollama", "openrouter", "groq"):
         engine_model = _pip_model_for(mode)
         if engine_model:
             chain.append(("pip", engine_model))
-    if provider in ("pip", "openrouter"):
-        local = _local_alternative(mode)
-        if local:
-            chain.append(("ollama", local))
-    if provider in ("pip", "ollama"):
+    # Groq before the free OpenRouter models and the local one: it is
+    # the fastest thing here by a wide margin.
+    if provider != "groq":
+        fast = _groq_model_for(mode)
+        if fast:
+            chain.append(("groq", fast))
+    if provider in ("pip", "ollama", "groq"):
         free = _openrouter_model_for(mode)
         if free:
             chain.append(("openrouter", free))
+    if provider in ("pip", "openrouter", "groq"):
+        local = _local_alternative(mode)
+        if local:
+            chain.append(("ollama", local))
     # The table says what to prefer; the router says what has actually
     # been answering in the last ten minutes. A channel that is failing
     # or crawling right now goes to the back of the line rather than
@@ -5317,6 +5363,7 @@ _CHANNEL_NAMES = {
     "pip": pip_identity.FULL_NAME,
     "ollama": "the local model",
     "openrouter": "the backup channel",
+    "groq": "the fast channel",
 }
 
 
@@ -5494,7 +5541,8 @@ def _recommended_routes(providers, plan=None):
                  # picker that cannot answer. Ask the same guard the
                  # request will ask.
                  and (provider_id != "openrouter"
-                      or openrouter_api.budget_ok(m))), None)
+                      or openrouter_api.budget_ok(m))
+                 and (provider_id != "groq" or _groq_has_room(plan))), None)
             if not match:
                 continue
             # A channel the router has watched fail for the last ten
@@ -5536,6 +5584,24 @@ def list_providers():
             "available": bool(pip_models),
             "models": pip_models,
             "model_info": [describe_model(m, plan) for m in pip_models],
+            "note": note,
+        })
+
+    if groq_api.configured():
+        groq_models = groq_api.models()
+        remaining, resets_in = groq_api.budget_state()
+        if remaining is not None and remaining < 500:
+            note = ("At its per-minute limit - replies are coming from a "
+                    "backup model for about %ds." % max(1, int(resets_in)))
+        else:
+            note = ("Open-weight models on dedicated accelerators - the "
+                    "fastest replies here.")
+        providers.append({
+            "id": "groq",
+            "label": "RandomGenerals Turbo",
+            "available": bool(groq_models),
+            "models": groq_models,
+            "model_info": [describe_model(m, plan) for m in groq_models],
             "note": note,
         })
 
@@ -5595,6 +5661,11 @@ MODEL_DISPLAY_NAMES = {
     # ours
     pip_identity.MODEL_ID: (pip_identity.FULL_NAME,
                             "Our own model - chat, code and diagrams"),
+    # the fast channel (Groq)
+    "openai/gpt-oss-120b": ("GPT-OSS 120B", "Fastest strong model - code, websites, maths"),
+    "openai/gpt-oss-20b": ("GPT-OSS 20B", "Quickest cloud replies"),
+    "qwen/qwen3.8-27b": ("Qwen 3.8", "Sees images, answers in plain prose"),
+    "qwen/qwen3.6-27b": ("Qwen 3.6", "Sees images, balanced"),
     # backup channels
     "poolside/laguna-s-2.1:free": (
         "Laguna", "Free coding model - no cost beyond an account"),
@@ -5860,6 +5931,8 @@ def is_vision_model(model):
         return True
     if any(hint in name for hint in _VISION_MODEL_HINTS):
         return True
+    if name in {m.lower() for m in groq_api.VISION_MODELS}:
+        return True
     # pip 1.0 can see when the engine says its build can.
     if name in {m.lower() for m in pip_api.vision_models()}:
         return True
@@ -6075,6 +6148,7 @@ PROVIDER_STREAMERS = {
     "ollama": stream_ollama,
     "pip": pip_api.stream_chat,
     "openrouter": openrouter_api.stream_chat,
+    "groq": groq_api.stream_chat,
 }
 
 # The non-streamed turn each hosted provider uses inside the tool loop.
@@ -6083,6 +6157,7 @@ PROVIDER_STREAMERS = {
 PROVIDER_TURNS = {
     "pip": pip_api.chat_once,
     "openrouter": openrouter_api.chat_once,
+    "groq": groq_api.chat_once,
 }
 
 # Per account, and per PLAN - free connects one, Pro connects eight.
@@ -7369,6 +7444,25 @@ def _generation_options(mode: str, strength: str, plan: str,
     return options, wants
 
 
+# What a message that wants a tool tends to say: something current or
+# looked up (web_search), something to compute or run (run_python), or a
+# picture made (generate_image). A miss costs little - the model answers
+# from what it knows, and Deep mode always offers the tools - while a
+# false hit only costs the old, slower path. See the tool turn in
+# _stream_reply for why skipping it matters.
+_TOOL_HINT = re.compile(
+    r"\b(search|look(?:ing)? up|google|latest|news|today|tonight|"
+    r"yesterday|this (?:week|month|year)|right now|currently|current|"
+    r"price|prices|stock|weather|forecast|score|who won|release[ds]?|"
+    r"20[2-9]\d|https?://|www\.|"
+    r"run (?:this|it|the code)|execute|calculate|compute|evaluate|"
+    r"simulate|plot|"
+    r"draw|paint|sketch|"
+    r"(?:generate|make|create) (?:me )?(?:an? )?(?:image|picture|photo|"
+    r"illustration|drawing))\b",
+    re.IGNORECASE)
+
+
 def _owner_checked(question: str, pieces):
     """`pieces`, with the reply to an owner question checked before any
     of it is sent (pip_identity.enforce).
@@ -7628,6 +7722,21 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
         if features.FEATURES[plan]["external_connectors"]:
             extra, connector_map = _connector_tools(current_owner_id())
             tool_specs = tool_specs + extra
+        # NO TOOL TURN FOR A MESSAGE THAT NEEDS NO TOOL.
+        #
+        # The tool turn is fetched whole, so when the model answers
+        # without calling anything - which is most messages - the entire
+        # reply arrives in one block at the end. "Make a website" waited
+        # 150 seconds for its first character on the free OpenRouter
+        # model that way, then appeared all at once. Offered only when
+        # the message reads like it wants a search, a calculation run or
+        # a picture, in Deep mode, or when the person has connected
+        # apps; everything else streams from the first token.
+        if not (connector_map or strength == "deep"
+                or _TOOL_HINT.search(asked or "")):
+            tool_specs = None
+            connector_map = {}
+    if tool_specs is not None:
         # Say the tools exist, in the same breath as offering them.
         # Promising a calculator to a session that has none is worse
         # than silence, so this rides with tool_specs rather than being

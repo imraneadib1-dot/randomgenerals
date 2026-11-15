@@ -57,6 +57,7 @@ export const BAY_META = {
 export const PROVIDER_META = {
   ollama: { label: "pip 1.0" },
   pip: { label: "pip 1.0" },
+  groq: { label: "Turbo" },
   imagegen: { label: "Image" },
 };
 

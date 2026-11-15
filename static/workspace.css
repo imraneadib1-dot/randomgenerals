@@ -65,6 +65,12 @@
   --ws-gutter: #52525b;
 
   --ws-radius-pill: 26px;
+
+  /* Channel dots (providers.js reads var(--c-<id>)). */
+  --c-groq: #a5b4fc;
+  --c-groq-soft: rgba(165, 180, 252, 0.16);
+  --c-openrouter: #a1a1aa;
+  --c-openrouter-soft: rgba(161, 161, 170, 0.14);
   --ws-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 

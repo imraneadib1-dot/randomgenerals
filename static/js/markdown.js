@@ -387,7 +387,25 @@ function renderPlain(bubble, text, final) {
  * long reply cost O(n^2) in the tab it was arriving in. At the end,
  * once: code headers, highlighting, maths.
  */
+/* A page sent without its fence. Asked for a website, a model will
+   sometimes reply with the bare document - "<!doctype html>..." and no
+   ```html around it. Unfenced, that markup is sanitised and drawn as
+   stray elements in the bubble, and the workspace pane never sees a
+   page. When a reply has no fences at all, the document part of it is
+   fenced here - to the closing </html>, or to the end while it is
+   still streaming. */
+function fenceBareHtml(text) {
+  if (!text || text.includes("```")) return text;
+  const start = text.search(/<!doctype html|<html[\s>]/i);
+  if (start === -1) return text;
+  const close = text.toLowerCase().indexOf("</html>", start);
+  const end = close === -1 ? text.length : close + "</html>".length;
+  return text.slice(0, start) + "```html\n" + text.slice(start, end).trim()
+    + "\n```" + text.slice(end);
+}
+
 export function renderMarkdown(bubble, text, { final = true, live = false } = {}) {
+  text = fenceBareHtml(text);
   try {
     bubble.dataset.md = text;      // Save wants the source, not the DOM
   } catch (_) { /* a bubble without a dataset still renders */ }
