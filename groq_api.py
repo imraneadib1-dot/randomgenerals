@@ -633,7 +633,10 @@ def chat_once(model, history, tools=None, options=None, timeout=120):
         return None, "Could not reach Groq: %s" % e
     note_limits(r.headers)
     if r.status_code == 429:
-        raise RateLimited("per-minute token budget exhausted")
+        # Groq's own Retry-After, when it sends one: a few seconds for the
+        # per-minute budget, far longer once a model's DAILY allowance is
+        # spent - and only the number tells those two apart.
+        raise RateLimited(r.headers.get("retry-after") or "per-minute token budget exhausted")
     if r.status_code != 200:
         return None, "Groq error %d" % r.status_code
     try:

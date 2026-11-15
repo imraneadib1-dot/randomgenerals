@@ -8537,6 +8537,8 @@ def _builder_llm(usage: dict):
     waited out, visibly, rather than failed: the builder is allowed to
     take its time, and the next minute's budget is usually seconds away.
     """
+    daily_out: set[str] = set()      # models whose daily allowance is spent
+
     def llm(key, label, messages, max_tokens, effort, small):
         if _groq_only() or (groq_api.configured() and groq_api.models()):
             big = _groq_model_for("code") or groq_api.PREFERRED[0]
@@ -8546,6 +8548,7 @@ def _builder_llm(usage: dict):
         else:
             free = _openrouter_model_for("code")
             order = [("openrouter", free)] if free else []
+        order = [o for o in order if o[1] not in daily_out] or order
         if not order:
             raise RuntimeError("No model is available to build with.")
         opts = {"num_predict": max_tokens, "temperature": 0.4,
@@ -8572,11 +8575,30 @@ def _builder_llm(usage: dict):
             if isinstance(err, providers.ProviderUnavailable) or (
                     err and "429" in str(err)):
                 attempts += 1
-                if attempts > 6:
+                # How long Groq says to wait. Seconds means the per-minute
+                # budget, which is worth waiting out; many minutes means a
+                # model's DAILY allowance is spent, and waiting cannot fix
+                # that - the first live premium build spun for minutes on
+                # one before giving up.
+                try:
+                    told = float(str(err))
+                except (TypeError, ValueError):
+                    told = None
+                if told is not None and told > 90:
+                    daily_out.add(model)
+                    if all(m in daily_out for _, m in order):
+                        mins = max(1, int(told // 60))
+                        raise RuntimeError(
+                            "Groq's free daily limit is used up for now (it resets in "
+                            "about %s). A paid Groq plan removes this limit."
+                            % ("%d minutes" % mins if mins < 120 else "%d hours" % (mins // 60)))
+                    idx += 1          # the other model has its own allowance
+                    continue
+                if attempts > 8:
                     raise RuntimeError("The model stayed busy for too long.")
                 _left, resets_in = (groq_api.budget_state() if provider == "groq"
                                     else (None, None))
-                wait = int(min(60, max(5, (resets_in or 12) + 1)))
+                wait = int(min(60, max(5, (told or resets_in or 12) + 1)))
                 if attempts % 2 == 0 and len(order) > 1:
                     idx += 1          # try the other model next time
                 for remaining in range(wait, 0, -1):
