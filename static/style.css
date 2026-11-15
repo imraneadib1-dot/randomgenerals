@@ -1,5 +1,5 @@
 /* ============================================================
-   Design tokens - RandomGenerals.
+   Design tokens - pip 1.0.
 
    Three families, matching static/landing.css so the marketing page
    and the app read as one product:
@@ -4929,3 +4929,85 @@ dialog.confirm[open] { animation: toastIn 0.18s cubic-bezier(0.2, 0.8, 0.2, 1); 
   border-style: dashed;
 }
 .msg-actions .msg-action-retry { color: var(--bay); }
+
+/* ---- Multi-file answers, as a project rather than a stack ---- */
+
+.code-project {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  margin: 14px 0;
+  background: var(--surface);
+}
+
+/* Tabs left, actions right, on one strip - the shape of an editor, so
+   it is recognised before it is read. */
+.code-project-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
+  padding-right: 8px;
+}
+
+.code-project-tabs {
+  display: flex;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.code-project-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.code-tab {
+  flex: 0 0 auto;
+  padding: 9px 15px;
+  border: none;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  /* The active tab is marked from below, where a file tab is marked in
+     every editor people already use. */
+  border-bottom: 2px solid transparent;
+  transition: color 0.18s ease, background 0.18s ease;
+}
+
+.code-tab:hover {
+  color: var(--ink-soft);
+  background: var(--surface);
+}
+
+.code-tab.is-active {
+  color: var(--ink);
+  background: var(--surface);
+  border-bottom-color: var(--bay);
+}
+
+.code-tab:focus-visible {
+  outline: 2px solid var(--bay);
+  outline-offset: -2px;
+}
+
+.code-project-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+/* The blocks keep their own <pre> styling; the panel owns the chrome. */
+.code-project-body > .code-block {
+  border: none;
+  border-radius: 0;
+  margin: 0;
+}
+
+.code-project-body > .code-block[hidden] {
+  display: none;
+}

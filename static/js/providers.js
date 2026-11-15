@@ -46,8 +46,8 @@ export function selectProvider(id) {
   modelSelect.replaceChildren(
     ...p.models.map((m) => {
       const meta = info.get(m);
-      // The friendly name, not the routing string. "Max" says more to
-      // the person choosing than "openai/gpt-oss-120b" does, and the
+      // The friendly name, not the routing string. "DeepSeek V3" says more to
+      // the person choosing than "deepseek/deepseek-v3.2" does, and the
       // full id is still on the option's title for anyone who wants it.
       let label = (meta && meta.name) || m;
       if (meta && meta.locked) label += " — Pro";
@@ -133,7 +133,7 @@ export async function loadProviders() {
       modelSelect.innerHTML = "<option>no channel available</option>";
       modelSelect.disabled = true;
       channelNote.textContent =
-        "nothing trained yet — run: python brain/train.py";
+        "no model is answering — start Ollama, or set a provider key on the server";
       updateComposerHint();
     }
   } catch (err) {

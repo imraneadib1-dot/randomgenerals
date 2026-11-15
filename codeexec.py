@@ -38,6 +38,7 @@ If exposing this to genuine strangers at scale is ever the actual plan,
 the honest upgrade is running this step inside a container with
 --network none, not tightening subprocess flags further.
 """
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -182,17 +183,23 @@ def _apply_job_object_limit(pid):
         return None
 
 
-# Where sympy actually lives, resolved from this process's own imports
-# rather than guessed at. If it is not installed the list is empty, the
-# prelude is empty, and executed code simply cannot import it.
+# Where sympy actually lives, resolved from this process's own import
+# machinery rather than guessed at. If it is not installed the list is
+# empty, the prelude is empty, and executed code simply cannot import it.
+#
+# find_spec, not __import__. This used to import sympy to read its
+# __file__, which executes the whole package - three quarters of a
+# second and a few thousand modules, at app start, in a process that
+# never itself does any algebra. The spec carries the same path without
+# running anything.
 def _math_paths():
     paths = []
     for name in ("sympy", "mpmath"):
         try:
-            module = __import__(name)
-        except ImportError:
+            spec = importlib.util.find_spec(name)
+        except (ImportError, ValueError):
             continue
-        f = getattr(module, "__file__", None)
+        f = spec.origin if spec else None
         if not f:
             continue
         parent = os.path.dirname(os.path.dirname(os.path.abspath(f)))

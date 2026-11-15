@@ -5,15 +5,12 @@
     intent.predict("my flask app 500s on every post")
     # {'bay': 'code', 'bay_p': 0.97, 'web': False, 'deep': True, ...}
 
-WHY THIS ONE EXISTS NEXT TO rnn.py
+WHY A NETWORK THIS SMALL
 
-The character models in this folder learn which letter follows which.
-That is the whole of what they can do, and the README says so plainly.
-This one is small in the same way - plain NumPy, gradients derived by
-hand, no framework - but it is pointed at a job the site actually has,
-and at that job it beats a model a thousand times its size on the only
-measures that matter here: it answers in a tenth of a millisecond, on
-the CPU the VM already has, for nothing.
+Plain NumPy, gradients derived by hand, no framework - and pointed at a
+job the site actually has. At that job it beats a model a thousand
+times its size on the only measures that matter here: it answers in a
+tenth of a millisecond, on the CPU the VM already has, for nothing.
 
 The job is triage. Every message arriving at /api/chat raises three
 questions the app currently answers with guesses or with a switch the

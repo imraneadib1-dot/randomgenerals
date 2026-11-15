@@ -1,4 +1,4 @@
-# RandomGenerals — devlog
+# pip 1.0 — devlog
 
 A hosted AI assistant. Chat, code, image generation and diagrams, running
 on an Oracle Always Free ARM VM behind a Cloudflare tunnel, with accounts,
@@ -24,8 +24,8 @@ Numbers are read from the app's own dashboard, which counts on the server
 ## What it is
 
 One Flask app serving a website, a PWA, and the backend for an Electron
-desktop build. SQLite for storage. Replies come from `gpt-oss-120b` on
-Groq's free tier, with a local Ollama model as failover, image generation
+desktop build. SQLite for storage. Replies come from pip 1.0, the app's
+own fine-tuned model, with hosted and local models as failover, image generation
 through a keyless hosted API, and diagrams rendered client-side from
 Mermaid the model emits.
 
@@ -44,7 +44,8 @@ The free tier allows **8,000 tokens per minute for the whole key** —
 shared by every visitor at once. Almost every hard bug traces back to
 that number.
 
-Groq counts `prompt + max_tokens` **together** for a single request and
+The hosted channel the site first ran on counted `prompt + max_tokens`
+**together** for a single request and
 refuses with 413 when the sum is over. Nothing was measuring the sum, so
 once a conversation grew past about 5,400 tokens it could not be answered
 at all — every retry rebuilt the same oversized request and was refused

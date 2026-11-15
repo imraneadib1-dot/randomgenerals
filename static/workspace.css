@@ -1,0 +1,1643 @@
+/* ============================================================
+   Workspace - the glass theme and the split pane.
+
+   Loaded after style.css and layered over it.
+
+   1. THE CANVAS. Near-black (#09090B), not grey. A flat #212121
+      ground made every surface on it read as a slightly different
+      shade of the same mud; on true dark, a translucent pane with a lit
+      top edge actually reads as glass. Behind the conversation sit
+      three faint radial glows - indigo above, violet and cyan low - so
+      there is something for the glass to blur.
+
+   2. GLASS, IN ONE RECIPE. Every floating surface - the prompt
+      capsule, the mode pills, the suggestion cards, the + menu - is
+      the same four things: a 4-7% white fill, a backdrop blur, a 1px
+      8% white border, and a 10% white highlight along the top edge.
+      They are tokens (--ws-glass*), so they cannot drift apart.
+
+   3. THE WORKSPACE PANE (artifacts.js), further down.
+
+   style.css's own tokens are re-pointed rather than its rules edited,
+   so every component that reads var(--ink) or var(--panel) follows.
+   ============================================================ */
+
+:root {
+  --ws-canvas: #09090b;
+  --ws-1: #0d0d10;            /* frame: sidebar, pane */
+  --ws-2: #111114;            /* pane toolbar */
+  --ws-3: rgba(255, 255, 255, 0.05);   /* raised, inside glass */
+  --ws-4: rgba(255, 255, 255, 0.11);   /* selected segment */
+  --ws-line: rgba(255, 255, 255, 0.08);
+  --ws-line-strong: rgba(255, 255, 255, 0.12);
+  --ws-line-focus: rgba(255, 255, 255, 0.22);
+  --ws-hover: rgba(255, 255, 255, 0.06);
+  --ws-ink: #fafafa;
+  --ws-ink-2: #a1a1aa;
+  --ws-ink-3: #71717a;
+  --ws-primary: #fafafa;
+  --ws-on-primary: #09090b;
+  --ws-disabled: rgba(255, 255, 255, 0.12);
+  --ws-on-disabled: rgba(255, 255, 255, 0.4);
+
+  --ws-glass: rgba(255, 255, 255, 0.04);
+  --ws-glass-strong: rgba(255, 255, 255, 0.07);
+  --ws-glass-border: rgba(255, 255, 255, 0.08);
+  --ws-glass-border-strong: rgba(255, 255, 255, 0.16);
+  --ws-glass-hi: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  --ws-blur: blur(24px) saturate(160%);
+  --ws-menu: rgba(24, 24, 27, 0.88);
+  --ws-float: 0 12px 40px rgba(0, 0, 0, 0.45);
+  --ws-focus-glow:
+    0 0 0 4px rgba(129, 140, 248, 0.12),
+    0 14px 48px rgba(99, 102, 241, 0.22);
+
+  --ws-glow-1: rgba(99, 102, 241, 0.16);   /* indigo */
+  --ws-glow-2: rgba(168, 85, 247, 0.09);   /* violet */
+  --ws-glow-3: rgba(34, 211, 238, 0.06);   /* cyan */
+
+  /* Code stays dark in both themes - a code block is a quoted
+     artefact, and the highlighter's palette is drawn for a dark ground. */
+  --ws-editor: #0d0d10;
+  --ws-editor-bar: #17171b;
+  --ws-editor-ink: #e4e4e7;
+  --ws-editor-ink-2: #a1a1aa;
+  --ws-gutter: #52525b;
+
+  --ws-radius-pill: 26px;
+  --ws-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+:root[data-theme="light"] {
+  --ws-canvas: #fafafa;
+  --ws-1: #f4f4f5;
+  --ws-2: #ffffff;
+  --ws-3: rgba(0, 0, 0, 0.04);
+  --ws-4: #ffffff;
+  --ws-line: rgba(0, 0, 0, 0.08);
+  --ws-line-strong: rgba(0, 0, 0, 0.12);
+  --ws-line-focus: rgba(0, 0, 0, 0.24);
+  --ws-hover: rgba(0, 0, 0, 0.045);
+  --ws-ink: #09090b;
+  --ws-ink-2: #52525b;
+  --ws-ink-3: #71717a;
+  --ws-primary: #09090b;
+  --ws-on-primary: #ffffff;
+  --ws-disabled: rgba(0, 0, 0, 0.1);
+  --ws-on-disabled: rgba(0, 0, 0, 0.35);
+
+  --ws-glass: rgba(255, 255, 255, 0.65);
+  --ws-glass-strong: rgba(255, 255, 255, 0.85);
+  --ws-glass-border: rgba(0, 0, 0, 0.08);
+  --ws-glass-border-strong: rgba(0, 0, 0, 0.16);
+  --ws-glass-hi: inset 0 1px 0 rgba(255, 255, 255, 1);
+  --ws-menu: rgba(255, 255, 255, 0.92);
+  --ws-float: 0 12px 40px rgba(24, 24, 27, 0.1);
+  --ws-focus-glow:
+    0 0 0 4px rgba(99, 102, 241, 0.1),
+    0 14px 48px rgba(99, 102, 241, 0.12);
+
+  --ws-glow-1: rgba(99, 102, 241, 0.1);
+  --ws-glow-2: rgba(168, 85, 247, 0.06);
+  --ws-glow-3: rgba(34, 211, 238, 0.06);
+}
+
+/* ---- style.css's tokens, re-pointed ------------------------------------ */
+:root {
+  --font-display: "Inter", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, sans-serif;
+  --dur: 200ms;
+}
+
+:root:not([data-theme="light"]) {
+  --sky-top: #09090b;
+  --sky-mid: #09090b;
+  --sky-bottom: #09090b;
+  --surface: rgba(255, 255, 255, 0.04);
+  --surface-raised: rgba(255, 255, 255, 0.06);
+  --panel: #0d0d10;
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --edge-lit: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --ink: #fafafa;
+  --ink-soft: #a1a1aa;
+  --ink-faint: #71717a;
+  --ink-on-sky: #fafafa;
+  --ink-on-sky-soft: rgba(250, 250, 250, 0.7);
+  --glass-1: rgba(255, 255, 255, 0.04);
+  --glass-2: rgba(255, 255, 255, 0.07);
+  --hairline: rgba(255, 255, 255, 0.08);
+  --topbar-ground: rgba(9, 9, 11, 0.7);
+  --modal-ground: rgba(17, 17, 20, 0.96);
+  --user-bubble: rgba(255, 255, 255, 0.06);
+  --shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 24px 64px rgba(0, 0, 0, 0.6);
+  --shadow-soft: 0 6px 20px rgba(0, 0, 0, 0.4);
+  --ground: 9 9 11;
+  --credit-mid: #a1a1aa;
+
+  /* One accent, and it is the ink. A colour picked in Settings >
+     Appearance still wins: appearance.js writes these on the root
+     element's style, which beats any stylesheet. */
+  --bay-code: #fafafa;
+  --bay-chat: #fafafa;
+  --bay-image: #fafafa;
+  --bay-video: #fafafa;
+  --bay-code-soft: rgba(255, 255, 255, 0.08);
+  --bay-chat-soft: rgba(255, 255, 255, 0.08);
+  --bay-image-soft: rgba(255, 255, 255, 0.08);
+  --bay-video-soft: rgba(255, 255, 255, 0.08);
+  --deck: #fafafa;
+  --deck-soft: rgba(255, 255, 255, 0.08);
+  --on-accent: #09090b;
+}
+
+:root[data-theme="light"] {
+  --sky-top: #fafafa;
+  --sky-mid: #fafafa;
+  --sky-bottom: #fafafa;
+  --surface: rgba(0, 0, 0, 0.035);
+  --surface-raised: #ffffff;
+  --panel: #ffffff;
+  --border: rgba(0, 0, 0, 0.12);
+  --border-strong: rgba(0, 0, 0, 0.2);
+  --edge-lit: none;
+  --ink: #09090b;
+  --ink-soft: #52525b;
+  --ink-faint: #71717a;
+  --ink-on-sky: #09090b;
+  --ink-on-sky-soft: rgba(9, 9, 11, 0.7);
+  --glass-1: rgba(0, 0, 0, 0.03);
+  --glass-2: rgba(0, 0, 0, 0.055);
+  --hairline: rgba(0, 0, 0, 0.08);
+  --topbar-ground: rgba(250, 250, 250, 0.8);
+  --modal-ground: #ffffff;
+  --user-bubble: rgba(0, 0, 0, 0.045);
+  --on-accent: #ffffff;
+  --bay-code: #09090b;
+  --bay-chat: #09090b;
+  --bay-image: #09090b;
+  --bay-video: #09090b;
+  --bay-code-soft: rgba(0, 0, 0, 0.06);
+  --bay-chat-soft: rgba(0, 0, 0, 0.06);
+  --bay-image-soft: rgba(0, 0, 0, 0.06);
+  --bay-video-soft: rgba(0, 0, 0, 0.06);
+  --deck: #09090b;
+  --deck-soft: rgba(0, 0, 0, 0.06);
+}
+
+/* High contrast came after the theme in style.css; it has to come
+   after it here too, or the lines above would quietly undo it. */
+:root[data-contrast="high"]:not([data-theme="light"]) {
+  --border: rgba(255, 255, 255, 0.3);
+  --hairline: rgba(255, 255, 255, 0.18);
+  --ws-line: rgba(255, 255, 255, 0.18);
+  --ws-line-strong: rgba(255, 255, 255, 0.28);
+  --ws-glass-border: rgba(255, 255, 255, 0.22);
+  --ink-soft: #d4d4d8;
+  --ink-faint: #a1a1aa;
+  --ws-ink-2: #d4d4d8;
+  --ws-ink-3: #a1a1aa;
+}
+:root[data-theme="light"][data-contrast="high"] {
+  --border: rgba(0, 0, 0, 0.3);
+  --hairline: rgba(0, 0, 0, 0.2);
+  --ws-line: rgba(0, 0, 0, 0.2);
+  --ws-line-strong: rgba(0, 0, 0, 0.3);
+  --ws-glass-border: rgba(0, 0, 0, 0.24);
+  --ink-soft: #27272a;
+  --ink-faint: #3f3f46;
+  --ws-ink-2: #27272a;
+  --ws-ink-3: #3f3f46;
+}
+
+/* Every control eases the same way, at the same speed. :where() so a
+   component that sets its own transition keeps it. */
+:where(button, a, select, input, textarea, [role="tab"], [role="menuitem"]) {
+  transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+  transition-duration: 200ms;
+  transition-timing-function: var(--ws-ease);
+}
+
+::selection {
+  background: rgba(129, 140, 248, 0.32);
+  color: inherit;
+}
+
+/* ============================================================
+   The frame
+   ============================================================ */
+html,
+body {
+  background: var(--ws-canvas);
+}
+body,
+html.time-night body {
+  background-image: none;
+}
+
+/* The old sky decoration: replaced by the glow behind .main. */
+.bg-glow,
+.sky-decor {
+  display: none;
+}
+
+/* The top bar holds the brand and the account, nothing in the middle -
+   the modes moved under the input. */
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  background: var(--topbar-ground);
+  -webkit-backdrop-filter: var(--ws-blur);
+  backdrop-filter: var(--ws-blur);
+  border-bottom: 1px solid var(--ws-line);
+  box-shadow: none;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+.brand-mark {
+  background: transparent;
+  color: var(--ws-ink);
+  box-shadow: none;
+}
+.brand-name {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.account-btn {
+  background: var(--ws-glass);
+  border-color: var(--ws-glass-border);
+  box-shadow: var(--ws-glass-hi);
+}
+.account-btn:hover {
+  background: var(--ws-glass-strong);
+  border-color: var(--ws-glass-border-strong);
+}
+
+.sidebar {
+  background: var(--ws-1);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-right: 1px solid var(--ws-line);
+}
+
+/* The workspace ground, and the light the glass sits in. */
+.main {
+  background:
+    radial-gradient(70% 55% at 50% -10%, var(--ws-glow-1), transparent 70%),
+    radial-gradient(45% 45% at 8% 95%, var(--ws-glow-2), transparent 70%),
+    radial-gradient(45% 45% at 95% 85%, var(--ws-glow-3), transparent 70%),
+    var(--ws-canvas);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* NO SUB-HEADER. "New chat" and a bare "delete" link were a second
+   bar restating the sidebar: the open conversation is already marked
+   there, and every row there has its own delete. Kept in the DOM (and
+   hidden) because sidebar.js and bays.js still write to it. */
+.panel-header {
+  display: none !important;
+}
+
+/* White type on the accent, everywhere it was written as #fff. With the
+   accent now the ink colour, that type has to be the ground colour. */
+.boot-mark,
+.auth-submit,
+.memory-save-btn,
+.name-prompt button,
+.video-go,
+.plan-btn-primary {
+  color: var(--ws-on-primary);
+}
+.boot-mark svg {
+  stroke: var(--ws-on-primary);
+}
+.mode-toggle[aria-checked="true"] .mode-toggle-thumb {
+  background: var(--ws-on-primary);
+}
+.plan-btn-primary {
+  box-shadow: none;
+}
+
+/* ============================================================
+   The empty state - greeting, cards, input and modes as one group
+   ============================================================ */
+/* chrome.js sets .is-empty while there is no message. The shell then
+   shrinks to its content and the whole stack centres, a little above
+   the middle (the ::after is the weight underneath). */
+.main.is-empty {
+  justify-content: center;
+}
+.main.is-empty .chat-shell {
+  flex: 0 1 auto;
+}
+.main.is-empty::after {
+  content: "";
+  flex: 0 0 12vh;
+}
+.main.is-empty .chat-log {
+  min-height: 0;
+  padding-bottom: 20px;
+}
+.main.is-empty .composer-hint {
+  display: none;
+}
+
+.empty-state {
+  max-width: 640px;
+}
+.empty-mark {
+  width: 44px;
+  margin-bottom: 20px;
+  color: var(--ws-ink);
+  filter: none;
+}
+.greeting {
+  font-size: clamp(1.75rem, 3.2vw, 2.25rem);
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.1;
+  margin-bottom: 4px;
+  background: linear-gradient(180deg, var(--ws-ink) 35%, var(--ws-ink-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.greeting-edit {
+  color: var(--ws-ink-3);
+  font-size: 13px;
+  letter-spacing: -0.005em;
+}
+.greeting-edit:hover {
+  color: var(--ws-ink-2);
+  background: var(--ws-hover);
+}
+
+/* Compact glass cards, two by two. Not selectable: they are buttons,
+   and a drag or a double-click across one left a selection highlight
+   sitting on the card like a fault. */
+.starters {
+  gap: 10px;
+  margin: 28px auto 0;
+  max-width: 600px;
+}
+.starters button {
+  display: flex;
+  align-items: center;
+  min-height: 52px;
+  padding: 11px 15px;
+  border-radius: 16px;
+  text-align: left;
+  font-size: 13.5px;
+  line-height: 1.4;
+  letter-spacing: -0.005em;
+  color: var(--ws-ink-2);
+  background: var(--ws-glass);
+  border: 1px solid var(--ws-glass-border);
+  box-shadow: var(--ws-glass-hi);
+  -webkit-backdrop-filter: var(--ws-blur);
+  backdrop-filter: var(--ws-blur);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: all 200ms var(--ws-ease);
+}
+.starters button:hover {
+  color: var(--ws-ink);
+  background: var(--ws-glass-strong);
+  border-color: var(--ws-glass-border-strong);
+  transform: translateY(-2px);
+  box-shadow: var(--ws-glass-hi), 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+.starters button:active {
+  transform: translateY(0) scale(0.99);
+}
+.starters button:focus-visible {
+  outline: 2px solid var(--ws-glass-border-strong);
+  outline-offset: 2px;
+}
+/* Two by two down to phone width; one column only where two would
+   leave each card a word wide. */
+@media (max-width: 520px) {
+  .starters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 22px;
+  }
+  .starters button {
+    min-height: 64px;
+    padding: 10px 12px;
+    font-size: 13px;
+  }
+}
+@media (max-width: 340px) {
+  .starters {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================================
+   The conversation
+   ============================================================ */
+.chat-log {
+  max-width: 800px;
+  padding: 32px 24px 24px;
+  gap: 28px;
+}
+
+/* A reply spans the column - it used to shrink to its content, which
+   drew a twenty-line code block as a narrow card. Prose keeps its
+   measure; blocks get the room. */
+.msg.assistant {
+  align-self: stretch;
+  max-width: none;
+}
+.msg.assistant .msg-bubble {
+  align-self: stretch;
+  max-width: none;
+}
+.msg.assistant .msg-bubble > :is(p, ul, ol, blockquote, h1, h2, h3, h4) {
+  max-width: 72ch;
+}
+
+/* Your own message needs no label: it is the one on the right, in the
+   glass bubble. The model's line stays as a quiet caption. */
+.msg.user .msg-role {
+  display: none;
+}
+.msg-role {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--ws-ink-3);
+}
+.msg.user {
+  max-width: min(85%, 640px);
+}
+.msg.user .msg-bubble {
+  background: var(--user-bubble);
+  border: 1px solid var(--ws-glass-border);
+  border-radius: 20px;
+  box-shadow: var(--ws-glass-hi);
+  padding: 10px 18px;
+  color: var(--ws-ink);
+}
+
+/* Code in the conversation: the editor ground, a bar a step lighter,
+   and controls that are text until hovered. */
+.code-block {
+  background: var(--ws-editor);
+  border: 1px solid var(--ws-line);
+  border-radius: 14px;
+  transition: box-shadow 200ms var(--ws-ease);
+}
+.code-block-header {
+  justify-content: flex-start;
+  gap: 2px;
+  padding: 5px 6px 5px 14px;
+  background: var(--ws-editor-bar);
+  border-bottom: 0;
+  font-family: var(--font-body);
+  font-size: 12px;
+  color: var(--ws-editor-ink-2);
+}
+.code-block-header > span:first-child {
+  margin-right: auto;
+}
+.code-block-header .copy-btn,
+.code-project-actions .copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: transparent;
+  color: var(--ws-editor-ink-2);
+  font-family: var(--font-body);
+  font-size: 12px;
+  transition: all 200ms var(--ws-ease);
+}
+.code-block-header .copy-btn:hover,
+.code-project-actions .copy-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+.code-block pre {
+  color: var(--ws-editor-ink);
+  padding: 14px 16px;
+}
+.code-project-bar {
+  background: var(--ws-editor-bar);
+}
+.code-block.is-in-pane {
+  box-shadow: 0 0 0 1px var(--ws-line-focus);
+}
+
+/* ============================================================
+   The composer - a floating glass capsule
+   ============================================================ */
+.composer {
+  padding: 6px 16px 8px;
+}
+.attach-chips {
+  max-width: 768px;
+}
+.composer-form {
+  position: relative;
+  max-width: 768px;
+  align-items: flex-end;
+  gap: 4px;
+  padding: 8px;
+  background: var(--ws-glass);
+  -webkit-backdrop-filter: var(--ws-blur);
+  backdrop-filter: var(--ws-blur);
+  border: 1px solid var(--ws-glass-border);
+  border-radius: var(--ws-radius-pill);
+  box-shadow: var(--ws-glass-hi), var(--ws-float);
+  transition:
+    border-color 200ms var(--ws-ease),
+    background-color 200ms var(--ws-ease),
+    box-shadow 200ms var(--ws-ease);
+}
+.composer-form:focus-within {
+  background: var(--ws-glass-strong);
+  border-color: var(--ws-glass-border-strong);
+  box-shadow: var(--ws-glass-hi), var(--ws-focus-glow);
+  transform: none;
+}
+.main.is-empty .composer-form {
+  padding: 10px;
+}
+.composer-input {
+  font-size: 15px;
+  line-height: 1.5;
+  padding: 8px 6px;
+  letter-spacing: -0.005em;
+  color: var(--ws-ink);
+}
+.composer-input::placeholder {
+  color: var(--ws-ink-3);
+}
+
+.attach-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  color: var(--ws-ink-2);
+  transition: all 200ms var(--ws-ease);
+}
+.attach-btn:hover,
+.plus-btn[aria-expanded="true"] {
+  background: var(--ws-hover);
+  color: var(--ws-ink);
+}
+.plus-btn svg {
+  transition: transform 200ms var(--ws-ease);
+}
+.plus-btn[aria-expanded="true"] svg {
+  transform: rotate(45deg);
+}
+
+/* High contrast, and the only filled object on the page. */
+.send-btn {
+  width: 36px;
+  height: 36px;
+  background: var(--ws-primary);
+  color: var(--ws-on-primary);
+  box-shadow: 0 2px 12px rgba(255, 255, 255, 0.08);
+  transition: all 200ms var(--ws-ease);
+}
+:root[data-theme="light"] .send-btn {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+}
+.send-btn:hover:not(:disabled) {
+  filter: none;
+  transform: scale(1.06);
+  box-shadow: 0 4px 18px rgba(255, 255, 255, 0.14);
+}
+.send-btn:disabled {
+  opacity: 1;
+  background: var(--ws-disabled);
+  color: var(--ws-on-disabled);
+  box-shadow: none;
+}
+.send-btn.is-streaming,
+.send-btn.is-streaming:disabled {
+  background: var(--ws-primary);
+  color: var(--ws-on-primary);
+  box-shadow: none;
+  animation: none;
+}
+
+.composer-hint {
+  color: var(--ws-ink-3);
+}
+
+/* ---- the + menu ---- */
+.plus-wrap {
+  position: relative;
+  flex: none;
+  align-self: flex-end;
+}
+.composer-menu {
+  position: absolute;
+  left: -2px;
+  bottom: calc(100% + 12px);
+  z-index: 30;
+  min-width: 248px;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--ws-menu);
+  -webkit-backdrop-filter: var(--ws-blur);
+  backdrop-filter: var(--ws-blur);
+  border: 1px solid var(--ws-glass-border);
+  box-shadow: var(--ws-glass-hi), 0 18px 50px rgba(0, 0, 0, 0.5);
+  transform-origin: bottom left;
+  animation: wsMenuIn 180ms var(--ws-ease) both;
+}
+@keyframes wsMenuIn {
+  from { opacity: 0; transform: translateY(6px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+.composer-menu-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--ws-ink);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.composer-menu-item svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--ws-ink-2);
+}
+.composer-menu-item:hover,
+.composer-menu-item:focus-visible {
+  background: var(--ws-hover);
+  outline: none;
+}
+.composer-menu-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.composer-menu-text small {
+  font-size: 12px;
+  color: var(--ws-ink-3);
+}
+
+/* ============================================================
+   The mode dock - glass pills under the input
+   ============================================================ */
+.mode-dock {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  padding: 2px 16px 14px;
+}
+.main.is-empty .mode-dock {
+  padding-top: 12px;
+}
+.mode-dock .bay-switch {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+.mode-dock .bay-btn {
+  gap: 7px;
+  padding: 7px 14px 7px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--ws-glass-border);
+  background: var(--ws-glass);
+  -webkit-backdrop-filter: var(--ws-blur);
+  backdrop-filter: var(--ws-blur);
+  box-shadow: var(--ws-glass-hi);
+  color: var(--ws-ink-2);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: all 200ms var(--ws-ease);
+}
+.mode-dock .bay-btn:hover {
+  color: var(--ws-ink);
+  background: var(--ws-glass-strong);
+  border-color: var(--ws-glass-border-strong);
+}
+.mode-dock .bay-btn[aria-selected="true"] {
+  color: var(--ws-ink);
+  background: var(--ws-4);
+  border-color: var(--ws-glass-border-strong);
+}
+.mode-dock .bay-btn:active {
+  transform: scale(0.97);
+}
+.mode-dock .bay-icon {
+  display: inline-grid;
+  place-items: center;
+  font-family: var(--font-body);
+  font-size: 12px;
+  opacity: 0.75;
+}
+.mode-dock .bay-btn[aria-selected="true"] .bay-icon {
+  color: currentColor;
+  opacity: 1;
+}
+/* style.css hides tab labels on phones - that was for a crowded top
+   bar. Under the input there is room for the words. */
+.mode-dock .bay-btn span:not(.bay-icon) {
+  display: inline;
+}
+/* One row on a phone: four pills that wrap 3 + 1 read as a list
+   with a straggler, not as a set of modes. */
+@media (max-width: 440px) {
+  .mode-dock .bay-switch {
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+  .mode-dock .bay-btn {
+    gap: 5px;
+    padding: 6px 10px 6px 9px;
+    font-size: 12.5px;
+  }
+}
+
+/* ============================================================
+   The workspace pane
+   ============================================================ */
+.pane-resizer {
+  display: none;
+  position: relative;
+  flex: none;
+  width: 1px;
+  background: var(--ws-line);
+  cursor: col-resize;
+  z-index: 2;
+  touch-action: none;
+}
+/* The line is a pixel; the thing you grab is not. */
+.pane-resizer::before {
+  content: "";
+  position: absolute;
+  inset: 0 -5px;
+}
+.pane-resizer::after {
+  content: "";
+  position: absolute;
+  inset: 0 -1px;
+  background: var(--ws-ink-3);
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease);
+}
+.pane-resizer:hover::after,
+.pane-resizer:focus-visible::after,
+.app.is-resizing .pane-resizer::after {
+  opacity: 0.6;
+}
+.pane-resizer:focus-visible {
+  outline: none;
+}
+.app.artifact-open .pane-resizer {
+  display: block;
+}
+
+.artifact-pane {
+  flex: none;
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--ws-1);
+  transition: width var(--dur-slow) var(--ease);
+}
+.app.artifact-open .artifact-pane {
+  width: var(--pane-w, 50%);
+}
+
+/* The inside is the full width from the first frame, and the pane's
+   width uncovers it - so the slide-in is a reveal, not forty frames of
+   the toolbar re-wrapping. */
+.artifact-inner {
+  width: var(--pane-w, 50vw);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  transform: translateX(24px);
+  transition:
+    opacity var(--dur) var(--ease),
+    transform var(--dur-slow) var(--ease);
+}
+.app.artifact-open .artifact-inner {
+  opacity: 1;
+  transform: none;
+}
+
+/* While dragging, nothing animates, nothing is selected, and the
+   previewed page does not swallow the pointer. */
+.app.is-resizing {
+  cursor: col-resize;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.app.is-resizing .artifact-pane,
+.app.is-resizing .sidebar {
+  transition: none;
+}
+.app.is-resizing iframe {
+  pointer-events: none;
+}
+
+/* ---- toolbar ---- */
+.artifact-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  min-height: 52px;
+  padding: 8px 8px 8px 14px;
+  background: var(--ws-2);
+  border-bottom: 1px solid var(--ws-line);
+  flex-shrink: 0;
+}
+.artifact-id {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1 1 160px;
+  min-width: 0;
+}
+.artifact-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--ws-3);
+  color: var(--ws-ink-2);
+}
+.artifact-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ws-ink);
+}
+.artifact-lang {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ws-ink-3);
+}
+
+.artifact-views {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 10px;
+  background: var(--ws-3);
+}
+.artifact-views button {
+  border: 0;
+  border-radius: 8px;
+  padding: 5px 12px;
+  background: transparent;
+  color: var(--ws-ink-2);
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+.artifact-views button:hover {
+  color: var(--ws-ink);
+}
+.artifact-views button[aria-selected="true"] {
+  background: var(--ws-4);
+  color: var(--ws-ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.artifact-versions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+.artifact-version-label {
+  min-width: 52px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ws-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.artifact-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.ws-icon-btn,
+.ws-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ws-ink-2);
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+.ws-icon-btn {
+  width: 32px;
+}
+.ws-btn {
+  padding: 0 10px;
+}
+.ws-icon-btn:hover:not(:disabled),
+.ws-btn:hover:not(:disabled) {
+  background: var(--ws-hover);
+  color: var(--ws-ink);
+}
+.ws-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.ws-icon-btn:focus-visible,
+.ws-btn:focus-visible,
+.artifact-views button:focus-visible,
+.artifact-tab:focus-visible {
+  outline: 2px solid var(--ws-line-focus);
+  outline-offset: -2px;
+}
+
+/* ---- file tabs ---- */
+.artifact-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  background: var(--ws-2);
+  border-bottom: 1px solid var(--ws-line);
+  flex-shrink: 0;
+}
+.artifact-tabs::-webkit-scrollbar {
+  display: none;
+}
+.artifact-tab {
+  flex: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 9px 10px 7px;
+  background: none;
+  color: var(--ws-ink-3);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease);
+}
+.artifact-tab:hover {
+  color: var(--ws-ink-2);
+}
+.artifact-tab[aria-selected="true"] {
+  color: var(--ws-ink);
+  border-bottom-color: var(--ws-ink);
+}
+
+/* ---- body ---- */
+.artifact-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--ws-editor);
+}
+
+.artifact-code {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  display: flex;
+  align-items: flex-start;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+/* Gutter and source share one font, size and leading, so line n of one
+   sits beside line n of the other without either knowing about it. */
+.artifact-gutter,
+.artifact-source {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+.artifact-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: none;
+  min-height: 100%;
+  padding: 16px 12px 32px 16px;
+  text-align: right;
+  color: var(--ws-gutter);
+  background: var(--ws-editor);
+  -webkit-user-select: none;
+  user-select: none;
+}
+.artifact-source {
+  flex: 1 0 auto;
+  padding: 16px 24px 32px 12px;
+  color: var(--ws-editor-ink);
+  tab-size: 2;
+}
+.artifact-source code,
+.artifact-source code.hljs {
+  display: block;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  white-space: pre;
+}
+
+.artifact-preview {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  background: var(--ws-2);
+  scrollbar-width: thin;
+}
+.artifact-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #ffffff;
+}
+
+/* A markdown document, drawn with the conversation's own prose styles
+   but at document width, not as a message. */
+.artifact-doc.msg {
+  max-width: 72ch;
+  margin: 0 auto;
+  padding: 28px 32px 48px;
+  animation: none;
+}
+.artifact-doc .msg-bubble {
+  max-width: none;
+}
+
+/* ---- narrow screens: a sheet, not a column ---- */
+@media (max-width: 1023.98px) {
+  .app.artifact-open .pane-resizer {
+    display: none;
+  }
+  /* .app is its own stacking context (z-index 1), so the sheet's
+     z-index only counts inside it - the topbar and the menu button
+     would paint over its toolbar. Lift the whole layer while open. */
+  .app.artifact-open {
+    z-index: 30;
+  }
+  .artifact-pane,
+  .app.artifact-open .artifact-pane {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    width: 100%;
+  }
+  .artifact-pane {
+    visibility: hidden;
+    transform: translateX(100%);
+    transition:
+      transform var(--dur-slow) var(--ease),
+      visibility 0s linear var(--dur-slow);
+  }
+  .app.artifact-open .artifact-pane {
+    visibility: visible;
+    transform: none;
+    transition: transform var(--dur-slow) var(--ease);
+  }
+  .artifact-inner,
+  .app.artifact-open .artifact-inner {
+    width: 100%;
+    opacity: 1;
+    transform: none;
+  }
+  .artifact-bar {
+    padding-top: max(8px, env(safe-area-inset-top));
+  }
+}
+
+@media (max-width: 640px) {
+  .chat-log {
+    padding: 20px 14px 16px;
+    gap: 22px;
+  }
+  .composer {
+    padding: 4px 10px 10px;
+  }
+  .ws-btn span {
+    display: none;
+  }
+  .ws-btn {
+    width: 32px;
+    padding: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .artifact-pane,
+  .artifact-inner,
+  .pane-resizer::after {
+    transition: none !important;
+  }
+}
+html[data-motion="reduced"] .artifact-pane,
+html[data-motion="reduced"] .artifact-inner {
+  transition: none !important;
+}
+
+/* ============================================================
+   The profile row and its menu - the foot of the sidebar
+   ============================================================ */
+.sidebar-bottom {
+  border-top: 0;
+  padding-top: 8px;
+  margin-top: 8px;
+}
+.profile-wrap {
+  position: relative;
+  flex-shrink: 0;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--ws-line);
+}
+.profile-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ws-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 200ms var(--ws-ease);
+}
+.profile-row:hover,
+.profile-row[aria-expanded="true"] {
+  background: var(--ws-hover);
+}
+.profile-avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+  background: linear-gradient(135deg, #6366f1, #a855f7 60%, #22d3ee);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+.profile-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.profile-name,
+.profile-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.profile-name {
+  font-size: 13.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+.profile-sub {
+  font-size: 12px;
+  color: var(--ws-ink-3);
+}
+.profile-chevron {
+  flex: none;
+  color: var(--ws-ink-3);
+}
+
+.profile-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 40;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--ws-menu);
+  -webkit-backdrop-filter: var(--ws-blur);
+  backdrop-filter: var(--ws-blur);
+  border: 1px solid var(--ws-glass-border);
+  box-shadow: var(--ws-glass-hi), 0 18px 50px rgba(0, 0, 0, 0.5);
+  transform-origin: bottom left;
+  animation: wsMenuIn 180ms var(--ws-ease) both;
+}
+.profile-menu-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 10px;
+}
+.profile-menu-head .profile-name {
+  font-size: 13px;
+}
+.profile-theme {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  margin: 0 2px 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--ws-3);
+}
+.profile-theme button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 4px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--ws-ink-2);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.profile-theme button:hover {
+  color: var(--ws-ink);
+}
+.profile-theme button[aria-pressed="true"] {
+  background: var(--ws-4);
+  color: var(--ws-ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+.profile-menu-sep {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--ws-line);
+}
+.profile-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--ws-ink);
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.profile-menu-item svg {
+  flex: none;
+  color: var(--ws-ink-2);
+}
+#profileUpgrade svg {
+  color: #a5b4fc;
+}
+:root[data-theme="light"] #profileUpgrade svg {
+  color: #6366f1;
+}
+.profile-menu-item:hover,
+.profile-menu-item:focus-visible,
+.profile-theme button:focus-visible {
+  background: var(--ws-hover);
+  outline: none;
+}
+
+/* Collapsed: just the avatar, and the menu opens beside the rail
+   instead of being clipped by it. */
+.app.sidebar-collapsed .sidebar > .profile-wrap {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  width: auto;
+  pointer-events: auto;
+  border-top-color: transparent;
+}
+.app.sidebar-collapsed .profile-row {
+  justify-content: center;
+  padding: 6px 0;
+}
+.app.sidebar-collapsed .profile-row .profile-text,
+.app.sidebar-collapsed .profile-chevron {
+  display: none;
+}
+.app.sidebar-collapsed .profile-menu {
+  position: fixed;
+  left: 64px;
+  right: auto;
+  bottom: 14px;
+  width: 264px;
+}
+
+/* ============================================================
+   The model picker - top left of the chat
+   ============================================================ */
+.main {
+  position: relative;
+}
+.chat-toolbar {
+  position: absolute;
+  top: 10px;
+  left: 14px;
+  z-index: 6;
+  display: flex;
+  gap: 8px;
+  pointer-events: none;
+}
+.chat-toolbar > * {
+  pointer-events: auto;
+}
+.main.is-studio .chat-toolbar {
+  display: none;
+}
+.main:not(.is-empty) .chat-log {
+  padding-top: 64px;
+}
+
+.model-picker {
+  position: relative;
+}
+.model-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 10px 0 13px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ws-ink);
+  font-family: var(--font-body);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  cursor: pointer;
+  transition: all 200ms var(--ws-ease);
+}
+.model-pill:hover,
+.model-pill[aria-expanded="true"] {
+  background: var(--ws-glass);
+  border-color: var(--ws-glass-border);
+  box-shadow: var(--ws-glass-hi);
+  -webkit-backdrop-filter: var(--ws-blur);
+  backdrop-filter: var(--ws-blur);
+}
+.model-pill-name {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-pill-tag,
+.model-option-pro {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: #c7d2fe;
+  background: rgba(129, 140, 248, 0.16);
+  border: 1px solid rgba(129, 140, 248, 0.25);
+}
+:root[data-theme="light"] .model-pill-tag,
+:root[data-theme="light"] .model-option-pro {
+  color: #4338ca;
+  background: rgba(99, 102, 241, 0.1);
+}
+.model-pill-chevron {
+  color: var(--ws-ink-3);
+  transition: transform 200ms var(--ws-ease);
+}
+.model-pill[aria-expanded="true"] .model-pill-chevron {
+  transform: rotate(180deg);
+}
+
+.model-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 40;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: 18px;
+  background: var(--ws-menu);
+  -webkit-backdrop-filter: var(--ws-blur);
+  backdrop-filter: var(--ws-blur);
+  border: 1px solid var(--ws-glass-border);
+  box-shadow: var(--ws-glass-hi), 0 18px 50px rgba(0, 0, 0, 0.5);
+  scrollbar-width: thin;
+  transform-origin: top left;
+  animation: wsPanelIn 180ms var(--ws-ease) both;
+}
+@keyframes wsPanelIn {
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.model-panel .patch-bay-label,
+.model-panel-label {
+  margin: 0;
+  padding: 8px 10px 6px;
+  font-family: var(--font-body);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ws-ink-3);
+}
+
+/* Channels: a row of small glass pills, not a grid of tiles. */
+.model-panel .channel-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 6px 4px;
+}
+.model-panel .channel-btn {
+  flex-direction: row;
+  gap: 7px;
+  padding: 6px 11px 6px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--ws-glass-border);
+  background: var(--ws-glass);
+  color: var(--ws-ink-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.model-panel .channel-btn:not(:disabled):hover {
+  color: var(--ws-ink);
+  background: var(--ws-glass-strong);
+}
+.model-panel .channel-btn.active {
+  color: var(--ws-ink);
+  background: var(--ws-4);
+  border-color: var(--ws-glass-border-strong);
+}
+.model-panel .channel-btn .dot {
+  width: 6px;
+  height: 6px;
+}
+
+.model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.model-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--ws-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.model-option:hover:not(:disabled),
+.model-option:focus-visible {
+  background: var(--ws-hover);
+  outline: none;
+}
+.model-option[aria-selected="true"] {
+  background: var(--ws-3);
+}
+.model-option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.model-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.model-option-name {
+  font-size: 13.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+.model-option-blurb {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--ws-ink-3);
+}
+.model-option-check {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  color: var(--ws-ink);
+}
+.model-panel .channel-note {
+  padding: 2px 10px 4px;
+}
+.model-panel .channel-note:empty {
+  display: none;
+}
+
+/* Deep search, as the last row of the panel. */
+.model-panel .mode-toggle {
+  margin-top: 6px;
+  padding: 12px 10px 8px;
+  border-top: 1px solid var(--ws-line);
+  border-radius: 0;
+}
+.model-panel .mode-toggle-label {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ws-ink-3);
+}
+
+/* The image bay's options, in the same panel. */
+.model-panel #imageModeControls {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 4px 6px;
+}
+.model-panel .image-select {
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--ws-glass-border);
+  background: var(--ws-glass);
+  color: var(--ws-ink);
+  font-family: var(--font-body);
+  font-size: 13px;
+}
+.model-panel #imageModeNote {
+  padding: 6px 6px 0;
+}
+
+@media (max-width: 720px) {
+  .chat-toolbar {
+    top: 8px;
+    left: 8px;
+  }
+  .model-pill {
+    font-size: 14px;
+  }
+  .model-pill-name {
+    max-width: 200px;
+  }
+}

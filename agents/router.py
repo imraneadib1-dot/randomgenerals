@@ -1,9 +1,9 @@
 """The router: which channel is actually answering right now.
 
 The routing table in app.py (BAY_ROUTES) says what to prefer in
-principle - DeepSeek for code, gpt-oss for chat, the local model as the
-floor. It cannot say what is true at 4pm on a Tuesday: that Groq has
-been returning 429s for the last five minutes, or that the local model
+principle - pip 1.0 first, the hosted backups under it, the local model
+as the floor. It cannot say what is true at 4pm on a Tuesday: that the
+engine has been refusing for the last five minutes, or that the local model
 is taking forty seconds to start because something else has the CPU.
 Until now the site found that out one person at a time, each of them
 waiting on the channel before failing over.
@@ -71,8 +71,8 @@ def health(provider: str, model: str | None = None) -> dict:
     """What the last few minutes say about a channel.
 
     -> {"samples", "failures", "failing", "ttft", "slow", "score"}.
-    `model` None means the provider as a whole - a 429 from Groq is a
-    fact about the key, not the model that hit it.
+    `model` None means the provider as a whole - a 429 is a fact about
+    the channel, not the model that hit it.
     """
     rows = [r for r in _recent() if r["provider"] == provider
             and (model is None or r["model"] == model)]

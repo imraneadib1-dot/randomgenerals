@@ -120,14 +120,16 @@ top of the script first.
 > port is open in the console and still nothing connects". Using a tunnel
 > means you never touch either.
 
-## 6. Add a model key
+## 6. Point it at the pip 1.0 engine
 
 ```bash
-nano /opt/randomgenerals/.env      # set GROQ_API_KEY
+nano /opt/randomgenerals/.env      # set PIP_ENGINE_URL and PIP_ENGINE_KEY
 ```
 
-Get one free at <https://console.groq.com/keys> — no card. Without it the
-app serves every page and every prompt fails at the point of asking.
+The engine is `python pip_server.py`, on a machine with a GPU — this VM
+has none. Expose it to the VM over a tunnel or a private network, start
+it with the same `PIP_ENGINE_KEY`, and put its `/v1` address here.
+Without a reachable engine only the backup channels answer.
 
 ## 7. Start it
 
@@ -178,12 +180,11 @@ Measured on this VM, not estimated: `llama3.2:3b` took **99.6 seconds**
 to reach the first token of "name three primary colours", and
 `qwen2.5-coder:7b` never finished "say hi" inside a 120-second timeout.
 
-So replies come from **Groq**, free and without a card. Its ceiling is
-8,000 tokens per minute per key, shared across everyone using the site at
-once — the app reads the remaining budget from every response and routes
-to the local model *before* the limit rather than after, so running out
-degrades a reply instead of failing it. Pro accounts get first claim on
-what is left.
+So replies come from **pip 1.0**, whose engine runs on a machine that
+has a GPU. One GPU answers a few requests at a time; when the engine
+says it is busy, or is down, the app routes that request to a backup
+channel *before* failing rather than after, so it degrades a reply
+instead of losing it.
 
 `--with-ollama` pulls `llama3.2:3b` and serves it locally as well. Read
 the timings above first. It exists so "runs on hardware you control" can

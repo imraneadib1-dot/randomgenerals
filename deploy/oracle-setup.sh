@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Provision an Oracle Cloud Always Free ARM VM to run RandomGenerals.
+# Provision an Oracle Cloud Always Free ARM VM to run pip 1.0.
 #
 # Run ON the VM, once, after SSHing in:
 #   curl -fsSL <raw-url>/deploy/oracle-setup.sh -o setup.sh && bash setup.sh
@@ -15,7 +15,8 @@
 # allowance from 4/24GB to 2/12GB in June 2026). That is plenty for the
 # web app and nowhere near enough for a good model: a 7B answers at well
 # under a word a second here, which reads as broken rather than slow. So
-# by default no model is installed and replies come from Groq.
+# by default no model is installed here: replies come from the pip 1.0
+# engine on a machine that has a GPU (PIP_ENGINE_URL in .env).
 #
 # Measured on this VM rather than assumed: llama3.2:3b took 99.6 seconds
 # to produce the first token of "name three primary colours", and
@@ -24,8 +25,8 @@
 #
 # --with-ollama installs Ollama and pulls llama3.2:3b anyway. It exists
 # so the "runs on hardware you control" claim can stay literally true if
-# that matters more than speed. Read the numbers above first; Groq stays
-# the one that actually answers either way.
+# that matters more than speed. Read the numbers above first; the pip
+# 1.0 engine stays the one that actually answers either way.
 #
 # Torch and diffusers are skipped regardless: ~1GB of wheels for a local
 # image model that cannot run acceptably on any CPU.
@@ -121,7 +122,7 @@ if [ "$WITH_OLLAMA" = "1" ]; then
   ollama pull llama3.2:3b || warn "model pull failed - run it again by hand"
   ok "ollama serving on 127.0.0.1:11434 with llama3.2:3b"
 else
-  ok "skipping Ollama - replies come from Groq (see .env)"
+  ok "skipping Ollama - replies come from the pip 1.0 engine (see .env)"
 fi
 
 # ---------------------------------------------------------------- secrets
@@ -129,20 +130,21 @@ log "Environment"
 if [ ! -f "$APP_DIR/.env" ]; then
   SECRET="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
   cat > "$APP_DIR/.env" <<ENVEOF
-# RandomGenerals - Oracle Always Free VM.
+# pip 1.0 - Oracle Always Free VM.
 
 # Signs session cookies. Generated once at install; changing it signs
 # everyone out.
 SECRET_KEY=$SECRET
 
-# The model. Without this there is nothing to answer with and every
-# prompt fails at the point of asking. Free, no card.
-#   https://console.groq.com/keys
-GROQ_API_KEY=
+# The model. pip 1.0 runs in pip_server.py on a machine with a GPU; this
+# is its address, and the key it was started with. Without a reachable
+# engine only the backup channels answer.
+PIP_ENGINE_URL=
+PIP_ENGINE_KEY=
 
 # Local models. Left pointing at localhost either way: with --with-ollama
 # there is an Ollama here to answer, and without one the app finds
-# nothing, reports the local channel as unavailable, and uses Groq -
+# nothing, reports the local channel as unavailable, and uses pip 1.0 -
 # which is the intended behaviour, not a failure.
 #
 # To use Ollama Cloud instead of a local model, point this at
@@ -201,7 +203,7 @@ STRIPE_WEBHOOK_SECRET=
 ENVEOF
   chmod 600 "$APP_DIR/.env"
   ok "created $APP_DIR/.env with a fresh SECRET_KEY"
-  warn "fill in GROQ_API_KEY before starting the service"
+  warn "fill in PIP_ENGINE_URL before starting the service"
 else
   ok ".env already present (left untouched)"
 fi
@@ -210,7 +212,7 @@ fi
 log "systemd service"
 sudo tee "/etc/systemd/system/${SERVICE_NAME}.service" >/dev/null <<EOF
 [Unit]
-Description=RandomGenerals
+Description=pip 1.0
 After=network-online.target
 Wants=network-online.target
 
@@ -225,12 +227,12 @@ Environment=APP_DEBUG=0
 # gunicorn, not app.py. Flask's built-in server is single-process and
 # explicitly not for public traffic - app.py's own __main__ block says so.
 #
-# One worker, several threads, and a long timeout, for the reasons
-# documented in render.yaml: db.py holds a single module-level SQLite
-# connection that is thread-safe within one process but would become one
-# connection per process if workers scaled; a streamed reply spends its
-# life waiting on the model rather than on CPU, so threads suit it; and
-# gunicorn's 30s default would cut off any answer still being written.
+# One worker, several threads, and a long timeout. db.py holds a single
+# module-level SQLite connection that is thread-safe within one process
+# but would become one connection per process if workers scaled; a
+# streamed reply spends its life waiting on the model rather than on
+# CPU, so threads suit it; and gunicorn's 30s default would cut off any
+# answer still being written.
 ExecStart=$APP_DIR/.venv/bin/gunicorn app:app \\
   --bind 127.0.0.1:$PORT \\
   --worker-class gthread \\
@@ -279,9 +281,9 @@ cat <<NEXTEOF
 ------------------------------------------------------------------
 Next steps - these need your credentials, so they are not automated.
 
-  1. Add the model key:
-       nano $APP_DIR/.env          # set GROQ_API_KEY
-     Get one at https://console.groq.com/keys (free, no card)
+  1. Point it at the pip 1.0 engine:
+       nano $APP_DIR/.env          # set PIP_ENGINE_URL and PIP_ENGINE_KEY
+     The engine is `python pip_server.py` on a machine with a GPU.
 
   2. Start it and check it locally:
        sudo systemctl start $SERVICE_NAME

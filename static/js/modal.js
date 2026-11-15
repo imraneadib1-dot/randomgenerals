@@ -47,7 +47,11 @@ export function switchModalTab(tab) {
 
 /* ---- About tab ---- */
 export function renderAbout() {
-  const p = state.providers.find((x) => x.id === "ollama");
+  // The pip 1.0 engine when it is up; otherwise whatever stands in for it.
+  const engine = state.providers.find((x) => x.id === "pip");
+  const p = engine && engine.available
+    ? engine
+    : state.providers.find((x) => x.id === "ollama") || engine;
   if (!p) {
     aboutStatusDot.className = "about-status-dot";
     aboutStatusText.textContent = "checking…";
@@ -56,10 +60,14 @@ export function renderAbout() {
   aboutStatusDot.className =
     "about-status-dot" + (p.available ? " online" : "");
   aboutStatusText.textContent = p.available
-    ? "running locally, responding"
+    ? (p.id === "pip"
+      ? "pip 1.0 is running, responding"
+      : "answering from a backup model")
     : p.note || "not reachable";
   aboutModelName.textContent = p.available
-    ? `currently running ${p.models[0]}`
+    ? (p.id === "pip"
+      ? "the engine is up right now"
+      : `a backup model, ${p.models[0]}, is answering right now`)
     : "no model detected yet";
 }
 

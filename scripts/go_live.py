@@ -111,7 +111,7 @@ def ensure_webhook(base_url):
     ep = stripe.WebhookEndpoint.create(
         url=url,
         enabled_events=WEBHOOK_EVENTS,
-        description="RandomGenerals (live)",
+        description="pip 1.0 (live)",
     )
     print(f"  created endpoint: {ep.id}\n    -> {url}")
     return ep.secret

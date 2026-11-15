@@ -2,21 +2,20 @@
 
     from providers import ProviderUnavailable, RateLimited, Unreachable
 
-Three channels answer chat here - Groq, OpenRouter and a local Ollama -
-and app.py fails over between them. That only works if they all fail
-the SAME WAY, and for a while they did not: Groq raised on a drained
-budget so the request could be answered elsewhere, OpenRouter yielded
+Three channels answer chat here - pip 1.0, OpenRouter and a local
+Ollama - and app.py fails over between them. That only works if they
+all fail the SAME WAY, and for a while they did not: one raised when it
+was busy so the request could be answered elsewhere, OpenRouter yielded
 "[OpenRouter error 502.]" as if it were the reply, and Ollama let a
 requests exception escape to a generic handler that wrote
 "[Error talking to ollama: HTTPConnectionPool(...)]" into the
 conversation. Same situation, three outcomes, and only one of them
 recoverable.
 
-These classes lived in groq_api.py because Groq was the first channel
-to get failover. They are the shared contract now, so they live where
-every channel can import them without importing each other. groq_api
-still re-exports them by name: the tests and app.py say
-groq_api.ProviderUnavailable, and that is the same object.
+These classes are the shared contract, so they live where every
+channel can import them without importing each other. pip_api
+re-exports them by name: the checks and app.py say
+pip_api.ProviderUnavailable, and that is the same object.
 
 THE CONTRACT
 

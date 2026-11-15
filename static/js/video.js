@@ -46,6 +46,34 @@ let startImage = null;
 const POLL_MS = 3000;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
+/* <model-viewer> - Google's web component wrapping three.js, for the
+   3D bay - is fetched the first time a mesh needs showing rather than
+   with the page. It is about 1MB and index.html used to load it for
+   everyone, when the bay is only 3D on a server with a Tripo key and a
+   balance. Until it arrives the element is an unknown tag that renders
+   nothing, which is exactly the state it was in while the script
+   downloaded before; the download link never depended on it. */
+const MODEL_VIEWER_URL =
+  "https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js";
+let modelViewerLoading = null;
+
+function loadModelViewer() {
+  if (window.customElements && window.customElements.get("model-viewer")) {
+    return Promise.resolve(true);
+  }
+  if (!modelViewerLoading) {
+    modelViewerLoading = new Promise((resolve) => {
+      const s = document.createElement("script");
+      s.type = "module";
+      s.src = MODEL_VIEWER_URL;
+      s.onload = () => resolve(true);
+      s.onerror = () => { modelViewerLoading = null; resolve(false); };
+      document.head.appendChild(s);
+    });
+  }
+  return modelViewerLoading;
+}
+
 /* ------------------------------------------------------------ helpers */
 export function videoSay(msg, isError) {
   if (!videoStatusEl) return;
@@ -212,6 +240,9 @@ export function applyVideoAccess(d) {
 
   state.genKind = kind;
   updateGenBayLabel(kind);
+  // Start the renderer download now, while the person is still typing,
+  // so a finished mesh is not the first thing to wait on it.
+  if (kind === "model") loadModelViewer();
   const studio = $("videoStudio");
 
   if (kind === "diagram") {
@@ -420,6 +451,7 @@ function finished(job) {
     toast(job.params && job.params.kind === "model" ? "Your model is ready." : "Your clip is ready.",
           { kind: "success", id: "video-" + job.id });
     if (job.params && job.params.kind === "model" && modelOut) {
+      loadModelViewer();
       modelOut.src = job.url;
       modelOut.setAttribute("alt", job.prompt || "Generated 3D model");
       modelOut.hidden = false;

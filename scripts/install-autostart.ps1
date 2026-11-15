@@ -83,7 +83,7 @@ Register-ScheduledTask `
     -Action $action `
     -Trigger $trigger `
     -Settings $settings `
-    -Description "Runs the RandomGenerals server and public tunnel." | Out-Null
+    -Description "Runs the pip 1.0 server and public tunnel." | Out-Null
 
 Write-Host "Installed scheduled task '$taskName'." -ForegroundColor Green
 Write-Host @"

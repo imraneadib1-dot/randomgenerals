@@ -3,6 +3,32 @@ import { loadCredits } from "./credits.js";
 import { genForm, genPrompt, genRun, genUpgrade, modelOut, videoDownload, videoResult } from "./dom.js";
 import { loadVideoLimits, submitVideo, videoSay } from "./video.js";
 
+/* Mermaid is fetched the first time a diagram is drawn, not with the
+   page. The bundle is about 2.7MB - bigger than everything else the
+   page loads put together - and index.html used to include it for every
+   visitor, most of whom never open the diagram bay. One script tag,
+   inserted on demand; the promise is kept so a second diagram in the
+   same session neither waits nor loads it twice. */
+const MERMAID_URL =
+  "https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.1/mermaid.min.js";
+let mermaidLoading = null;
+
+function loadMermaid() {
+  if (window.mermaid) return Promise.resolve(true);
+  if (!mermaidLoading) {
+    mermaidLoading = new Promise((resolve) => {
+      const s = document.createElement("script");
+      s.src = MERMAID_URL;
+      s.onload = () => resolve(!!window.mermaid);
+      // Cleared on failure so a later diagram tries again rather than
+      // remembering one bad network moment for the whole session.
+      s.onerror = () => { mermaidLoading = null; resolve(false); };
+      document.head.appendChild(s);
+    });
+  }
+  return mermaidLoading;
+}
+
 export function initMermaid() {
   if (state.mermaidReady || !window.mermaid) return state.mermaidReady;
   try {
@@ -44,6 +70,7 @@ export async function drawDiagram(source) {
   if (modelOut) modelOut.hidden = true;
   if (videoDownload) videoDownload.hidden = true;
 
+  await loadMermaid();
   if (!initMermaid()) {
     // The CDN did not answer. The source is still the useful artefact,
     // so it is shown rather than an apology.

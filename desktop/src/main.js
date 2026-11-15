@@ -50,7 +50,7 @@ function createWindow(startUrl) {
     show: false,
     backgroundColor: "#05080f", // matches the app's dark ground, so there
     // is no white flash before first paint
-    title: "RandomGenerals",
+    title: "pip 1.0",
     icon: path.join(__dirname, "..", "resources", "icon.ico"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -87,8 +87,8 @@ function createWindow(startUrl) {
   mainWindow.setMenuBarVisibility(false);
 
   // Keep the window title as the product name. By default Electron
-  // adopts the page's <title>, which here is "RandomGenerals - your
-  // local assistant" - a description that belongs on a browser tab
+  // adopts the page's <title>, which here is "pip 1.0 - your assistant"
+  // - a description that belongs on a browser tab
   // competing for attention, not in the title bar, the taskbar hover
   // and Alt-Tab of an app you have already chosen to open.
   mainWindow.on("page-title-updated", (event) => event.preventDefault());
@@ -162,7 +162,7 @@ if (!app.requestSingleInstanceLock()) {
       height: 340,
       resizable: false,
       show: true,
-      title: "Starting RandomGenerals",
+      title: "Starting pip 1.0",
       backgroundColor: "#141a22",
       webPreferences: { nodeIntegration: false, contextIsolation: true },
     });
@@ -195,7 +195,7 @@ if (!app.requestSingleInstanceLock()) {
       // err.message now carries the specific reason from
       // ensureDependencies() - which Python was missing, or what pip
       // said - rather than only a timeout.
-      dialog.showErrorBox("RandomGenerals could not start", err.message);
+      dialog.showErrorBox("pip 1.0 could not start", err.message);
       app.quit();
     }
   });

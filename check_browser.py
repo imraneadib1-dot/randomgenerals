@@ -35,7 +35,7 @@ WORK = tempfile.mkdtemp(prefix="browsertest-")
 os.environ["DB_PATH"] = os.path.join(WORK, "t.db")
 os.environ["SECRET_KEY"] = "test-only"
 os.environ["OLLAMA_URL"] = "http://127.0.0.1:1"
-os.environ["GROQ_API_KEY"] = ""
+os.environ["PIP_ENGINE_URL"] = ""
 os.environ["OPENROUTER_API_KEY"] = ""
 # A video backend, played by fake_higgsfield.py, so the studio has
 # something to drive. The guest half of the check sees the diagram
@@ -80,7 +80,7 @@ appmod._video_turn = lambda system, user: (
 # up before using it; it is not, so answer yes and stream a fake.
 appmod.ollama_reachable = lambda: True
 appmod.ollama_provider = lambda plan=None: {
-    "id": "ollama", "label": "RandomGenerals", "available": True,
+    "id": "ollama", "label": "pip 1.0", "available": True,
     "models": ["fake-model"], "model_info": [],
     "note": "a fake channel for the browser check"}
 appmod._failover_chain = lambda provider, mode: []

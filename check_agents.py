@@ -24,7 +24,7 @@ WORK = tempfile.mkdtemp(prefix="agentstest-")
 os.environ["DB_PATH"] = os.path.join(WORK, "t.db")
 os.environ["SECRET_KEY"] = "test-only"
 os.environ["OLLAMA_URL"] = "http://127.0.0.1:1"
-os.environ["GROQ_API_KEY"] = ""
+os.environ["PIP_ENGINE_URL"] = ""
 os.environ["OPENROUTER_API_KEY"] = ""
 sys.path.insert(0, os.path.abspath("."))
 
@@ -43,18 +43,18 @@ def check(label, got, want):
 
 print("== the router learns from evidence ==")
 db._connect()
-check("no evidence is healthy", router.health("groq", "m")["score"], 0)
+check("no evidence is healthy", router.health("pip", "m")["score"], 0)
 for _ in range(3):
-    router.record("groq", "m", ok=False, reason="rate_limited")
-h = router.health("groq", "m")
+    router.record("pip", "m", ok=False, reason="rate_limited")
+h = router.health("pip", "m")
 check("three failures in a row is failing", h["failing"], True)
-check("and the provider as a whole knows it", router.health("groq")["failing"], True)
+check("and the provider as a whole knows it", router.health("pip")["failing"], True)
 check("a failing channel ranks last",
-      router.rank([("groq", "m"), ("ollama", "l")]), [("ollama", "l"), ("groq", "m")])
+      router.rank([("pip", "m"), ("ollama", "l")]), [("ollama", "l"), ("pip", "m")])
 check("a healthy channel keeps the table's order",
       router.rank([("ollama", "l"), ("openrouter", "d")]), [("ollama", "l"), ("openrouter", "d")])
 for _ in range(2):
-    router.record("groq", "m", ok=False, reason="rate_limited")
+    router.record("pip", "m", ok=False, reason="rate_limited")
 check("two failures out of two is not yet enough to judge (min samples)",
       router.health("openrouter", "x")["failing"], False)
 for _ in range(4):
@@ -62,17 +62,17 @@ for _ in range(4):
 h = router.health("ollama", "l")
 check("a slow channel is marked slow", h["slow"], True)
 check("but slow ranks above failing",
-      router.rank([("groq", "m"), ("ollama", "l")]), [("ollama", "l"), ("groq", "m")])
+      router.rank([("pip", "m"), ("ollama", "l")]), [("ollama", "l"), ("pip", "m")])
 for _ in range(4):
     router.record("openrouter", "d", ok=True, ttft=0.8, total=3.0, tokens=300)
 check("fast beats slow beats failing",
-      router.rank([("groq", "m"), ("ollama", "l"), ("openrouter", "d")]),
-      [("openrouter", "d"), ("ollama", "l"), ("groq", "m")])
+      router.rank([("pip", "m"), ("ollama", "l"), ("openrouter", "d")]),
+      [("openrouter", "d"), ("ollama", "l"), ("pip", "m")])
 s = {(r["provider"], r["model"]): r for r in router.summary(24)}
 check("the summary counts replies", s[("ollama", "l")]["replies"], 4)
-check("and failure rate", s[("groq", "m")]["failure_rate"], 1.0)
+check("and failure rate", s[("pip", "m")]["failure_rate"], 1.0)
 check("and tokens a second", s[("openrouter", "d")]["tokens_per_s"], 100.0)
-check("and names the reasons", s[("groq", "m")]["reasons"], {"rate_limited": 5})
+check("and names the reasons", s[("pip", "m")]["reasons"], {"rate_limited": 5})
 check("pruning keeps recent evidence", router.prune(), 0)
 
 print("\n== the verifier only runs what is safe to run ==")

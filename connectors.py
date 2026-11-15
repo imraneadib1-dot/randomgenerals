@@ -119,7 +119,7 @@ def _get(url, token=None, accept="application/json"):
     while True:
         _resolve_safe(current)
         headers = {"Accept": accept,
-                   "User-Agent": "RandomGenerals-Connector/1.0"}
+                   "User-Agent": "pip-Connector/1.0"}
         if token:
             headers["Authorization"] = _auth_value(token)
         r = requests.get(current, headers=headers, timeout=TIMEOUT,
@@ -405,7 +405,7 @@ def call(connector, args, token=None):
         return str(e)
 
     headers = {"Accept": "application/json, text/plain, text/html",
-               "User-Agent": "RandomGenerals-Connector/1.0"}
+               "User-Agent": "pip-Connector/1.0"}
     if token:
         headers["Authorization"] = _auth_value(token)
 

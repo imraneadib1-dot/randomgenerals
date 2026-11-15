@@ -108,7 +108,14 @@ CREATE TABLE IF NOT EXISTS users (
     -- Stored as the birth year rather than an age, because an age is
     -- wrong within twelve months of being written and nothing ever
     -- updates it. The current age is derived when needed.
-    birth_year INTEGER
+    birth_year INTEGER,
+    -- The hash of the key other apps use to reach this account: the
+    -- Blender add-on, MCP clients, anything OpenAI-compatible. Only the
+    -- hash - a key that can be read back off the server is one a server
+    -- compromise hands out. It lived in the in-memory dict alone until
+    -- this column existed, so restarting the app revoked every key.
+    api_key_hash    TEXT,
+    api_key_created TEXT
 );
 
 CREATE TABLE IF NOT EXISTS credits (
@@ -577,6 +584,8 @@ def _migrate_columns(conn):
         ("paddle_customer_id", "TEXT"),
         ("paddle_subscription_id", "TEXT"),
         ("subscription_updated_at", "TEXT"),
+        ("api_key_hash", "TEXT"),
+        ("api_key_created", "TEXT"),
     ):
         if col not in user_cols:
             conn.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
@@ -925,6 +934,7 @@ def load_users():
         "       u.cancel_at_period_end, u.name, u.birth_year, "
         "       u.email_verified, u.paddle_customer_id, "
         "       u.paddle_subscription_id, u.subscription_updated_at, "
+        "       u.api_key_hash, u.api_key_created, "
         "       c.balance, c.starting, c.plan AS credit_plan, c.last_refill "
         "FROM users u LEFT JOIN credits c ON c.owner_id = u.id"
     ).fetchall()
@@ -947,6 +957,8 @@ def load_users():
             "paddle_customer_id": r["paddle_customer_id"],
             "paddle_subscription_id": r["paddle_subscription_id"],
             "subscription_updated_at": r["subscription_updated_at"],
+            "api_key_hash": r["api_key_hash"],
+            "api_key_created": r["api_key_created"],
             "credits": {
                 "balance": r["balance"],
                 "starting": r["starting"],
@@ -1007,8 +1019,9 @@ def save_users(users):
                 "subscription_status, current_period_end, "
                 "cancel_at_period_end, name, birth_year, email_verified, "
                 "paddle_customer_id, paddle_subscription_id, "
-                "subscription_updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "subscription_updated_at, api_key_hash, api_key_created) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                "?, ?)",
                 (uid, u["email"], u.get("password_hash", ""),
                  u.get("google_id"), u["plan"], u["created"],
                  u.get("stripe_customer_id"), u.get("stripe_subscription_id"),
@@ -1017,7 +1030,8 @@ def save_users(users):
                  u.get("name") or "", u.get("birth_year"),
                  1 if u.get("email_verified") else 0,
                  u.get("paddle_customer_id"), u.get("paddle_subscription_id"),
-                 u.get("subscription_updated_at")),
+                 u.get("subscription_updated_at"),
+                 u.get("api_key_hash"), u.get("api_key_created")),
             )
         conn.commit()
 
@@ -1046,8 +1060,8 @@ def save_user(u):
             "subscription_status, current_period_end, "
             "cancel_at_period_end, name, birth_year, email_verified, "
             "paddle_customer_id, paddle_subscription_id, "
-            "subscription_updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "subscription_updated_at, api_key_hash, api_key_created) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(id) DO UPDATE SET "
             "  email=excluded.email, password_hash=excluded.password_hash, "
             "  google_id=excluded.google_id, plan=excluded.plan, "
@@ -1061,7 +1075,9 @@ def save_user(u):
             "  email_verified=excluded.email_verified, "
             "  paddle_customer_id=excluded.paddle_customer_id, "
             "  paddle_subscription_id=excluded.paddle_subscription_id, "
-            "  subscription_updated_at=excluded.subscription_updated_at",
+            "  subscription_updated_at=excluded.subscription_updated_at, "
+            "  api_key_hash=excluded.api_key_hash, "
+            "  api_key_created=excluded.api_key_created",
             (u["id"], u["email"], u.get("password_hash", ""),
              u.get("google_id"), u["plan"], u["created"],
              u.get("stripe_customer_id"), u.get("stripe_subscription_id"),
@@ -1070,7 +1086,8 @@ def save_user(u):
              u.get("name") or "", u.get("birth_year"),
              1 if u.get("email_verified") else 0,
              u.get("paddle_customer_id"), u.get("paddle_subscription_id"),
-             u.get("subscription_updated_at")),
+             u.get("subscription_updated_at"),
+             u.get("api_key_hash"), u.get("api_key_created")),
         )
         conn.commit()
 

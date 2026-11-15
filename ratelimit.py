@@ -11,9 +11,8 @@
 WHY THIS EXISTS
 
 Nothing limited how often one caller could hit the generation routes,
-sign-in, or sign-up. The only "rate limit" was Groq's per-minute token
-budget - shared by everyone on the site - so a single script looping
-/api/chat drained it for every other visitor, and a six-digit
+sign-in, or sign-up, so a single script looping /api/chat could
+occupy the model for every other visitor, and a six-digit
 verification code could be guessed at full speed.
 
 A token bucket per key: each key holds up to `burst` tokens, refilled
@@ -24,11 +23,11 @@ rate above the limit is not.
 WHY IN MEMORY
 
 This deployment runs gunicorn with ONE worker and eight threads
-(deploy/oracle-setup.sh, Dockerfile, render.yaml), so one dict behind
-one lock sees every request and is correct. If --workers is ever
-raised above 1, each worker gets its own buckets and the limits
-silently become N times looser - move the state to SQLite then. The
-Dockerfile says why workers is 1; this is one more reason.
+(deploy/oracle-setup.sh), so one dict behind one lock sees every
+request and is correct. If --workers is ever raised above 1, each
+worker gets its own buckets and the limits silently become N times
+looser - move the state to SQLite then. oracle-setup.sh says why
+workers is 1; this is one more reason.
 
 Keys are chosen by the caller. Signed-in users are keyed by user id;
 guests by IP, not by guest id, because a guest id is minted from a

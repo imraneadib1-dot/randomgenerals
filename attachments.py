@@ -12,9 +12,6 @@ import os
 import re
 import uuid
 
-import docx
-from pypdf import PdfReader
-
 UPLOAD_DIR = os.path.join("static", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -118,10 +115,15 @@ def _extract_text(path, ext, name=""):
     """-> extracted text, an error message starting with "[", or None if
     the file is genuinely not readable as text."""
     try:
+        # pypdf and python-docx are imported here, on the first PDF or
+        # DOCX, rather than at module level: together they cost 0.4s of
+        # every app start, and most sessions never attach either.
         if ext == ".pdf":
+            from pypdf import PdfReader
             reader = PdfReader(path)
             text = "\n".join(page.extract_text() or "" for page in reader.pages)
         elif ext == ".docx":
+            import docx
             document = docx.Document(path)
             text = "\n".join(p.text for p in document.paragraphs)
         elif ext in TEXT_EXTENSIONS or name in TEXT_FILENAMES:

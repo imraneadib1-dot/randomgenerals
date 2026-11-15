@@ -142,7 +142,7 @@ def verify_totp(secret, code, window=1, step=30):
     return False
 
 
-def provisioning_uri(secret, email, issuer="RandomGenerals"):
+def provisioning_uri(secret, email, issuer="pip 1.0"):
     """The otpauth:// URI an authenticator reads from a QR code."""
     from urllib.parse import quote
     label = quote("%s:%s" % (issuer, email), safe="")

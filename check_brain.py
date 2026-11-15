@@ -33,7 +33,7 @@ WORK = tempfile.mkdtemp(prefix="braintest-")
 os.environ["DB_PATH"] = os.path.join(WORK, "t.db")
 os.environ["SECRET_KEY"] = "test-only"
 os.environ["OLLAMA_URL"] = "http://127.0.0.1:1"
-os.environ["GROQ_API_KEY"] = ""
+os.environ["PIP_ENGINE_URL"] = ""
 os.environ["OPENROUTER_API_KEY"] = ""
 sys.path.insert(0, os.path.abspath("."))
 

@@ -1,15 +1,15 @@
 """The evaluator: is the site's AI getting better, and on which channel?
 
     python -m agents.evaluate                 every configured channel
-    python -m agents.evaluate --channel groq  one provider
+    python -m agents.evaluate --channel pip   one provider
     python -m agents.evaluate --tag code      one kind of question
     python -m agents.evaluate --from-feedback the replies people disliked,
                                               as cases to review
 
 WHAT "TRAINING" MEANS HERE
 
-The models are hosted; nothing in this app can change a weight. What
-it can change is everything around the model - which one is asked,
+This harness changes no weight - finetune/train_pip.py does that. What
+it measures is everything around the model - which one is asked,
 what the system prompt says, how much thinking is requested, when to
 verify - and the only honest way to move those is to measure. This is
 the measurement: a file of questions with known answers
@@ -71,7 +71,7 @@ def load_cases(path: str = CASES, tag: str | None = None) -> list[dict]:
 
 
 # Typographic quotes and dashes, folded to their ASCII forms before a
-# reply is graded. The first real run of this harness marked gpt-oss
+# reply is graded. The first real run of this harness marked a model
 # wrong on the honesty case for answering "I don’t know." - with a
 # curly apostrophe the grader's straight one did not match. A grader
 # that fails a right answer over a glyph is measuring typesetting.
@@ -109,14 +109,11 @@ def grade(case: dict, reply: str) -> tuple[bool, str]:
 def channels(only: str | None = None) -> list[tuple[str, str, str]]:
     """(provider, model, bay-mode it serves) for what is configured."""
     import app as appmod                      # noqa: E402  loads keys
-    import groq_api
     import openrouter_api
+    import pip_api
     out = []
-    if groq_api.configured() and groq_api.models():
-        out.append(("groq", groq_api.PREFERRED[0], "chat"))
-        for m in groq_api.models():
-            if m != groq_api.PREFERRED[0]:
-                out.append(("groq", m, "chat"))
+    for m in (pip_api.models() if pip_api.configured() else []):
+        out.append(("pip", m, "chat"))
     if openrouter_api.configured():
         for m in openrouter_api.models()[:3]:
             out.append(("openrouter", m, "code"))
@@ -270,7 +267,7 @@ def from_feedback(limit: int = 50) -> list[dict]:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--channel", help="only this provider (groq, openrouter, ollama)")
+    ap.add_argument("--channel", help="only this provider (pip, openrouter, ollama)")
     ap.add_argument("--tag", help="only cases with this tag")
     ap.add_argument("--limit", type=int, help="only the first N cases")
     ap.add_argument("--pace", type=float, default=PACE_SECONDS)
@@ -289,7 +286,7 @@ def main(argv=None) -> int:
         cases = cases[:args.limit]
     chans = channels(args.channel)
     if not chans:
-        print("no configured channel to evaluate - set GROQ_API_KEY, "
+        print("no channel to evaluate - start pip_server.py, set "
               "OPENROUTER_API_KEY, or start Ollama")
         return 2
     print("%d cases x %d channels: %s" % (

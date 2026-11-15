@@ -20,7 +20,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.abspath("."))
-os.environ.setdefault("GROQ_API_KEY", "gsk_" + "x" * 40)
+os.environ.setdefault("PIP_ENGINE_URL", "http://127.0.0.1:1/v1")
 os.environ.setdefault("OPENROUTER_API_KEY", "sk-or-" + "x" * 20)
 # Nothing here needs the real database or a real Ollama, and `import
 # app` below opens both. On a synced folder the live app.db took
@@ -32,7 +32,7 @@ os.environ["OLLAMA_URL"] = "http://127.0.0.1:1"
 
 import requests                                            # noqa: E402
 
-import groq_api                                            # noqa: E402
+import pip_api                                            # noqa: E402
 import openrouter_api                                      # noqa: E402
 
 FAILED = []
@@ -90,78 +90,78 @@ def run(module, response, **kw):
     real_post = requests.post
     requests.post = lambda *a, **k: response
     try:
-        if module is groq_api:
-            module.models = lambda: ["openai/gpt-oss-120b"]
+        if module is pip_api:
+            module.models = lambda: ["pip-1.0"]
         return "".join(module.stream_chat(
-            "openai/gpt-oss-120b",
+            "pip-1.0",
             [{"role": "user", "content": "hi"}], **kw))
     finally:
         requests.post = real_post
 
 
-print("== Groq: a reply that hit the length limit ==")
-out = run(groq_api, FakeResponse(sse(
+print("== pip 1.0: a reply that hit the length limit ==")
+out = run(pip_api, FakeResponse(sse(
     piece("The answer is qui"), piece("te long and then", "length"))))
 check("the text is still delivered", "quite long" in out, True)
 check("and it SAYS it was cut off", "length limit" in out, True)
 check("and says what to do", "continue" in out.lower(), True)
 
-print("\n== Groq: a reply that finished normally ==")
-out = run(groq_api, FakeResponse(sse(
+print("\n== pip 1.0: a reply that finished normally ==")
+out = run(pip_api, FakeResponse(sse(
     piece("All done."), piece("", "stop"))))
 check("no truncation notice on a complete reply",
       "length limit" in out, False)
 check("text intact", out.strip(), "All done.")
 
-print("\n== Groq: finish_reason is reported to the caller ==")
+print("\n== pip 1.0: finish_reason is reported to the caller ==")
 usage = {}
-run(groq_api, FakeResponse(sse(piece("x", "length"))), usage=usage)
+run(pip_api, FakeResponse(sse(piece("x", "length"))), usage=usage)
 check("usage carries finish_reason", usage.get("finish_reason"), "length")
 
-print("\n== Groq: connection drops BEFORE any text ==")
+print("\n== pip 1.0: connection drops BEFORE any text ==")
 try:
-    out = run(groq_api, FakeResponse(sse(piece("never seen")),
+    out = run(pip_api, FakeResponse(sse(piece("never seen")),
                                      boom_after=0))
     check("raises so another provider can answer", "did not raise", "raise")
-except groq_api.ProviderUnavailable as e:
-    check("raises ProviderUnavailable", isinstance(e, groq_api.Unreachable),
+except pip_api.ProviderUnavailable as e:
+    check("raises ProviderUnavailable", isinstance(e, pip_api.Unreachable),
           True)
 
-print("\n== Groq: connection drops AFTER text has been sent ==")
-out = run(groq_api, FakeResponse(
+print("\n== pip 1.0: connection drops AFTER text has been sent ==")
+out = run(pip_api, FakeResponse(
     sse(piece("Here is the start"), piece("and more")), boom_after=1))
 check("keeps the text already written", "Here is the start" in out, True)
 check("explains the drop in plain words", "dropped part-way" in out, True)
 check("no raw Python exception in the reply",
       "ConnectionError" in out or "Traceback" in out, False)
 
-print("\n== Groq: a server error before any text ==")
+print("\n== pip 1.0: a server error before any text ==")
 # Their outage, not this request's, and nothing has streamed - so it is
-# raised for failover rather than yielded as "[Groq error 502.]", which
+# raised for failover rather than yielded as "[pip 1.0 error 502.]", which
 # made the outage the reply.
 try:
-    run(groq_api, FakeResponse(sse(), status=502))
+    run(pip_api, FakeResponse(sse(), status=502))
     check("a 5xx raises so another provider can answer", "did not", "raise")
-except groq_api.ProviderUnavailable as e:
-    check("a 5xx raises Unreachable", isinstance(e, groq_api.Unreachable), True)
-out = run(groq_api, FakeResponse(sse(), status=400))
+except pip_api.ProviderUnavailable as e:
+    check("a 5xx raises Unreachable", isinstance(e, pip_api.Unreachable), True)
+out = run(pip_api, FakeResponse(sse(), status=400))
 check("a 4xx is still said - another provider would refuse it too",
-      out.startswith("[Groq error 400"), True)
+      out.startswith("[pip 1.0 error 400"), True)
 
 print("\n== the exception hierarchy the call sites rely on ==")
 import providers                                           # noqa: E402
 check("RateLimited is a ProviderUnavailable",
-      issubclass(groq_api.RateLimited, groq_api.ProviderUnavailable), True)
+      issubclass(pip_api.RateLimited, pip_api.ProviderUnavailable), True)
 check("Unreachable is a ProviderUnavailable",
-      issubclass(groq_api.Unreachable, groq_api.ProviderUnavailable), True)
-check("groq_api's is the shared class from providers.py",
-      groq_api.ProviderUnavailable is providers.ProviderUnavailable, True)
+      issubclass(pip_api.Unreachable, pip_api.ProviderUnavailable), True)
+check("pip_api's is the shared class from providers.py",
+      pip_api.ProviderUnavailable is providers.ProviderUnavailable, True)
 check("OpenRouter raises the same class",
       openrouter_api.RateLimited is providers.RateLimited, True)
 import app                                                 # noqa: E402
 src = open("app.py", encoding="utf-8").read()
 check("no call site still catches only RateLimited",
-      "except groq_api.RateLimited" in src, False)
+      "except pip_api.RateLimited" in src, False)
 # A COUNT, NOT AN INVARIANT. This asserted exactly 3 and broke the
 # moment a fourth recovery path was added - which was a correct change
 # failing a test that was measuring the wrong thing. What matters is
@@ -169,7 +169,7 @@ check("no call site still catches only RateLimited",
 # already establishes by finding no bare RateLimited; this just
 # confirms there are still several of them rather than none.
 check("the base is caught in several places",
-      src.count("except groq_api.ProviderUnavailable") >= 3, True)
+      src.count("except pip_api.ProviderUnavailable") >= 3, True)
 
 print("\n== OpenRouter: same two failures ==")
 openrouter_api.budget_ok = lambda m: True
@@ -224,7 +224,7 @@ finally:
     requests.post = _real_post
 
 print("\n== OpenRouter: what it generated is what gets charged ==")
-# app.py charges by usage["eval_count"], the name Groq and Ollama both
+# app.py charges by usage["eval_count"], the name pip_api and Ollama both
 # use. OpenRouter reports completion_tokens, and for a while that was
 # all it reported - so the one paid channel was billed at the floor,
 # every reply, however long.

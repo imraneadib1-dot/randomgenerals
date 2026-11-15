@@ -41,7 +41,7 @@ os.environ["HIGGSFIELD_API_KEY_SECRET"] = "test-secret"
 os.environ.pop("PIXVERSE_API_KEY", None)
 os.environ.pop("HF_TOKEN", None)
 os.environ.pop("TRIPO_API_KEY", None)
-os.environ.pop("GROQ_API_KEY", None)
+os.environ["PIP_ENGINE_URL"] = ""
 sys.path.insert(0, os.path.abspath("."))
 
 FAILED = []
@@ -254,7 +254,7 @@ lst = c.get("/api/video/jobs").get_json()
 check("history lists it", [j["id"] for j in lst["jobs"]], [job["id"]])
 r = c.get("/api/video/job/%s/download" % job["id"])
 check("download is an attachment", "attachment" in r.headers.get("Content-Disposition", ""), True)
-check("named after the job", "randomgenerals-%s.mp4" % job["id"] in r.headers.get("Content-Disposition", ""), True)
+check("named after the job", "pip-%s.mp4" % job["id"] in r.headers.get("Content-Disposition", ""), True)
 check("with the bytes", len(r.data), row["bytes"])
 r = guest.get("/api/video/job/%s" % job["id"])
 check("someone else cannot see it", r.status_code, 404)

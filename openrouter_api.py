@@ -2,14 +2,12 @@
 
 WHY THIS FILE EXISTS
 
-The coding model is asked for by name - Kimi originally, DeepSeek now -
-and Groq serves neither: its catalogue on this key is a handful of
-open-weight models, none of them from Moonshot or DeepSeek. They cannot
-run locally either, being hundreds of billions of parameters against
-an Always Free VM with 11.9GB of RAM and no GPU.
+pip 1.0 answers first. This is what answers when it cannot - the
+engine is down, or busy - and what the code bay can be pointed at by
+name: DeepSeek, hundreds of billions of parameters that no machine of
+ours could hold.
 
-OpenRouter serves them, and that is the whole reason for a third
-provider.
+OpenRouter serves those, and that is the whole reason for the channel.
 
 DEEPSEEK COSTS MONEY, A LITTLE. THE FALLBACKS DO NOT.
 
@@ -32,9 +30,8 @@ each other needs a key to test with, and none of them has been run on
 this deployment yet - so the order below is by what each model is FOR,
 which is the honest basis available. Re-order it after measuring.
 
-With no key at all this module reports itself unconfigured, app.py skips
-past it in the routing table, and the code bay runs on gpt-oss-120b via
-Groq exactly as it does today. Nothing here degrades the free path.
+With no key at all this module reports itself unconfigured and app.py
+skips past it in the routing table. Nothing here degrades the free path.
 
 Exposes configured(), models(), chat_once() and stream_chat(), the same
 interface app.py registers every provider through.
@@ -49,7 +46,7 @@ import requests
 import attachments  # the data-URL helper images travel in
 
 import db
-import groq_api
+import pip_api
 from providers import RateLimited, Unreachable
 
 API_ROOT = "https://openrouter.ai/api/v1"
@@ -121,7 +118,7 @@ _models_cache = {"at": 0.0, "models": None, "error": "",
 # So every response's real cost - OpenRouter returns it in usage.cost,
 # including on the last chunk of a stream - is added to a site-wide daily
 # total, and the router stops choosing Kimi once the day's limit is
-# reached. The bay then falls to gpt-oss, which is free. The site gets
+# reached. The bay then falls to the free models. The site gets
 # slightly less good; it does not get an unexpected bill.
 #
 # Site-wide rather than per-user on purpose: the limit protects one bank
@@ -191,8 +188,17 @@ def budget_ok(model=None):
         return True
     limit = daily_limit()
     if limit <= 0:
-        # Zero means "no paid spending", not "no Kimi provider at all":
-        # the free models stay available.
+        # Two different questions, and answering both the same way is
+        # what let a zero ceiling keep spending.
+        #
+        # A NAMED model here is paid (free ids returned above), and the
+        # question is "may I spend on this one?". At a zero ceiling the
+        # answer is no - that is what setting it to zero is for.
+        if model is not None:
+            return False
+        # NO model named means "is this channel usable at all?", which it
+        # is, as long as something free is on the list. Callers ask this
+        # to decide whether to offer OpenRouter, not whether to spend.
         return any(is_free(m) for m in models())
     return spend_today() < limit
 
@@ -222,7 +228,7 @@ def _headers():
         # Neither is required and neither carries anything about the
         # person asking - it is the app identifying itself, not them.
         "HTTP-Referer": "https://randomgenerals.com",
-        "X-Title": "RandomGenerals",
+        "X-Title": "pip 1.0",
     }
 
 
@@ -289,15 +295,15 @@ def _pick(model):
 
 
 def _to_messages(history):
-    """Same wire format as Groq, so the same converter.
+    """Same wire format as the pip channel, so the same converter.
 
-    This is deliberately not a second copy. The Groq one already handles
+    This is deliberately not a second copy. That one already handles
     the two cases that are easy to get wrong - preserving the `tool` role
     and keeping assistant messages whose content is empty because their
     payload is tool_calls - and the tool loop broke once already when a
     converter dropped exactly those. One implementation, one place to fix.
     """
-    return groq_api._to_messages(history)
+    return pip_api._to_messages(history)
 
 
 def chat_once(model, history, tools=None, options=None, timeout=120):
@@ -323,7 +329,7 @@ def chat_once(model, history, tools=None, options=None, timeout=120):
     except requests.exceptions.RequestException as e:
         return None, "Could not reach OpenRouter: %s" % e
     if r.status_code == 429:
-        # Same as Groq's chat_once: raised, so the tool loop can drop
+        # Same as pip_api.chat_once: raised, so the tool loop can drop
         # the tools and still answer, rather than returned as an error
         # it would treat the same as a bad request.
         raise RateLimited("OpenRouter rate limit")
@@ -342,7 +348,7 @@ def chat_once(model, history, tools=None, options=None, timeout=120):
         message = dict(choice["message"])
     except (KeyError, IndexError, TypeError):
         return None, "OpenRouter returned an unreadable response."
-    # Same as groq_api.chat_once: the tool loop reads this.
+    # Same as pip_api.chat_once: the tool loop reads this.
     message["finish_reason"] = choice.get("finish_reason")
     return message, None
 
@@ -351,8 +357,8 @@ def _with_images(messages, images):
     """Attach base64 images to the last user turn, OpenAI-style.
 
     The text becomes one part and each image another, which is the
-    shape every multimodal model on OpenRouter reads (and, since Groq
-    grew a vision model, groq_api._with_images does the same there).
+    shape every multimodal model on OpenRouter reads (and
+    pip_api._with_images does the same there).
     Ollama takes images in its own field.
     """
     if not images:
@@ -375,8 +381,8 @@ def stream_chat(model, history, options=None, images=None, usage=None):
     """Stream a reply. Yields text pieces.
 
     `images` are sent when given. This channel used to accept and
-    IGNORE them, like Groq - but unlike Groq it serves models that can
-    see, and app.py routes image turns here for exactly that reason. A
+    IGNORE them - but it serves models that can see, and app.py routes
+    image turns here for exactly that reason. A
     caller that picked a vision model and sent the picture got a reply
     about a picture the model never received.
     """
@@ -405,11 +411,11 @@ def stream_chat(model, history, options=None, images=None, usage=None):
         body["top_p"] = opts["top_p"]
     if opts.get("num_predict"):
         body["max_tokens"] = int(opts["num_predict"])
-    # No reasoning_effort. It is a gpt-oss-specific knob on Groq, and
-    # sending unknown fields to a different lab's model is how the qwen
-    # empty-reply bug happened - see groq_api._supports_effort.
+    # No reasoning_effort. It is the pip engine's knob, and sending
+    # unknown fields to another lab's model has returned an empty reply
+    # before.
 
-    # Why the model stopped. Read for the same reason as on the Groq
+    # Why the model stopped. Read for the same reason as on the pip
     # channel: "length" means it ran out of budget mid-answer, and
     # without checking it a truncated reply is indistinguishable from a
     # complete one that ended awkwardly.
@@ -452,6 +458,13 @@ def stream_chat(model, history, options=None, images=None, usage=None):
                 yield "[OpenRouter error %d.]" % r.status_code
                 return
 
+            # requests falls back to ISO-8859-1 for a text/* response
+            # that carries no charset, and text/event-stream almost
+            # never carries one - so decode_unicode was decoding UTF-8
+            # bytes as Latin-1 and every accented character came out
+            # mojibake: "medina" as "mÃ©dina", an em dash as "aEUR"", and
+            # Arabic as noise. The stream is UTF-8; say so.
+            r.encoding = "utf-8"
             for raw in r.iter_lines(decode_unicode=True):
                 if not raw or not raw.startswith("data: "):
                     continue
@@ -477,8 +490,8 @@ def stream_chat(model, history, options=None, images=None, usage=None):
                     note_cost(data["usage"])
                     if usage is not None:
                         usage.update(data["usage"])
-                        # The name app.py charges by. Groq and Ollama
-                        # both report generated tokens as eval_count;
+                        # The name app.py charges by. The pip channel and
+                        # Ollama both report generated tokens as eval_count;
                         # this channel reported completion_tokens only,
                         # so usage_based_cost() read None and billed
                         # every Kimi reply - the one paid channel - at
@@ -499,6 +512,21 @@ def stream_chat(model, history, options=None, images=None, usage=None):
                "through. The answer above is incomplete — ask again to "
                "get the rest._")
         return
+
+    if not sent_any:
+        # The stream ended without a single content delta.
+        #
+        # This is not hypothetical: nemotron returned zero characters
+        # twice while the same prompt answered fine over a plain
+        # non-streaming call, and the person saw an empty assistant
+        # bubble with no error - which reads as the AI having nothing to
+        # say rather than as a channel that did not answer.
+        #
+        # Raised rather than yielded as text, for the same reason the
+        # RequestException branch above raises when nothing has streamed:
+        # with no output on screen yet, another provider can still take
+        # the question. A message here would end the turn instead.
+        raise Unreachable("the model returned an empty reply")
 
     if usage is not None and finish:
         usage["finish_reason"] = finish

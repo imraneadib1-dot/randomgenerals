@@ -41,7 +41,7 @@ import searchdb
 
 USER_AGENT = os.environ.get(
     "CRAWLER_UA",
-    "RandomGeneralsBot/0.1 (+https://randomgenerals.com/about; "
+    "pipBot/0.1 (+https://randomgenerals.com/about; "
     "contact via the site)")
 
 DELAY = float(os.environ.get("CRAWL_DELAY", "1.5"))     # seconds per host

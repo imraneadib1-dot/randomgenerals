@@ -1,4 +1,4 @@
-' Starts the RandomGenerals supervisor with no visible window.
+' Starts the pip 1.0 supervisor with no visible window.
 '
 ' The supervisor keeps the Flask app and the Cloudflare tunnel alive, but
 ' it only lives as long as its host process. Run from a console window,
@@ -25,7 +25,7 @@ here = fso.GetParentFolderName(WScript.ScriptFullName)
 script = fso.BuildPath(here, "serve.ps1")
 
 If Not fso.FileExists(script) Then
-    MsgBox "Cannot find serve.ps1 at:" & vbCrLf & script, 16, "RandomGenerals"
+    MsgBox "Cannot find serve.ps1 at:" & vbCrLf & script, 16, "pip 1.0"
     WScript.Quit 1
 End If
 

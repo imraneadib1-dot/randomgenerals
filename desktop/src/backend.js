@@ -99,7 +99,7 @@ function resolvePython(appRoot) {
  * it.
  *
  * userData is the opposite on both counts. It is never shipped, and it
- * survives updates. So this is where a GROQ_API_KEY belongs on a
+ * survives updates. So this is where a PIP_ENGINE_URL belongs on a
  * desktop install: present on the machine that needs it, absent from
  * everything that leaves it.
  *

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Runs RandomGenerals as a supervised service: starts the Flask app
+  Runs pip 1.0 as a supervised service: starts the Flask app
   and the public tunnel, and restarts either one if it dies.
 
 .DESCRIPTION

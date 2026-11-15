@@ -13,7 +13,12 @@ diffusers==0.39.0
 transformers==5.15.1
 accelerate==1.14.0
 safetensors==0.8.0
-# NumPy is not needed to run the app - it's only used by the from-scratch
-# model in brain/, which isn't wired into the live chat any more (see
-# app.py). Install it separately if you want to train/run that on its own:
-#   numpy==2.5.1
+# NumPy runs the intent model (brain/intent.py), which reads every
+# message before any big model does. It is a plain wheel on every
+# platform this ships to, ARM included. Without it the app still starts,
+# but every message gets the general prompt regardless of what it asks.
+numpy==2.5.1
+# LoRA fine-tuning for pip 1.0 (finetune/train_pip.py) and loading the
+# adapter in the engine (pip_server.py). The real run also wants a CUDA
+# build of torch and bitsandbytes; see finetune/train_pip.py.
+peft==0.21.3

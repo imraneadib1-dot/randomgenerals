@@ -6,9 +6,8 @@
 WHY THESE CHECKS
 
 Nothing limited how often one caller could hit the generation routes,
-sign-in or sign-up. The only "rate limit" was Groq's per-minute token
-budget, shared by everyone, so one script looping /api/chat drained it
-for every other visitor - and a six-digit verification code could be
+sign-in or sign-up, so one script looping /api/chat could occupy the
+model for every other visitor - and a six-digit verification code could be
 guessed at full speed, with no counter on wrong tries.
 
 The bucket's clock is injectable, so "ten minutes later" is a variable

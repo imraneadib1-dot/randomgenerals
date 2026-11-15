@@ -1,0 +1,4 @@
+{"request": "a low-poly wooden chair", "error": "parts still float apart: Back_Post_R, Back_Slat_0, Back_Slat_1, Back_Slat_2, Back_Top_Rail, Leg_0", "line": null, "model": "openai/gpt-oss-120b", "attempts": 2}
+{"request": "a simple bed with a pillow and blanket", "error": "parts still float apart: Bed Frame, Mattress", "line": null, "model": "openai/gpt-oss-120b", "attempts": 3}
+{"request": "an office desk with a drawer", "error": "parts still float apart: Desk Top, Drawer Body, Leg BL, Leg BR, Leg FL, Leg FR", "line": null, "model": "openai/gpt-oss-120b", "attempts": 3}
+{"request": "a bedside table with a lamp", "error": "parts still float apart: Leg_1, Leg_2, Leg_3, Leg_4, Tabletop", "line": null, "model": "qwen/qwen3.8-27b", "attempts": 3}

@@ -1,6 +1,6 @@
 appId: com.randomgenerals.ai
 productName: RandomGenerals
-copyright: Copyright © RandomGenerals
+copyright: Copyright © Imrane Adib
 
 directories:
   output: dist
@@ -38,7 +38,6 @@ extraResources:
       - "!static/uploads/**"
       - "!static/generated/**"
       - "!brain/checkpoint-*.npz"
-      - "!brain/corpus/**"
       - "!app.db*"
       - "!.env"
       # THE BUILD OUTPUT LIVES INSIDE THE DIRECTORY BEING COPIED.
@@ -75,7 +74,7 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: RandomGenerals
+  shortcutName: pip 1.0
   deleteAppDataOnUninstall: false   # keep chats/licence across upgrades
 
 publish:

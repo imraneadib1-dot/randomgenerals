@@ -1,4 +1,4 @@
-# Push RandomGenerals to GitHub.
+# Push pip 1.0 to GitHub.
 #
 # This exists because Git Credential Manager needs a real window to show
 # its sign-in prompt, and an automated shell has nowhere to show one -
@@ -8,7 +8,7 @@ $ErrorActionPreference = "Continue"
 Set-Location $PSScriptRoot\..
 
 Write-Host ""
-Write-Host "  Pushing RandomGenerals to GitHub" -ForegroundColor Cyan
+Write-Host "  Pushing pip 1.0 to GitHub" -ForegroundColor Cyan
 Write-Host "  ===================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  A GitHub sign-in window will open in your browser." -ForegroundColor Yellow

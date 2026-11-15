@@ -50,7 +50,6 @@ __pycache__/
 
 # ---- Large binaries: noise, not source ----
 brain/checkpoint-*.npz
-brain/cpp/*.dll
 *.safetensors
 *.bin
 

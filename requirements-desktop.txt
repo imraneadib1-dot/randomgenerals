@@ -37,6 +37,12 @@ Pillow==12.3.0
 # the note there. Pure Python.
 sympy==1.14.0
 
+# NumPy runs the intent model (brain/intent.py), which reads every
+# message before any big model does. It is a plain wheel on every
+# platform this ships to, ARM included. Without it the app still starts,
+# but every message gets the general prompt regardless of what it asks.
+numpy==2.5.1
+
 # Free-tier text-to-video (hfvideo.py). HTTP only, no torch. Optional at
 # runtime: without HF_TOKEN the bay simply reports itself unavailable.
 huggingface_hub>=0.34

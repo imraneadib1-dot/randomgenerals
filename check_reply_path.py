@@ -37,6 +37,11 @@ os.environ["ADMIN_EMAIL"] = "owner@example.com"
 # instead of waiting out a tunnel timeout. load_dotenv() never
 # overrides a variable that is already set, so this wins over .env.
 os.environ["OLLAMA_URL"] = "http://127.0.0.1:1"
+# No real channel is asked for anything here: every one is stubbed where
+# a section needs it, and a key left in .env must not turn a failover
+# check into a request somebody pays for.
+os.environ["PIP_ENGINE_URL"] = ""
+os.environ["OPENROUTER_API_KEY"] = ""
 
 sys.path.insert(0, os.path.abspath("."))
 
@@ -274,28 +279,28 @@ def refusing(exc):
     return streamer
 
 
-# The chain for a local primary is the fast channel. Neither is real
-# here, so both ends are stubbed: the chain says "groq, fake-groq" and
-# the streamer table says what fake-groq does.
-appmod._groq_model_for = lambda mode: "fake-groq"
-appmod.PROVIDER_STREAMERS["groq"] = fake_streamer(["from the fast channel"])
+# The chain for a local primary is pip 1.0. Neither is real
+# here, so both ends are stubbed: the chain says "pip, fake-pip" and
+# the streamer table says what fake-pip does.
+appmod._pip_model_for = lambda mode: "fake-pip"
+appmod.PROVIDER_STREAMERS["pip"] = fake_streamer(["from pip 1.0"])
 use(refusing(providers.Unreachable("connection refused")))
 tid = new_thread()
 CALLS.clear()
 r = send(tid, "who answers?")
 events, text = events_and_text(r.get_data(as_text=True))
-check("the second channel answered", text, "from the fast channel")
+check("the second channel answered", text, "from pip 1.0")
 check("no error event - the reader never saw a seam",
       [e for e in events if e.get("event") == "reply"], [])
 msg = stored(tid)[-1]
 check("stored as an answer", msg.get("kind"), "text")
-check("from the channel that actually answered", msg.get("provider"), "groq")
+check("from the channel that actually answered", msg.get("provider"), "pip")
 check("and marked as a fallback", msg.get("fallback"), True)
 check("both channels were asked, in order",
-      [c["model"] for c in CALLS], ["fake-model", "fake-groq"])
+      [c["model"] for c in CALLS], ["fake-model", "fake-pip"])
 
 print("\n== failover: everybody refuses ==")
-appmod.PROVIDER_STREAMERS["groq"] = refusing(providers.Unreachable("502"))
+appmod.PROVIDER_STREAMERS["pip"] = refusing(providers.Unreachable("502"))
 use(refusing(providers.Unreachable("HTTPConnectionPool(host='x', port=1)")))
 before = balance()
 r = send(tid, "anyone?")
@@ -303,12 +308,12 @@ events, text = events_and_text(r.get_data(as_text=True))
 check("told as an error", any(e.get("kind") == "error" for e in events), True)
 check("names the channels in a person's words",
       "the local model is not answering" in text
-      and "the fast channel is not answering" in text, True)
+      and "pip 1.0 is not answering" in text, True)
 check("and never the exception text", "HTTPConnectionPool" in text, False)
 check("stored as kind error", stored(tid)[-1].get("kind"), "error")
 check("nothing charged", balance(), before)
 
-print("\n== failover: the fast channel is busy, and refills soon ==")
+print("\n== failover: pip 1.0 is busy, and frees up soon ==")
 # Rate-limited with a Retry-After of one second and nobody else to ask:
 # the server waits it out and says so at every slice.
 appmod._failover_chain = lambda provider, mode: []
@@ -402,9 +407,10 @@ out = ollama(FakeOllama([{"message": {"content": "done"}},
 check("quiet when it finished", "length limit" in out, False)
 
 print("\n== tools: what they produce reaches the browser ==")
-# The loop only runs on a hosted channel (PROVIDER_TURNS), so the fast
+# The loop only runs on a channel with turns (PROVIDER_TURNS), so the pip
 # channel is faked at both ends: its non-streamed turn and its stream.
-appmod._groq_has_room = lambda plan: True
+appmod.pip_api.has_room = lambda: True
+appmod.pip_api.supports_tools = lambda: True
 appmod._dispatch_tool = lambda name, args, cmap: {
     "text": "found: the sky is blue",
     "display": {"kind": "sources",
@@ -425,24 +431,24 @@ def fake_turn(*replies):
     return turn
 
 
-def send_groq(tid, text):
+def send_pip(tid, text):
     return client.post("/api/chat", json={
-        "thread_id": tid, "provider": "groq", "model": "fake-groq",
+        "thread_id": tid, "provider": "pip", "model": "fake-pip",
         "message": text,
     })
 
 
-appmod.PROVIDER_TURNS["groq"] = fake_turn(
+appmod.PROVIDER_TURNS["pip"] = fake_turn(
     {"content": "", "tool_calls": [{"id": "c1", "function": {
         "name": "web_search", "arguments": '{"query": "sky"}'}}]},
     {"content": "The sky is blue, per Sky facts.", "finish_reason": "stop"},
 )
-appmod.PROVIDER_STREAMERS["groq"] = fake_streamer(["STREAMED - should not"])
+appmod.PROVIDER_STREAMERS["pip"] = fake_streamer(["STREAMED - should not"])
 tid = new_thread()
 CALLS.clear()
 TURNS.clear()
 before = balance()
-r = send_groq(tid, "what colour is the sky?")
+r = send_pip(tid, "what colour is the sky?")
 events, text = events_and_text(r.get_data(as_text=True))
 tool_events = [e for e in events if e.get("tool")]
 check("a start event, then a done event",
@@ -466,10 +472,10 @@ check("the loop's turn used the reply's options, not a generic cap",
       "reasoning_effort" in TURNS[0]["options"], True)
 
 print("\n== tools: a first turn that is the whole answer ==")
-appmod.PROVIDER_TURNS["groq"] = fake_turn(
+appmod.PROVIDER_TURNS["pip"] = fake_turn(
     {"content": "No tool needed: 2+2=4.", "finish_reason": "stop"})
 CALLS.clear()
-send_groq(tid, "2+2?")
+send_pip(tid, "2+2?")
 check("answered from the first turn", stored(tid)[-1]["content"],
       "No tool needed: 2+2=4.")
 check("stream never opened", CALLS, [])
@@ -477,12 +483,12 @@ check("no tool round charged - it was simply the reply",
       stored(tid)[-1].get("charged"), appmod.usage_based_cost(None, "chat"))
 
 print("\n== tools: a first turn cut off at the ceiling is regenerated ==")
-appmod.PROVIDER_TURNS["groq"] = fake_turn(
+appmod.PROVIDER_TURNS["pip"] = fake_turn(
     {"content": "A very long answer that got cut", "finish_reason": "length"})
-appmod.PROVIDER_STREAMERS["groq"] = fake_streamer(["the full answer"],
+appmod.PROVIDER_STREAMERS["pip"] = fake_streamer(["the full answer"],
                                                   usage={"eval_count": 500})
 CALLS.clear()
-send_groq(tid, "explain everything")
+send_pip(tid, "explain everything")
 check("the cut-off draft was discarded", stored(tid)[-1]["content"],
       "the full answer")
 check("and the stream regenerated it", len(CALLS), 1)
@@ -491,8 +497,8 @@ print("\n== settings reach the model ==")
 # Settings > Model had sliders for temperature, top_p and max_tokens, a
 # default model and two toggles, all validated and stored - and read by
 # nothing. Every reply used the strength's own numbers regardless.
-appmod.PROVIDER_STREAMERS["groq"] = fake_streamer(["ok"])
-appmod.PROVIDER_TURNS["groq"] = fake_turn(
+appmod.PROVIDER_STREAMERS["pip"] = fake_streamer(["ok"])
+appmod.PROVIDER_TURNS["pip"] = fake_turn(
     {"content": "", "tool_calls": [{"id": "c9", "function": {
         "name": "web_search", "arguments": '{"query": "x"}'}}]},
     {"content": "with tools", "finish_reason": "stop"})
@@ -520,7 +526,7 @@ client.patch("/api/settings", json={"tools_enabled": False,
                                     "temperature": None, "top_p": None,
                                     "max_tokens": None})
 TURNS.clear()
-r = send_groq(tid, "search for it")
+r = send_pip(tid, "search for it")
 events, text = events_and_text(r.get_data(as_text=True))
 check("tools off means no tool turn at all", TURNS, [])
 check("and no tool events", [e for e in events if e.get("tool")], [])
@@ -528,7 +534,7 @@ check("the reply came from the stream", text, "ok")
 
 client.patch("/api/settings", json={"tools_enabled": True, "web_search": False})
 TURNS.clear()
-send_groq(tid, "search again")
+send_pip(tid, "search again")
 offered = [t["function"]["name"] for t in (TURNS[0]["tools"] or [])]
 check("web search off leaves the other tools",
       "web_search" not in offered and len(offered) > 0, True)
@@ -686,7 +692,19 @@ appmod.ollama_provider = lambda plan=None: {"id": "ollama", "label": "local", "a
 rec = client.get("/api/providers").get_json()["recommended"]
 check("the code bay is recommended DeepSeek V3 on OpenRouter",
       rec.get("code"), {"provider": "openrouter", "model": "deepseek/deepseek-v3.2"})
-check("the chat bay stays on the free fast channel", (rec.get("chat") or {}).get("provider"), "groq")
+# That was with the engine down. Up, pip 1.0 is first in every text bay
+# and DeepSeek is what stands behind it.
+appmod.pip_api.configured = lambda: True
+appmod.pip_api.models = lambda: ["pip-1.0"]
+rec = client.get("/api/providers").get_json()["recommended"]
+check("with the engine up, the chat bay is pip 1.0",
+      rec.get("chat"), {"provider": "pip", "model": "pip-1.0"})
+check("and so is the code bay",
+      rec.get("code"), {"provider": "pip", "model": "pip-1.0"})
+check("but a text-only engine is not recommended for the vision bay",
+      (rec.get("vision") or {}).get("provider") == "pip", False)
+appmod.pip_api.configured = lambda: False
+appmod.pip_api.models = lambda: []
 tid = client.post("/api/threads", json={"mode": "code"}).get_json()["id"]
 for strength, want in (("quick", "deepseek/deepseek-v3.2"), ("deep", "deepseek/deepseek-r1-0528")):
     CALLS.clear()

@@ -13,7 +13,7 @@
  * cached asset list changes; the activate handler deletes every cache that
  * is not the current one.
  */
-const VERSION = "rg-shell-v1";
+const VERSION = "pip-shell-v1";
 
 /* Deliberately short. Anything that can be fetched on demand is fetched on
  * demand - a precache list that mirrors the whole static folder means a

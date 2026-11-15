@@ -106,6 +106,10 @@ export function decorateCodeBlock(pre) {
 
   const block = document.createElement("div");
   block.className = "code-block";
+  // Read by the workspace pane (artifacts.js): what the block is, and
+  // the file it says it is, so a revision lands as a new version of it.
+  block.dataset.lang = lang;
+  block.dataset.filename = readFilename(content) || "";
   const header = document.createElement("div");
   header.className = "code-block-header";
   const langSpan = document.createElement("span");
@@ -130,7 +134,9 @@ export function decorateCodeBlock(pre) {
     previewBtn.type = "button";
     previewBtn.className = "copy-btn";
     previewBtn.textContent = "Preview";
-    previewBtn.onclick = () => openPreview(content);
+    previewBtn.onclick = () => {
+      if (!openInWorkspace(previewBtn, "preview")) openPreview(content);
+    };
     header.appendChild(previewBtn);
     const saveBtn = document.createElement("button");
     saveBtn.type = "button";
@@ -146,6 +152,198 @@ export function decorateCodeBlock(pre) {
   if (window.hljs) {
     try { hljs.highlightElement(code); } catch (_) { /* plain is fine */ }
   }
+}
+
+/* Ask the workspace pane to show this block. It answers by cancelling
+   the event; when nothing does (a short snippet that is not an
+   artifact, or a block outside the chat) the caller falls back to the
+   overlay preview. An event rather than an import so the pane can use
+   this module without the two depending on each other. */
+function openInWorkspace(el, view) {
+  const evt = new CustomEvent("rg:open-artifact", {
+    bubbles: true, cancelable: true, detail: { view },
+  });
+  return !el.dispatchEvent(evt);
+}
+
+/* A finished render, announced from the bubble. The workspace pane
+   collects artifacts from it; `live` is true for a reply that has just
+   streamed in, false for one replayed from history. */
+function announce(bubble, live) {
+  bubble.dispatchEvent(new CustomEvent("rg:rendered", {
+    bubbles: true, detail: { live: !!live },
+  }));
+}
+
+/* ---- projects -----------------------------------------------------
+   Adjacent code blocks are one program, so they are shown as one panel
+   with file tabs instead of a stack of separate blocks. See the note in
+   the patch that added this. */
+
+const FILENAME_BY_LANG = {
+  python: "app.py", html: "index.html", css: "style.css",
+  javascript: "script.js", js: "script.js", json: "data.json",
+  sql: "schema.sql", bash: "run.sh", sh: "run.sh",
+};
+
+/* A filename the model put on the first line, in whichever comment
+   syntax the language uses. Returns null when the line is ordinary code,
+   so a real first line is never eaten by mistake. */
+function readFilename(content) {
+  const first = (content.split("\n")[0] || "").trim();
+  const m = first.match(
+    /^(?:#|\/\/|<!--|\/\*)\s*([\w.\-\/]+\.[a-z]{1,4})\s*(?:-->|\*\/)?$/i);
+  return m ? m[1] : null;
+}
+
+function stripFirstLine(content) {
+  const i = content.indexOf("\n");
+  return i === -1 ? "" : content.slice(i + 1);
+}
+
+/* Turn a run of .code-block siblings into one tabbed panel. */
+function groupIntoProject(blocks) {
+  const panel = document.createElement("div");
+  panel.className = "code-project";
+
+  const tabs = document.createElement("div");
+  tabs.className = "code-project-tabs";
+  const actions = document.createElement("div");
+  actions.className = "code-project-actions";
+  const body = document.createElement("div");
+  body.className = "code-project-body";
+
+  const files = [];
+  blocks.forEach((block, i) => {
+    const pre = block.querySelector("pre");
+    const code = pre && pre.querySelector("code");
+    if (!code) return;
+    const lang =
+      (code.className.match(/language-([\w+-]+)/) || [])[1] || "plaintext";
+    let content = code.textContent || "";
+    let name = readFilename(content);
+    if (name) {
+      content = stripFirstLine(content);
+      code.textContent = content;
+      if (window.hljs) {
+        try { hljs.highlightElement(code); } catch (_) { /* plain is fine */ }
+      }
+    } else {
+      name = FILENAME_BY_LANG[lang] || (lang + ".txt");
+      // Two files that infer to the same name would give two identical
+      // tabs, which is worse than a slightly ugly one.
+      if (files.some((f) => f.name === name)) name = i + 1 + "-" + name;
+    }
+    block.dataset.filename = name;
+    files.push({ name, content, block });
+
+    const tab = document.createElement("button");
+    tab.type = "button";
+    tab.className = "code-tab";
+    tab.textContent = name;
+    tab.onclick = () => show(i);
+    tabs.appendChild(tab);
+
+    // The per-block header is redundant now: the tab says the filename
+    // and the panel carries the buttons.
+    const header = block.querySelector(".code-block-header");
+    if (header) header.remove();
+    body.appendChild(block);
+  });
+
+  if (files.length < 2) return null;
+
+  function show(i) {
+    files.forEach((f, j) => {
+      f.block.hidden = j !== i;
+      tabs.children[j].classList.toggle("is-active", j === i);
+    });
+    copyBtn.textContent = "Copy " + files[i].name;
+    copyBtn.onclick = () => {
+      navigator.clipboard.writeText(files[i].content);
+      copyBtn.textContent = "Copied!";
+      setTimeout(() => (copyBtn.textContent = "Copy " + files[i].name), 1500);
+    };
+  }
+
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "copy-btn";
+  actions.appendChild(copyBtn);
+
+  // Every file at once, as text with filename separators. Not a zip:
+  // building one in the browser needs a library, and what people do with
+  // this is paste it into an editor.
+  const allBtn = document.createElement("button");
+  allBtn.type = "button";
+  allBtn.className = "copy-btn";
+  allBtn.textContent = "Copy all";
+  allBtn.onclick = () => {
+    navigator.clipboard.writeText(
+      files.map((f) => "===== " + f.name + " =====\n" + f.content).join("\n\n"));
+    allBtn.textContent = "Copied all!";
+    setTimeout(() => (allBtn.textContent = "Copy all"), 1500);
+  };
+  actions.appendChild(allBtn);
+
+  // An html file in the set can still be looked at rather than read.
+  const page = files.find((f) => /\.html?$/i.test(f.name)
+                                 && /<(!doctype|html)/i.test(f.content));
+  if (page) {
+    const previewBtn = document.createElement("button");
+    previewBtn.type = "button";
+    previewBtn.className = "copy-btn";
+    previewBtn.textContent = "Preview";
+    previewBtn.onclick = () => {
+      if (!openInWorkspace(page.block, "preview")) openPreview(page.content);
+    };
+    actions.appendChild(previewBtn);
+  }
+
+  const bar = document.createElement("div");
+  bar.className = "code-project-bar";
+  bar.appendChild(tabs);
+  bar.appendChild(actions);
+  panel.appendChild(bar);
+  panel.appendChild(body);
+  show(0);
+  return panel;
+}
+
+/* Find runs of adjacent .code-block elements and fold each into a
+   project panel. Called once, after every block is decorated. */
+export function groupCodeBlocks(bubble) {
+  const blocks = [...bubble.querySelectorAll(":scope > .code-block")];
+  if (blocks.length < 2) return;
+  let run = [];
+  const flush = () => {
+    if (run.length >= 2) {
+      // A placeholder, because groupIntoProject moves every block into
+      // the panel it builds: asking run[0] to insert the panel beside
+      // itself afterwards is asking a detached node to do it, which
+      // silently does nothing and loses the blocks entirely.
+      const slot = document.createElement("div");
+      run[0].before(slot);
+      const panel = groupIntoProject(run);
+      if (panel) {
+        slot.replaceWith(panel);
+      } else {
+        // Nothing was grouped, so put the blocks back where they were.
+        run.forEach((b) => slot.before(b));
+        slot.remove();
+      }
+    }
+    run = [];
+  };
+  blocks.forEach((b) => {
+    if (run.length && run[run.length - 1].nextElementSibling === b) {
+      run.push(b);
+    } else {
+      flush();
+      run = [b];
+    }
+  });
+  flush();
 }
 
 /* ---- the fallback -----------------------------------------------------
@@ -189,14 +387,14 @@ function renderPlain(bubble, text, final) {
  * long reply cost O(n^2) in the tab it was arriving in. At the end,
  * once: code headers, highlighting, maths.
  */
-export function renderMarkdown(bubble, text, { final = true } = {}) {
+export function renderMarkdown(bubble, text, { final = true, live = false } = {}) {
   try {
     bubble.dataset.md = text;      // Save wants the source, not the DOM
   } catch (_) { /* a bubble without a dataset still renders */ }
   const L = libs();
   if (!L) {
     renderPlain(bubble, text, final);
-    if (final) renderMath(bubble);
+    if (final) { renderMath(bubble); announce(bubble, live); }
     return;
   }
   const { text: safeText, held } = protectMath(text);
@@ -205,14 +403,16 @@ export function renderMarkdown(bubble, text, { final = true } = {}) {
     html = L.marked.parse(safeText);
   } catch (_) {
     renderPlain(bubble, text, final);
-    if (final) renderMath(bubble);
+    if (final) { renderMath(bubble); announce(bubble, live); }
     return;
   }
   html = restoreMath(L.purify.sanitize(html, { USE_PROFILES: { html: true } }), held);
   bubble.innerHTML = html;
   if (!final) return;
   bubble.querySelectorAll("pre").forEach(decorateCodeBlock);
+  groupCodeBlocks(bubble);
   renderMath(bubble);
+  announce(bubble, live);
 }
 
 /**
@@ -243,7 +443,7 @@ export class StreamRenderer {
   draw(final) {
     if (this.done && !final) return;
     this.drawnAt = performance.now();
-    renderMarkdown(this.bubble, this.text, { final });
+    renderMarkdown(this.bubble, this.text, { final, live: true });
   }
 
   finish(text) {

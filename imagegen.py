@@ -151,13 +151,6 @@ def local_available():
     return importlib.util.find_spec("torch") is not None
 
 
-def preload():
-    """Warm the local pipeline in the background at startup, so the first
-    request does not pay the whole model-load cost."""
-    if local_available():
-        _load_pipeline()
-
-
 def available():
     """True if image generation can work at all, by any backend.
 

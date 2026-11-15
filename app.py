@@ -4,6 +4,7 @@ from flask import (Flask, render_template, request, Response, jsonify,
 from dotenv import load_dotenv
 import hashlib
 import hmac
+import importlib.util
 import secrets
 import subprocess
 import time
@@ -14,7 +15,7 @@ import uuid
 import threading
 import datetime
 import urllib.parse
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 import requests
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -27,7 +28,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 #
 # The symptom is quiet and confusing - the key is correct, a standalone
 # check confirms it, and the app still behaves as though nothing is
-# configured. GROQ_API_KEY could never have worked either.
+# configured.
 load_dotenv()
 
 import db  # noqa: E402  SQLite persistence - see db.py for the schema and why
@@ -43,7 +44,8 @@ import stats  # noqa: E402  owner-only usage figures - see stats.py
 import dashboard  # noqa: E402  visitors, money, requests - see dashboard.py
 import providers  # noqa: E402  how every channel fails - see providers.py
 from ratelimit import Limiter, limited  # noqa: E402  per-caller limits
-import groq_api  # noqa: E402  fast open-weight models - see groq_api.py
+import pip_api  # noqa: E402  pip 1.0, this app's own model - see pip_api.py
+import pip_identity  # noqa: E402  who pip 1.0 is - see pip_identity.py
 import openai_api  # noqa: E402  OpenAI-compatible API - see openai_api.py
 import connectors  # noqa: E402  pasted links, turned into tools
 import keystore  # noqa: E402  provider-key encryption + TOTP
@@ -66,12 +68,8 @@ except Exception as _e:                       # noqa: BLE001
 from agents import verifier as agent_verifier  # noqa: E402  code answers, run before trusted
 import mailer  # noqa: E402  verification email - see mailer.py
 
-# The one AI this app talks to: Ollama, running locally (llama3.2 pulled
-# already). Runs fully on this machine - no cloud call, no API key - but
-# unlike the from-scratch model in brain/, it's a real large language
-# model and can actually hold a conversation, answer questions, and write
-# working code. brain/ is untouched on disk; this app just isn't wired to
-# it any more.
+# The local channel: Ollama, on this machine by default. No cloud call
+# and no key, and the floor every hosted channel falls back to.
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 
 # HOW LONG A LOADED MODEL STAYS IN MEMORY
@@ -148,21 +146,6 @@ def ollama_is_remote():
 # account is configured. Without keys, upgrading stays the old mock
 # instant-flip (no card touched) so the app still works before a Stripe
 # account exists. See .env for what to set and where to get it.
-# stripe is an optional dependency: the app runs fine without it, just
-# with billing disabled. The import is split by TYPE_CHECKING because a
-# plain `stripe = None` fallback makes a type checker infer the module
-# as `Module | None`, which then flags every single stripe.* call as a
-# possible attribute-of-None error. At type-check time it's the real
-# module; at runtime the fallback still applies, and billing_live()
-# below is what actually guards every use.
-if TYPE_CHECKING:
-    import stripe
-else:
-    try:
-        import stripe
-    except ImportError:
-        stripe = None
-
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY")
 STRIPE_PRICE_ID_PRO = os.environ.get("STRIPE_PRICE_ID_PRO")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
@@ -194,6 +177,33 @@ def _is_placeholder(value):
     return False
 
 
+# The stripe package is imported on the first billing call, not at boot.
+# It used to be imported at the top of this file, and that one line was
+# 2.6 seconds of a 5-second start, measured with -X importtime: the
+# package pulls in several hundred modules, including its whole
+# test-helpers tree. The live site sells through Paddle, so on the
+# two-core VM that was the longest single step of every deploy restart,
+# spent on a provider nothing there uses. Whether it is INSTALLED is
+# answered from the import machinery, which costs a directory lookup
+# rather than an import.
+STRIPE_INSTALLED = importlib.util.find_spec("stripe") is not None
+_stripe_module: Any = None
+
+
+def _stripe():
+    """The stripe module, imported and given its key on first use.
+
+    Every stripe.* call below goes through this, so a request that never
+    touches billing - which is nearly all of them - never loads it.
+    """
+    global _stripe_module
+    if _stripe_module is None:
+        import stripe as module
+        module.api_key = STRIPE_SECRET_KEY
+        _stripe_module = module
+    return _stripe_module
+
+
 def billing_live():
     """Whether real charges can actually be taken.
 
@@ -202,7 +212,7 @@ def billing_live():
     actionable) rather than failing mid-checkout.
     """
     return bool(
-        stripe
+        STRIPE_INSTALLED
         and not _is_placeholder(STRIPE_SECRET_KEY)
         and not _is_placeholder(STRIPE_PRICE_ID_PRO)
     )
@@ -211,7 +221,7 @@ def billing_live():
 def billing_config_problem():
     """A specific description of what's missing, for the UI to show
     instead of a generic failure. -> None when billing is ready."""
-    if stripe is None:
+    if not STRIPE_INSTALLED:
         return "The stripe package isn't installed (pip install stripe)."
     if not STRIPE_SECRET_KEY:
         return "STRIPE_SECRET_KEY isn't set in .env."
@@ -234,9 +244,6 @@ def webhook_ready():
     set to None."""
     return billing_live() and bool(STRIPE_WEBHOOK_SECRET)
 
-
-if billing_live():
-    stripe.api_key = STRIPE_SECRET_KEY
 
 # Sign-in - Google OAuth only. No passwords for this app to store or leak,
 # no email/OTP flow to maintain - Google already proved the user controls
@@ -349,9 +356,8 @@ def _client_ip():
 # PER-CALLER LIMITS
 #
 # Nothing limited how often one caller could hit a generation route,
-# sign-in, or sign-up. The only "rate limit" was Groq's per-minute token
-# budget - shared by everyone on the site - so one script looping
-# /api/chat drained it for every other visitor. See ratelimit.py for
+# sign-in, or sign-up, so one script looping /api/chat could occupy the
+# model for every other visitor. See ratelimit.py for
 # the bucket, and for why in-process state is correct at --workers 1.
 #
 # Generation is keyed by account for signed-in users and by address for
@@ -520,6 +526,7 @@ def streaming_response(generator):
 
 
 CODING_SYSTEM_PROMPT = (
+    pip_identity.SYSTEM + "\n\n"
     "If the user's message is just casual conversation - a greeting, "
     "small talk, a one-word check-in like 'wsp' or 'yo' - answer that "
     "briefly and naturally like a normal chat, don't force a coding "
@@ -601,6 +608,63 @@ CODING_SYSTEM_PROMPT = (
     "which returns a real image. Never invent an image URL.\n"
     "- Motion only where it earns its place: a hover transition, a quiet "
     "reveal. No carousels nobody asked for.\n"
+    "WHAT SEPARATES A PREMIUM PAGE FROM A CORRECT ONE\n"
+    "The rules above get a page that works. These get one that looks "
+    "paid for, and they are mostly about scale and restraint:\n"
+    "- TYPE CARRIES IT. Pair a display face with a body face, and make "
+    "the jump obvious: a hero at clamp(2.5rem, 6vw, 4.5rem) against "
+    "1rem body text. Tighten display type (letter-spacing: -0.02em), "
+    "give headings text-wrap: balance, and keep running text near 65 "
+    "characters wide. Type is the single biggest difference between a "
+    "page that reads as designed and one that does not.\n"
+    "- AIR IS NOT WASTE. Sections want clamp(96px, 12vw, 180px) of "
+    "vertical padding. Cramped sections read as a stack of panels "
+    "however well each one is made.\n"
+    "- ONE ACCENT, SPENT ONCE. Everything interactive in the accent, "
+    "everything else quiet. Two competing accents read as a template.\n"
+    "- HAIRLINES OVER BOXES. A 1px rule and space group content as well "
+    "as a bordered card does, at a fraction of the weight. Reach for a "
+    "bordered box only when something must be visually contained.\n"
+    "- NEUTRALS ARE CHOSEN. Bias greys slightly toward the accent hue. "
+    "Pure #000 on pure #fff reads as unstyled.\n"
+    "- BOTH THEMES. Define colours as custom properties on :root, "
+    "redefine them under @media (prefers-color-scheme: dark), and set an "
+    "explicit background on body. Never let one theme inherit the "
+    "other\'s text colour.\n"
+    "AVOID THE DEFAULT AI LOOK. These are what a model reaches for when "
+    "it has no direction, and they are instantly recognisable: a purple "
+    "or blue gradient hero; Inter or Space Grotesk chosen as the safe "
+    "option; emoji as section markers; every element centred; a row of "
+    "identical rounded cards each with an accent bar; cream #F4F1EA with "
+    "terracotta. If the user asks for one of these, give it to them - "
+    "their words win. Unprompted, choose something with a reason behind "
+    "it, and let the subject suggest the palette and the faces.\n\n"
+
+    "IF THE PAGE NEEDS PYTHON\n"
+    "A form that submits, data that persists, an API the page calls - "
+    "those need a backend, and a single HTML file with fetch() pointed "
+    "at an endpoint nobody wrote is worse than saying so. When the "
+    "request needs one, give Flask:\n"
+    "- One ```python block with the complete app.py: routes, the data "
+    "layer (sqlite3 from the standard library unless told otherwise), "
+    "and the if __name__ == \'__main__\' block.\n"
+    "- One ```html block for templates/index.html, using Jinja "
+    "({{ }}, {% for %}) against the data the route actually passes.\n"
+    "- Say the two commands to run it: pip install flask, python app.py, "
+    "and which URL to open.\n"
+    "- Parameterise every SQL query (cursor.execute(sql, (a, b))). Never "
+    "build SQL with an f-string or +.\n"
+    "- Escape is on by default in Jinja; do not reach for |safe on "
+    "anything a user typed.\n"
+    "NAME EVERY FILE. When an answer contains more than one file, make "
+    "the FIRST LINE of each block a comment holding its path - \"# app.py\", "
+    "\"<!-- templates/index.html -->\", \"/* static/style.css */\". The chat "
+    "folds consecutive blocks into one panel with a tab per file, and the "
+    "tab is labelled from that line, so a set of files reads as one "
+    "project instead of a stack of snippets.\n"
+    "Keep the front end to the same standard as above - a Flask template "
+    "is still a page someone looks at.\n\n"
+
     "Then say in one line what you built and which custom properties to "
     "edit to re-theme it. Do not narrate the code."
     # No CONTENT_POLICY_NUDGE here on purpose - adding it caused
@@ -661,7 +725,7 @@ STRENGTH_LEVELS = {
         # most replies were written against was one most long answers
         # could reach. A truncated reply was then indistinguishable from
         # a finished one, because nothing read finish_reason; that is
-        # fixed in groq_api.stream_chat, but the better fix is not
+        # fixed in pip_api.stream_chat, but the better fix is not
         # hitting the ceiling in the first place.
         #
         # Raising it costs nothing on a short answer - max_tokens is a
@@ -694,8 +758,9 @@ STRENGTH_LEVELS = {
 DEFAULT_STRENGTH = "quick"
 
 CHAT_SYSTEM_PROMPT = (
-    "You are RandomGenerals, a friendly and knowledgeable general-purpose "
-    "assistant. Answer clearly and conversationally. Match your length to "
+    pip_identity.SYSTEM + "\n\n"
+    "You are friendly and knowledgeable, a general-purpose assistant. "
+    "Answer clearly and conversationally. Match your length to "
     "the question - short answers for simple questions, more detail when "
     "it's actually warranted. Don't force markdown structure (headers, "
     "bullet lists) onto answers that read fine as plain prose. If code "
@@ -963,16 +1028,9 @@ def video_cost(out_seconds, quality="standard"):
 # accrual rate.
 # WHAT PRO ACTUALLY SELLS
 #
-# Not simply "more credits". The thing that genuinely runs out on this
-# deployment is the fast channel: Groq's ceiling is 8,000 tokens a minute
-# shared across everyone on the site at once, so at a busy moment the
-# scarce resource is a fast reply, not an allowance. Pro is therefore
-# first in the queue for it (see _groq_has_room), and keeps answering
-# quickly at exactly the times a free session drops to the local model.
-#
-# The credit gap widened as well - 2,000 against 25,000 - but that is the
-# smaller half of the offer, and deliberately so. An allowance can be
-# waited out; being the one who still gets the fast channel cannot.
+# A larger allowance - 2,000 credits against 25,000 - and the features
+# in features.py that cost real compute per use: vision, video, the
+# deep strength.
 PLANS = {
     "free": {
         "label": "Free",
@@ -1049,12 +1107,9 @@ def plan_perks():
     free_list = [
         (credits("free"), True),
         # Name the model. "Chat and coding models" told nobody what they
-        # were actually getting, and the honest headline here is that the
-        # free tier runs a 120-billion-parameter model on dedicated
-        # accelerators - which is the single most impressive true thing
-        # about this plan.
-        ("<strong>gpt-oss-120b</strong> - a 120-billion-parameter model, "
-         "on dedicated accelerators rather than a CPU", True),
+        # were actually getting.
+        ("<strong>pip 1.0</strong> - our own model, fine-tuned here and "
+         "run on our own hardware", True),
         ("An 8,192-token context window, and replies up to %s tokens"
          % "{:,}".format(free["max_output_tokens_code"]), True),
         ("Image generation, diagrams, the code runner, web search "
@@ -1069,9 +1124,6 @@ def plan_perks():
     ]
     pro_list = [
         (credits("pro"), True),
-        ("<strong>Priority on the fast channel</strong> - your replies "
-         "stay quick while free sessions fall back to the local model",
-         True),
         ("<strong>Image understanding</strong> - it sees what you attach",
          True),
         ("<strong>%d connected apps at once</strong>, against %d - a "
@@ -1086,11 +1138,11 @@ def plan_perks():
          "plus its error output stops being truncated".format(
              pro["max_context_tokens"]), True),
         # Said plainly, because the alternative is implying a smarter
-        # model that does not exist. Chat runs on the same gpt-oss-120b
-        # either way; what Pro buys is room, sight, priority and tools.
-        ("<em>The chat model is the same gpt-oss-120b on both plans - "
-         "Pro buys room, sight, priority and tools, not a smarter "
-         "model.</em>", True),
+        # model that does not exist. Chat runs on the same pip 1.0
+        # either way; what Pro buys is room, sight and tools.
+        ("<em>The chat model is the same pip 1.0 on both plans - "
+         "Pro buys room, sight and tools, not a smarter model.</em>",
+         True),
         ("%dMB uploads and %d image shapes, not %d" % (
             pro["max_upload_mb"], len(pro["image_sizes"]),
             len(free["image_sizes"])), True),
@@ -1150,11 +1202,11 @@ MESSAGE_KINDS = ("text", "error", "refusal", "notice", "blocked")
 _LEGACY_ERROR_RE = re.compile(
     r"^\[(Error talking to|Something went wrong talking to|"
     r"The fast channel|The model returned nothing|No model is answering|"
-    r"No model could answer|Groq error|OpenRouter error|Ollama error|"
+    r"No model could answer|pip 1\.0 error|OpenRouter error|Ollama error|"
     r"Could not reach)")
 
 # The model never sees more than this much history from the app. The
-# providers trim further to their own budgets (fit_to_budget for Groq,
+# providers trim further to their own windows (fit_to_context for pip,
 # _trim_for_local for Ollama) - this is the ceiling on what is handed to
 # them, so a very long thread stops being re-serialised in full on every
 # turn. Oldest turns go first; the system prompt never does.
@@ -1239,11 +1291,13 @@ def save_users():
 THREADS = load_threads()
 USERS = load_users()
 
-# Warms up the image model in the background so the download/load time
-# (first run only) doesn't land on whoever happens to ask for the first
-# image - the request just waits on imagegen's own lock if it's still
-# loading when they get there.
-threading.Thread(target=imagegen.preload, daemon=True).start()
+# The local Stable Diffusion pipeline used to be warmed here at boot. It
+# is not any more: "local" is only ever used when a request names it
+# (see generate_image_route - the default is a hosted backend), and on
+# any machine with torch installed the warm-up imported torch, diffusers
+# and a 2GB model into RAM on every start for a button almost nobody
+# presses. imagegen loads the pipeline under its own lock on the first
+# local request, which is where that cost belongs.
 
 
 # IS THIS MACHINE ACTUALLY ABLE TO HOST THE MODEL?
@@ -1910,7 +1964,7 @@ def stats_json():
 def terms_page():
     return _legal("terms", "Terms of Service", [
         {"heading": "What this is", "body": [
-            "RandomGenerals is a hosted assistant for chat, code, image "
+            "pip 1.0 is a hosted assistant for chat, code, image "
             "generation and video editing. Using it means accepting these "
             "terms.",
             "You must be at least 16, or old enough to enter a contract "
@@ -2054,11 +2108,14 @@ def privacy_page():
         {"heading": "Where prompts actually go", "body": [
             "This matters more than the rest of the page, so it is stated "
             "plainly rather than buried.",
-            "Chat and code replies come from one of two places. Where "
-            "a model is running on our own server, what you type stays "
-            "on it. Otherwise it is sent to <strong>Groq</strong> to "
-            "produce a reply, and Groq processes it under their own "
-            "terms. Which one answered is shown on each reply.",
+            "Chat and code replies come from <strong>pip 1.0</strong>, "
+            "our own model, running on hardware we operate: what you "
+            "type is processed there and is not sent to a model "
+            "company. When pip 1.0 cannot answer - it is restarting, "
+            "or busy - a reply may instead come from a model reached "
+            "through <strong>OpenRouter</strong>, as described below, "
+            "which processes it under its own terms. Which one "
+            "answered is shown on each reply.",
             ["Image generation sends your description to "
              "<strong>Pollinations</strong>, which serves the SANA "
              "model. Your description is also rewritten by the same "
@@ -2204,16 +2261,18 @@ def acceptable_use_page():
             "images of real people.",
         ]},
         {"heading": "What this product is", "body": [
-            "RandomGenerals is an independent interface built on top "
-            "of third-party AI models. We do not train or own the "
-            "underlying models. Where a model's name is shown in the "
-            "app, it is there so you know which one answered - it is "
-            "not a claim of affiliation with, endorsement by, or "
-            "partnership with whoever makes that model.",
-            "Chat and code replies come from open-weight models served "
-            "by third parties or run on our own server. Image "
-            "generation is served by a third-party model. Which one "
-            "answered is labelled on every reply.",
+            "pip 1.0 is an assistant owned and operated by Imrane "
+            "Adib. Its chat model is our own: an openly licensed "
+            "base model, fine-tuned by us and run on hardware we "
+            "operate. The base model's licence and notice are kept "
+            "with the weights.",
+            "When pip 1.0 cannot answer, a reply may come from a "
+            "third-party model instead, and image generation is "
+            "served by a third-party model. Where another model's "
+            "name is shown in the app, it is there so you know which "
+            "one answered - it is not a claim of affiliation with, "
+            "endorsement by, or partnership with whoever makes that "
+            "model. Which one answered is labelled on every reply.",
         ]},
         {"heading": "Sexual content is not permitted", "body": [
             "You may not use this service to generate, request or store "
@@ -3041,6 +3100,7 @@ def subscribe():
             return jsonify({"checkout_url": url})
 
         if billing_live():
+            stripe = _stripe()
             try:
                 checkout_kwargs = {
                     "mode": "subscription",
@@ -3184,6 +3244,7 @@ def billing_portal():
     if not customer_id:
         return jsonify({"error": "No billing account yet - subscribe first."}), 400
 
+    stripe = _stripe()
     try:
         portal = stripe.billing_portal.Session.create(
             customer=customer_id,
@@ -3246,6 +3307,7 @@ def billing_webhook():
         # that can't verify must never act on what it's told.
         return jsonify({"error": "Billing webhook not configured"}), 503
 
+    stripe = _stripe()
     try:
         event = stripe.Webhook.construct_event(
             request.get_data(), request.headers.get("Stripe-Signature", ""),
@@ -3561,8 +3623,8 @@ def _api_user():
     """The account behind the bearer key, or None.
 
     Every request is authenticated. Without this the endpoint is an open
-    relay on a public URL: a stranger could spend the owner's per-minute
-    Groq budget, and on a machine with Ollama running, occupy their GPU.
+    relay on a public URL: a stranger could occupy the owner's GPU and
+    spend the owner's paid fallback budget.
     """
     raw = openai_api.key_from_request(request.headers)
     if not raw:
@@ -3584,7 +3646,8 @@ def openai_models():
             "Invalid API key. Create one in the app under Settings.",
             401, "invalid_request_error")
     ids = list(ollama_provider().get("models") or [])
-    return jsonify(openai_api.model_list(ids or ["randomgenerals"]))
+    ids = [m for m in pip_api.models() if m not in ids] + ids
+    return jsonify(openai_api.model_list(ids or [pip_identity.MODEL_ID]))
 
 
 @app.route("/v1/chat/completions", methods=["POST"])
@@ -3672,18 +3735,18 @@ def _v1_route(requested: str) -> tuple[str, str | None]:
     local model is preferred only when it is up AND measured fast
     enough - the chat bay's own rule, which this route skipped, so on
     the deployment where Ollama takes a minute to say its first word
-    the API went there anyway. Then the fast channel, then nothing.
+    the API went there anyway. Then pip 1.0, then nothing.
     """
     local = list(ollama_provider().get("models") or [])
     if requested and requested in local:
         return "ollama", requested
-    if requested and requested in (groq_api.models() or []):
-        return "groq", requested
+    if requested and requested in (pip_api.models() or []):
+        return "pip", requested
     if local and ollama_reachable() and _local_is_fast():
         return "ollama", next((m for m in local if "coder" in m), local[0])
-    groq_model = _groq_model_for("code")
-    if groq_model:
-        return "groq", groq_model
+    engine_model = _pip_model_for("code")
+    if engine_model:
+        return "pip", engine_model
     if local and ollama_reachable():
         # Slow is still better than nothing when it is all there is.
         return "ollama", next((m for m in local if "coder" in m), local[0])
@@ -3728,7 +3791,7 @@ def _v1_pieces(candidates, history, opts, usage, failure):
                                                usage=usage):
                 yield piece
             return
-        except groq_api.ProviderUnavailable as e:
+        except pip_api.ProviderUnavailable as e:
             failures.append((p, e))
             continue
         except Exception as e:                            # noqa: BLE001
@@ -3781,36 +3844,34 @@ def health():
     the deployment's health check and by the UI's status indicator, so
     it has to stay fast enough to call often.
 
-    Two possible sources: Ollama on this machine, and Groq when that is
-    faster or when there is no local model at all. `mode` says which one
-    a request would actually reach right now.
+    Two possible sources: the pip 1.0 engine, and Ollama on this machine
+    underneath it. `mode` says which one a request would actually reach
+    right now.
     """
     local = ollama_reachable()
-    # A key being present is not the same as a key that works, so this
-    # asks whether any model actually came back.
-    cloud = bool(groq_api.configured() and groq_api.models())
-    # Whether the fast channel has budget right now, which is a different
-    # question from whether it is configured - and the one that explains
-    # a sudden change in reply latency to anyone watching this endpoint.
-    remaining, resets_in = groq_api.budget_state()
+    # An engine URL being set is not the same as an engine that is up,
+    # so this asks whether a model actually came back.
+    engine = bool(pip_api.configured() and pip_api.models())
     return jsonify({
         "status": "ok",
         "time": now_iso(),
+        "model": pip_identity.FULL_NAME,
         "compute": {
             "local_models": local,
-            "cloud_models": cloud,
+            "engine": engine,
         },
-        "fast_channel": {
-            "configured": cloud,
-            "tokens_remaining": remaining,
-            "resets_in_seconds": round(resets_in, 1),
+        "engine": {
+            "running": engine,
+            # Non-zero while the engine has asked callers to wait, which
+            # is what explains a sudden change in reply latency to
+            # anyone watching this endpoint.
+            "busy_for_seconds": round(pip_api.busy_for(), 1),
         },
-        # Which one a request would actually reach right now. "cloud"
-        # only when it is both configured and has budget left, because
-        # otherwise the honest answer is that local is answering.
-        "mode": ("cloud" if cloud and groq_api.budget_ok()
+        # "pip" only when the engine is both up and taking requests,
+        # because otherwise the honest answer is that local is answering.
+        "mode": ("pip" if engine and pip_api.has_room()
                  else "local" if local
-                 else "cloud" if cloud else "unavailable"),
+                 else "pip" if engine else "unavailable"),
     })
 
 
@@ -4627,7 +4688,7 @@ def export_history():
             parts.append("")
         body = "\n".join(parts)
         mimetype = "text/markdown; charset=utf-8"
-        filename = "randomgenerals-history-%s.md" % stamp
+        filename = "pip-history-%s.md" % stamp
     else:
         body = json.dumps({
             "exported": now_iso(),
@@ -4635,7 +4696,7 @@ def export_history():
             "threads": mine,
         }, indent=2, ensure_ascii=False)
         mimetype = "application/json; charset=utf-8"
-        filename = "randomgenerals-history-%s.json" % stamp
+        filename = "pip-history-%s.json" % stamp
 
     return Response(body, mimetype=mimetype, headers={
         "Content-Disposition": 'attachment; filename="%s"' % filename,
@@ -4832,6 +4893,7 @@ def get_features():
 def _licence_from_stripe(key):
     """Treat the key as a Stripe subscription id and ask Stripe whether
     it's currently paid up. Returns the same shape as the route."""
+    stripe = _stripe()
     try:
         sub = stripe.Subscription.retrieve(key)
     except stripe.StripeError:
@@ -4900,16 +4962,18 @@ def get_credits():
 # same table serves a laptop with four local models and a GPU-less VM
 # with none - it simply falls further down the list.
 #
-# The order is set by measurement on the deployment this runs on, not by
-# which model is nominally strongest. On the Oracle VM (two ARM cores, no
-# GPU) a 7B answers at about 3.5 tokens a second - a 417-token code reply
-# took 194 seconds - while Groq returns the same answer in about one. So
-# hosted comes first for the bays where waiting is the thing you notice,
-# and local sits underneath as a deliberate choice rather than a default.
+# pip 1.0 is first in every bay: it is this app's own model, and the
+# other channels exist for the moments it cannot answer - the engine is
+# restarting, or its queue is full. Below it the order is set by
+# measurement on the deployment this runs on. On a machine with no GPU
+# a local 7B answers at about 3.5 tokens a second - a 417-token code
+# reply took 194 seconds - so the hosted fallbacks come before the
+# local ones for the bays where waiting is the thing you notice.
 #
-# Vision is the exception that decides its own order: Groq's catalogue
-# has no model that can see an image, so vision is local-only: llava is
-# the one thing here the fast channel cannot do at all.
+# Vision follows what can actually see. pip 1.0 is listed there too,
+# and matches only when the engine reports a build that reads images
+# (pip_api.vision_models); until then an attached picture goes to the
+# next entry that can.
 #
 # ONE MODEL ANSWERS BOTH CHAT AND CODE, AND THAT IS THE WHOLE POINT
 #
@@ -4937,51 +5001,40 @@ def get_credits():
 # qwen3.5 and gemma4, because the cloud catalogue carries neither
 # qwen2.5 nor llava (checked against ollama.com/api/tags, which lists 19
 # models and none of them llava).
-# DIFFERENT MODELS FOR DIFFERENT BAYS, CHOSEN BY MEASUREMENT
-#
-# Both hosted models were scored on six maths and physics problems with
-# verifiable answers - rolling-body dynamics, an improper integral, dice
-# probability, modular exponentiation, photon energy, SHM. Both got 6/6,
-# so accuracy did not separate them and the split is made on how they
-# WRITE rather than what they know:
-#
-#   gpt-oss-120b answers in LaTeX and \boxed{}.
-#   qwen3.8-27b states results in plain prose.
-#
-# That measurement is why qwen was on the chat bay. The split is now made
-# on ROLE instead, which is a product decision rather than a measured
-# one: DeepSeek is the coding model and gpt-oss-120b is the chat model. Two
-# models, one job each, which is easier to reason about than a third
-# model that differs only in how it formats an answer - and gpt-oss is
-# the one that stays free, so the free chat bay is not the paid one
-# degraded.
-#
-# (A warning for whoever tunes this next: the first two versions of that
-# benchmark scored gpt-oss-120b 3/6 twice, and both times the model was
-# right and the GRADER was wrong - it could not see a bare "9" or a
-# \frac{1}{8}. Check what the model actually wrote before believing a
-# score.)
+# (A warning for whoever tunes this next: an early benchmark scored a
+# model 3/6 twice, and both times the model was right and the GRADER was
+# wrong - it could not see a bare "9" or a \frac{1}{8}. Check what the
+# model actually wrote before believing a score.)
 BAY_ROUTES = {
     "code": [
-        # DeepSeek first, asked for by name. V3 for the bay; Deep mode
-        # swaps in R1 (openrouter_api.DEEP_MODEL) at _stream_reply. Both
-        # are paid and bounded by OPENROUTER_DAILY_USD, so the free
-        # coding model and then gpt-oss carry the bay when the ceiling
-        # is reached or no OpenRouter key is set.
+        # pip 1.0 first. Underneath it DeepSeek, asked for by name: V3
+        # for the bay, and Deep mode swaps in R1
+        # (openrouter_api.DEEP_MODEL) at _stream_reply. Both are paid
+        # and bounded by OPENROUTER_DAILY_USD, so the free coding model
+        # and then the local ones carry the bay when the ceiling is
+        # reached or no OpenRouter key is set.
+        ("pip", "pip-1.0"),
         ("openrouter", "deepseek-v3.2"),
         ("openrouter", "deepseek-chat-v3"),
         ("openrouter", "laguna-s-2.1:free"),
-        ("groq", "gpt-oss-120b"),
         ("ollama", "gemma3:1b"),
         ("ollama", "gemma3"),
         ("ollama", "qwen3.5"),          # Ollama Cloud
         ("ollama", "gpt-oss"),          # Ollama Cloud
     ],
     "chat": [
-        # gpt-oss-120b is the chat model. It is free on Groq, so the bay
-        # most people land in costs nothing to serve and does not depend
-        # on a paid key being present.
-        ("groq", "gpt-oss-120b"),
+        # ORDER IS THE DEFAULT. _recommended_routes walks this list and
+        # lands a visitor on the first entry that is live, so whatever is
+        # first here is what the chat bay actually runs: pip 1.0,
+        # wherever its engine is up.
+        #
+        # Nemotron and GLM behind it. Both are free on OpenRouter, where
+        # free means metered by the DAY: 50 requests until an account has
+        # bought about $10 of credit once, 1,000 after. They are what
+        # answers while the engine is down, not a second default.
+        ("pip", "pip-1.0"),
+        ("openrouter", "nemotron-3-ultra-550b-a55b:free"),
+        ("openrouter", "glm-5.2:free"),
         ("ollama", "gemma3:1b"),
         ("ollama", "gemma3"),
         ("ollama", "qwen3.5"),          # Ollama Cloud
@@ -4994,21 +5047,15 @@ BAY_ROUTES = {
     # ~3.7 - so the smaller model is both faster AND the one that lets
     # this box hold only Gemma.
     "vision": [
-        # Hosted first here, unlike the other bays. A local vision model
-        # needs a GPU to be bearable and this deployment has none, so on
-        # the server these are the only entries that can ever match -
+        # pip 1.0 first, and it matches only when the engine reports a
+        # build that can see. Then hosted before local: a local vision
+        # model needs a GPU to be bearable, so on a server without one
+        # the OpenRouter entries are the only ones that can match -
         # while a laptop running Ollama still falls through to gemma3:4b
-        # below and keeps working offline.
-        #
-        # Groq before OpenRouter: it is the channel this deployment
-        # actually runs on, its qwen models can see (console.groq.com/
-        # docs/vision), and it answers in a second. The OpenRouter
-        # entries are :free models, which are the first thing to be
-        # rate-limited on a busy afternoon - which is how "the AI can't
-        # read images" was true here for as long as they were the only
-        # hosted route.
-        ("groq", "qwen3.8-27b"),
-        ("groq", "qwen3.6-27b"),
+        # below and keeps working offline. The OpenRouter entries are
+        # :free models, the first thing to be rate-limited on a busy
+        # afternoon.
+        ("pip", "pip-1.0"),
         ("openrouter", "gemma-4-31b-it:free"),
         ("openrouter", "minimax-m3:free"),
         ("ollama", "gemma3:4b"),
@@ -5097,15 +5144,13 @@ def _vision_route():
     rather than pretending the attachment was never there.
     """
     for provider_id, pattern in BAY_ROUTES["vision"]:
-        if provider_id == "groq":
-            # Vision is Pro-only (see _stream_reply), so the budget
-            # question is asked with Pro's priority.
-            if not (groq_api.configured() and _groq_has_room(features.PRO)):
+        if provider_id == "pip":
+            if not (pip_api.configured() and pip_api.has_room()):
                 continue
-            match = next((m for m in groq_api.vision_models()
+            match = next((m for m in pip_api.vision_models()
                           if pattern in m.lower()), None)
             if match:
-                return "groq", match
+                return "pip", match
         elif provider_id == "openrouter":
             if not (openrouter_api.configured()
                     and openrouter_api.budget_ok()):
@@ -5132,7 +5177,7 @@ def _vision_route():
 
 
 def _local_alternative(mode):
-    """The local model that should answer instead of the fast channel.
+    """The local model that should answer instead of pip 1.0.
 
     Reads the same BAY_ROUTES table rather than hardcoding a name, so
     the fallback and the primary can never drift apart, and returns None
@@ -5145,8 +5190,8 @@ def _local_alternative(mode):
     # REACHABLE IS NOT THE SAME AS USABLE, and this is the second place
     # that distinction has cost a working reply.
     #
-    # On the deployment VM Ollama answers, eventually. The fast channel
-    # hits its per-minute limit, the request falls back here, and the
+    # On the deployment VM Ollama answers, eventually. The engine is
+    # busy, the request falls back here, and the
     # visitor waits out the full 120-second HTTP timeout before being
     # shown:
     #
@@ -5178,32 +5223,67 @@ def _local_alternative(mode):
     return names[0] if names else None
 
 
-def _groq_model_for(mode: str) -> str | None:
-    """The Groq model this bay would pick, for a request that arrives on
-    the fast channel by failover rather than by choice. None when Groq
+def _pip_model_for(mode: str) -> str | None:
+    """The pip model this bay would pick, for a request that arrives on
+    the engine by failover rather than by choice. None when the engine
     cannot answer at all."""
-    if not (groq_api.configured() and groq_api.models()):
+    if not (pip_api.configured() and pip_api.models()):
         return None
-    names = groq_api.models()
+    names = pip_api.models()
     for provider_id, pattern in BAY_ROUTES.get(mode, BAY_ROUTES["chat"]):
-        if provider_id != "groq":
+        if provider_id != "pip":
             continue
         match = next((n for n in names if pattern in n.lower()), None)
         if match:
             return match
-    return groq_api.PREFERRED[0]
+    return pip_api.PREFERRED[0]
+
+
+def _openrouter_model_for(mode: str) -> str | None:
+    """The OpenRouter model this bay would pick when it arrives there by
+    failover rather than by choice. None when OpenRouter cannot answer.
+
+    Free ids only, and deliberately. The paid DeepSeek models at the top
+    of PREFERRED are chosen by someone opening the Code bay; arriving
+    here means another channel just refused, and spending money as a
+    silent consequence of that is not a decision this code should make
+    on someone's behalf.
+    """
+    if not openrouter_api.configured():
+        return None
+    names = [n for n in openrouter_api.models() if openrouter_api.is_free(n)]
+    if not names:
+        return None
+    # The bay's own preference first, if it names a free id.
+    for provider_id, pattern in BAY_ROUTES.get(mode, BAY_ROUTES["chat"]):
+        if provider_id != "openrouter":
+            continue
+        match = next((n for n in names if pattern in n.lower()), None)
+        if match:
+            return match
+    # Otherwise the first free id in PREFERRED that the catalogue still
+    # has - PREFERRED is ordered, so this is the best free one available.
+    for candidate in openrouter_api.PREFERRED:
+        if openrouter_api.is_free(candidate) and candidate in names:
+            return candidate
+    return names[0]
 
 
 def _failover_chain(provider: str, mode: str) -> list[tuple[str, str]]:
     """Who to ask next when `provider` refuses before its first chunk.
 
     -> [(provider, model), ...] in the order to try them. Every channel
-    fails the same way now (providers.py), so the fallback is a table
-    rather than a special case for Groq:
+    fails the same way (providers.py), so the fallback is a table rather
+    than a special case per channel:
 
-        ollama      -> groq
-        groq        -> ollama
-        openrouter  -> groq -> ollama
+        ollama      -> pip -> openrouter
+        pip         -> ollama -> openrouter
+        openrouter  -> pip -> ollama
+
+    OpenRouter sits last on the two chains that reach it because its
+    free tier is metered by the day: it is the channel that still works
+    when the engine is down AND no local model is running, and spending
+    one of 50 daily requests before both are true would waste it.
 
     Each candidate is checked for being able to answer at all - a key,
     a model list, a local model that is up and measured fast enough -
@@ -5215,13 +5295,17 @@ def _failover_chain(provider: str, mode: str) -> list[tuple[str, str]]:
     """
     chain: list[tuple[str, str]] = []
     if provider in ("ollama", "openrouter"):
-        groq_model = _groq_model_for(mode)
-        if groq_model:
-            chain.append(("groq", groq_model))
-    if provider in ("groq", "openrouter"):
+        engine_model = _pip_model_for(mode)
+        if engine_model:
+            chain.append(("pip", engine_model))
+    if provider in ("pip", "openrouter"):
         local = _local_alternative(mode)
         if local:
             chain.append(("ollama", local))
+    if provider in ("pip", "ollama"):
+        free = _openrouter_model_for(mode)
+        if free:
+            chain.append(("openrouter", free))
     # The table says what to prefer; the router says what has actually
     # been answering in the last ten minutes. A channel that is failing
     # or crawling right now goes to the back of the line rather than
@@ -5230,9 +5314,9 @@ def _failover_chain(provider: str, mode: str) -> list[tuple[str, str]]:
 
 
 _CHANNEL_NAMES = {
-    "groq": "the fast channel",
+    "pip": pip_identity.FULL_NAME,
     "ollama": "the local model",
-    "openrouter": "the DeepSeek channel",
+    "openrouter": "the backup channel",
 }
 
 
@@ -5243,16 +5327,15 @@ def _channel_name(provider: str) -> str:
 
 def _retry_after(provider: str,
                  failures: list[tuple[str, BaseException]]) -> float | None:
-    """Seconds until a rate-limited channel refills, if that is known.
+    """Seconds until a busy channel will take a request, if that is known.
 
-    Groq reports it in every response's headers, which budget_state()
-    keeps. Other channels may put a number in Retry-After, which their
-    RateLimited carries as its message; anything else is unknown, and
-    unknown means do not wait.
+    The engine says so in Retry-After, which pip_api.busy_for() keeps.
+    Other channels may put a number there too, which their RateLimited
+    carries as its message; anything else is unknown, and unknown means
+    do not wait.
     """
-    if provider == "groq":
-        _left, resets_in = groq_api.budget_state()
-        return resets_in or None
+    if provider == "pip":
+        return pip_api.busy_for() or None
     for p, exc in failures:
         if p == provider and isinstance(exc, providers.RateLimited):
             try:
@@ -5270,11 +5353,11 @@ def _nobody_answered(failures: list[tuple[str, BaseException]]) -> str:
     tried = "; ".join("%s is %s" % (_channel_name(p), providers.describe(e))
                       for p, e in failures)
     if any(isinstance(e, providers.RateLimited) for _, e in failures):
-        _left, resets_in = groq_api.budget_state()
-        return ("[The fast channel has used its per-minute allowance and "
-                "nothing else could take over (%s). It refills in about "
-                "%d seconds - send that again then.]"
-                % (tried, max(1, int(resets_in or 5))))
+        return ("[%s is answering as many people as it can right now "
+                "and nothing else could take over (%s). Send that again "
+                "in about %d seconds.]"
+                % (pip_identity.FULL_NAME, tried,
+                   max(1, int(pip_api.busy_for() or 5))))
     if not tried:
         return ("[No model is answering. If this is running on your own "
                 "machine, start Ollama, or check OLLAMA_URL and "
@@ -5283,17 +5366,17 @@ def _nobody_answered(failures: list[tuple[str, BaseException]]) -> str:
             "moment.]" % tried)
 
 
-# How long a request may wait for the per-minute budget to refill
-# before giving up and saying so.
+# How long a request may wait for a busy channel to free up before
+# giving up and saying so.
 #
-# Groq's window is a minute, so the wait is at most this and usually a
-# few seconds. Sitting on the request is only better than failing while
+# The engine asks for a few seconds at a time, so the wait is usually
+# short. Sitting on the request is only better than failing while
 # it stays shorter than somebody's patience - past about half a minute
 # a spinner is worse than a sentence telling them when to come back.
 RATE_LIMIT_WAIT_SECONDS = 25
 
 # The wait above is taken in slices, and the browser is told at every
-# slice how long is left - so "the fast channel is busy" is a countdown
+# slice how long is left - so "pip 1.0 is busy" is a countdown
 # in the thinking indicator rather than an unexplained pause. See the
 # "wait" event in stream_event.
 RATE_LIMIT_WAIT_SLICE = 2
@@ -5348,17 +5431,6 @@ def _trim_for_local(history):
     return kept
 
 
-def _groq_has_room(plan):
-    """Whether this plan may spend the shared per-minute budget now.
-
-    Pro skips the reserve. That is a real benefit rather than a cosmetic
-    one: when the site is busy the fast channel is precisely what runs
-    out, so being the one who still gets it is worth more than any
-    number of extra credits.
-    """
-    return groq_api.budget_ok(priority=(plan == features.PRO))
-
-
 def _boot_probes():
     """Warm the chat model, then find out if local vision is usable.
 
@@ -5395,9 +5467,10 @@ def _recommended_routes(providers, plan=None):
     out = {}
     for bay, ranked in BAY_ROUTES.items():
         # Only skip local where something else in this bay could answer.
-        # Vision is the case that matters: Groq has no model that can see
-        # an image, so llava is not merely preferred there, it is the only
-        # option - and skipping it left the bay with no route at all.
+        # Vision is the case that matters: where nothing hosted can see
+        # an image, the local vision model is not merely preferred, it
+        # is the only option - and skipping it left the bay with no
+        # route at all.
         has_alternative = any(
             pid != "ollama" and pid in by_id for pid, _ in ranked)
         first_choice = None
@@ -5410,7 +5483,18 @@ def _recommended_routes(providers, plan=None):
             match = next(
                 (m for m in provider["models"]
                  if pattern in m.lower()
-                 and features.model_allowed(plan, m)), None)
+                 and features.model_allowed(plan, m)
+                 # The vision bay is for models that can see. pip 1.0
+                 # is listed there for a build that reads images; a
+                 # text-only engine must not be recommended for it.
+                 and (bay != "vision" or provider_id != "pip"
+                      or m in pip_api.vision_models())
+                 # A paid id at a zero ceiling will be refused the moment
+                 # it is used, so recommending it puts a name in the
+                 # picker that cannot answer. Ask the same guard the
+                 # request will ask.
+                 and (provider_id != "openrouter"
+                      or openrouter_api.budget_ok(m))), None)
             if not match:
                 continue
             # A channel the router has watched fail for the last ten
@@ -5431,40 +5515,36 @@ def _recommended_routes(providers, plan=None):
 
 @app.route("/api/providers", methods=["GET"])
 def list_providers():
-    # TWO CHANNELS: the fast one, and the one that is always there.
+    # pip 1.0, AND WHAT STANDS IN FOR IT.
     #
-    # Gemini is gone entirely: the import is removed, every call site is
-    # unwired, and gemini.py has been deleted. It was the fallback for
-    # "this machine is off", a job Groq now does faster and Ollama does
-    # locally, so it was a third way to answer that nothing chose.
-    #
-    # Groq stays because it is genuinely the fastest thing here, and its
-    # 8,000-tokens-per-minute ceiling is now steered around rather than
-    # walked into: see groq_api.budget_ok() and the failover in
-    # _stream_reply(). It no longer has to be reliable on its own,
-    # because Ollama catches every request it cannot take.
+    # pip 1.0 is the model the picker shows. Ollama and OpenRouter sit
+    # underneath and take a request only when the engine cannot - see
+    # the failover in _stream_reply().
     plan = features.normalize_plan(current_account()[0].get("plan"))
     providers = [ollama_provider(plan)]
-    if groq_api.configured():
-        groq_models = groq_api.models()
-        remaining, resets_in = groq_api.budget_state()
-        if remaining is not None and remaining < 500:
-            note = ("At its per-minute limit - replies are coming from "
-                    "the local model for about %ds." % int(resets_in))
+    if pip_api.configured():
+        pip_models = pip_api.models()
+        if pip_models and not pip_api.has_room():
+            note = ("Busy right now - replies are coming from a backup "
+                    "model for about %ds."
+                    % max(1, int(pip_api.busy_for())))
         else:
-            note = ("Open-weight models on dedicated accelerators. Runs "
-                    "off-device, so prompts leave this machine.")
+            note = "Our own model, running on our own hardware."
         providers.append({
-            "id": "groq",
-            "label": "RandomGenerals Turbo",
-            "available": bool(groq_models),
-            "models": groq_models,
-            "model_info": [describe_model(m, plan) for m in groq_models],
+            "id": "pip",
+            "label": pip_identity.FULL_NAME,
+            "available": bool(pip_models),
+            "models": pip_models,
+            "model_info": [describe_model(m, plan) for m in pip_models],
             "note": note,
         })
 
-    if openrouter_api.configured() and openrouter_api.budget_ok(
-            (openrouter_api.models() or [None])[0]):
+    # No model named on purpose: this is "should OpenRouter be offered at
+    # all", not "may I spend on some particular id". It used to pass the
+    # first entry in the catalogue, which is a PAID DeepSeek model, so
+    # with paid spending switched off the entire channel - free models
+    # included - disappeared from the picker.
+    if openrouter_api.configured() and openrouter_api.budget_ok():
         or_models = openrouter_api.models()
         providers.append({
             "id": "openrouter",
@@ -5512,12 +5592,10 @@ MODEL_DISPLAY_NAMES = {
     "qwen2.5-coder": ("Coder", "Tuned for writing and debugging code"),
     "qwen2.5": ("Core", "Best local accuracy for general questions"),
     "llava": ("Vision", "Can see and describe attached images"),
-    # groq - open weights on dedicated accelerators
-    "llama-3.3-70b-versatile": ("Turbo", "Large open model, answers fast"),
-    "llama-3.1-8b-instant": ("Turbo Lite", "Smaller and faster still"),
-    # cloud
-    "openai/gpt-oss-120b": ("Max", "Strongest for code, and 6/6 on maths and physics"),
-    "openai/gpt-oss-20b": ("Swift Cloud", "Fast cloud replies"),
+    # ours
+    pip_identity.MODEL_ID: (pip_identity.FULL_NAME,
+                            "Our own model - chat, code and diagrams"),
+    # backup channels
     "poolside/laguna-s-2.1:free": (
         "Laguna", "Free coding model - no cost beyond an account"),
     "cohere/north-mini-code:free": ("North", "Free, code-specialised"),
@@ -5533,9 +5611,6 @@ MODEL_DISPLAY_NAMES = {
     "moonshotai/kimi-k2.7-code": (
         "Kimi", "Coding model - PAID, billed per message"),
     "moonshotai/kimi-k2.5": ("Kimi", "Moonshot's general model - PAID"),
-    "qwen/qwen3.8-27b": ("Reason", "Answers in plain prose"),
-    "qwen/qwen3.6-27b": ("Core Cloud", "Balanced cloud model"),
-    "allam-2-7b": ("Arabic", "Tuned for Arabic language"),
 }
 
 
@@ -5617,10 +5692,10 @@ def ollama_provider(plan=None):
 
     THE LABEL IS THE PRODUCT NAME, THE NOTE IS THE TRUTH
 
-    Both channels are called RandomGenerals, because that is what this
-    is - a visitor did not come here to choose between vendors, and a
-    picker offering "Cloud" and "Fast cloud" was advertising suppliers
-    instead of the thing they came for.
+    Every channel is called pip 1.0, because that is what this is - a
+    visitor did not come here to choose between vendors, and a picker
+    offering "Cloud" and "Fast cloud" was advertising suppliers instead
+    of the thing they came for.
 
     What must not be lost in that is where a prompt actually goes, so
     every label carries a note that says it plainly, and the note is
@@ -5651,26 +5726,17 @@ def ollama_provider(plan=None):
 
     return {
         "id": "ollama",
-        "label": "RandomGenerals",
+        "label": pip_identity.FULL_NAME,
         # HIDDEN FROM THE PICKER, NOT REMOVED.
         #
-        # Two jobs remain that the hosted channel cannot do, so the
-        # models stay installed and reachable even though nobody picks
-        # them:
-        #
-        #   1. VISION. Groq's catalogue has no model that can see an
-        #      image, so an attached picture is answered by gemma3:4b or
-        #      it is not answered at all.
-        #   2. THE RATE LIMIT. Groq's free tier is 8,000 tokens a minute
-        #      shared across every visitor. At the current output ceiling
-        #      that is a handful of replies before the window drains, and
-        #      without something underneath it the site simply stops
-        #      answering - which is exactly the failure this deployment
-        #      already had once.
+        # The picker shows pip 1.0. The local models stay installed and
+        # reachable for the two jobs it may not be able to do: read an
+        # image, while the engine is a text-only build, and answer at
+        # all, while the engine is down or its queue is full. Without
+        # something underneath it the site simply stops answering.
         #
         # The frontend hides any provider carrying this flag, so the
-        # picker shows the two chosen models and the fallback stays
-        # invisible until it is needed.
+        # fallback stays invisible until it is needed.
         "hidden": True,
         "available": available and bool(models),
         "models": models,
@@ -5779,10 +5845,6 @@ _VISION_MODEL_HINTS = ("vision", "llava", "moondream", "minicpm-v", "bakllava")
 # as though nothing had been attached.
 _VISION_MODEL_EXACT = (
     "gemma3:4b", "gemma3:12b", "gemma3:27b",
-    # Groq's two multimodal models, per its own vision page. This tuple
-    # said for a long time that Groq served no such thing; it did, and
-    # the first of them was on this app's preferred list the whole time.
-    *groq_api.VISION_MODELS,
     # Free, and reachable from a server with no GPU. Checked against
     # OpenRouter's own architecture.input_modalities rather than assumed.
     "google/gemma-4-31b-it:free",
@@ -5798,6 +5860,9 @@ def is_vision_model(model):
         return True
     if any(hint in name for hint in _VISION_MODEL_HINTS):
         return True
+    # pip 1.0 can see when the engine says its build can.
+    if name in {m.lower() for m in pip_api.vision_models()}:
+        return True
     # Whatever OpenRouter's own catalogue says can see. The lists above
     # are a snapshot; the catalogue is live, and a model the vision
     # route picked from it must be recognised here or its images are
@@ -5808,7 +5873,7 @@ def is_vision_model(model):
 def stream_ollama(model, history, options=None, images=None, usage=None):
     # TRIMMED HERE, not at each call site. There are three ways a
     # request reaches Ollama - chosen as the default, pre-empted because
-    # the fast channel had no room, and failed over to after an error -
+    # pip 1.0 had no room, and failed over to after an error -
     # and only the last one was cutting the prompt down. The other two
     # handed a 1B model on shared cores an entire conversation, which it
     # spends longer reading than answering, and the request went silent
@@ -6008,7 +6073,7 @@ def _model_history(thread: dict) -> list[dict]:
 
 PROVIDER_STREAMERS = {
     "ollama": stream_ollama,
-    "groq": groq_api.stream_chat,
+    "pip": pip_api.stream_chat,
     "openrouter": openrouter_api.stream_chat,
 }
 
@@ -6016,7 +6081,7 @@ PROVIDER_STREAMERS = {
 # Ollama is absent on purpose: tool calling is offered on the hosted
 # channels only - see the note above tool_specs in _stream_reply.
 PROVIDER_TURNS = {
-    "groq": groq_api.chat_once,
+    "pip": pip_api.chat_once,
     "openrouter": openrouter_api.chat_once,
 }
 
@@ -6406,7 +6471,7 @@ def generate_image_route():
     # model - see enhance_prompt() in imagegen.py for why that is the
     # biggest quality lever available without paying for better pixels.
     # Opt-out rather than opt-in: the gain is large, the round trip is
-    # under a second on the fast channel, and a failure silently leaves
+    # short, and a failure silently leaves
     # the person's own words in place.
     url, error = imagegen.generate_image(
         prompt, backend=backend, size=size, style=style,
@@ -6499,13 +6564,13 @@ def video_configured():
 
 
 def _video_turn(system: str, user: str) -> str | None:
-    """The text model the prompt engineer uses: Groq when it has room,
+    """The text model the prompt engineer uses: pip 1.0 when it has room,
     else whatever Ollama has loaded. None when neither can answer, and
     the engine then keeps the person's own words."""
-    if groq_api.configured() and groq_api.models() and _groq_has_room(features.PRO):
-        model = _groq_model_for("chat")
+    if pip_api.configured() and pip_api.models() and pip_api.has_room():
+        model = _pip_model_for("chat")
         if model:
-            msg, err = groq_api.chat_once(
+            msg, err = pip_api.chat_once(
                 model, [{"role": "system", "content": system},
                         {"role": "user", "content": user}],
                 options={"temperature": 0.4, "num_predict": 400}, timeout=30)
@@ -6698,10 +6763,10 @@ def diagram_route():
     # that writes the best code writes the best Mermaid.
     plan = features.normalize_plan(account_credits.get("plan"))
     providers = [ollama_provider(plan)]
-    if groq_api.configured():
-        groq_models = groq_api.models()
-        providers.append({"id": "groq", "available": bool(groq_models),
-                          "models": groq_models,
+    if pip_api.configured():
+        pip_models = pip_api.models()
+        providers.append({"id": "pip", "available": bool(pip_models),
+                          "models": pip_models,
                           "model_info": []})
     route = _recommended_routes(providers, plan).get("code") or {}
     provider = route.get("provider") or "ollama"
@@ -6719,14 +6784,14 @@ def diagram_route():
     opts = {"num_predict": 900, "temperature": 0.2, "num_ctx": 8192}
     try:
         text = "".join(streamer(model, history, options=opts))
-    except groq_api.ProviderUnavailable:
-        # Same failover the chat bay uses: a drained per-minute budget
-        # should degrade to the local model, not surface as an error.
+    except pip_api.ProviderUnavailable:
+        # Same failover the chat bay uses: a busy engine should
+        # degrade to the local model, not surface as an error.
         local = _local_alternative("code")
         if not local:
             return jsonify({
-                "error": "The fast channel is busy and no local model "
-                         "is running. Try again in a moment.",
+                "error": "%s is busy and no backup model is running. "
+                         "Try again in a moment." % pip_identity.FULL_NAME,
             }), 503
         text = "".join(
             PROVIDER_STREAMERS["ollama"](local, history, options=opts))
@@ -6780,7 +6845,7 @@ def _video_status_payload(account, signed_in):
         "detail": "" if live else higgsfield_api.unavailable_reason(),
         "kind": "model" if default == "tripo" else "video",
         "free_tier": default == "huggingface",
-        "enhancer": bool((groq_api.configured() and groq_api.models())
+        "enhancer": bool((pip_api.configured() and pip_api.models())
                          or ollama_reachable()),
         "quota": _video_quota_view(current_owner_id(), plan, signed_in),
     }
@@ -6985,7 +7050,7 @@ def video_job_download(job_id):
     directory, name = os.path.split(os.path.join(app.root_path, rel))
     return send_from_directory(
         directory, name, as_attachment=True,
-        download_name="randomgenerals-%s%s" % (job_id, os.path.splitext(name)[1]))
+        download_name="pip-%s%s" % (job_id, os.path.splitext(name)[1]))
 
 
 @app.route("/api/video/webhook/<token>", methods=["POST"])
@@ -7062,8 +7127,8 @@ def _canned_reply(thread: dict, text: str, kind: str = "refusal") -> Response:
 # How many times the model may reach for a tool before it has to
 # answer. Three covers search-then-refine-then-answer, which is the
 # deepest useful pattern here; beyond that a model is usually looping
-# on a question the tools cannot settle, and every round costs a
-# request against a per-minute budget shared by everyone on the site.
+# on a question the tools cannot settle, and every round is a whole
+# generation on a GPU shared by everyone on the site.
 MAX_TOOL_ROUNDS = 3
 
 # What one round of the loop costs the person, on top of the reply. Each
@@ -7100,7 +7165,7 @@ class ToolLoopResult:
 
 
 def _run_tool_loop(model: str, history: list[dict], specs: list[dict],
-                   provider: str = "groq", connector_map: dict | None = None,
+                   provider: str = "pip", connector_map: dict | None = None,
                    options: dict | None = None):
     """Let the model call tools until it is ready to answer.
 
@@ -7116,8 +7181,8 @@ def _run_tool_loop(model: str, history: list[dict], specs: list[dict],
 
     THE FIRST TURN IS NOT THROWN AWAY. When the model decides it needs
     no tool and answers outright, that answer used to be discarded and
-    the same question streamed again - two generations against a
-    per-minute budget shared by everyone on the site, for one reply. If
+    the same question streamed again - two generations on a GPU
+    shared by everyone on the site, for one reply. If
     the answer is complete (finish_reason "stop") it is returned as
     `final_text` and the caller hands it straight to the reader. If it
     hit the loop's own ceiling it is discarded as before, because a
@@ -7125,15 +7190,15 @@ def _run_tool_loop(model: str, history: list[dict], specs: list[dict],
     """
     result = ToolLoopResult(convo=list(history))
     for _ in range(MAX_TOOL_ROUNDS):
-        turn = PROVIDER_TURNS.get(provider, groq_api.chat_once)
+        turn = PROVIDER_TURNS.get(provider, pip_api.chat_once)
         try:
             msg, err = turn(model, result.convo, tools=specs,
                             options=dict(options or TOOL_TURN_OPTIONS))
-        except groq_api.ProviderUnavailable:
-            # The budget can drain between _groq_has_room() and this call,
-            # and the loop's own turns are what drain it. chat_once raises
-            # rather than returning an error, so without this the whole
-            # request dies on a rate limit that the streaming path handles
+        except pip_api.ProviderUnavailable:
+            # The engine can fill up between has_room() and this call.
+            # chat_once raises rather than returning an error, so without
+            # this the whole request dies on a refusal that the streaming
+            # path handles
             # gracefully two functions later. Tools are an enhancement;
             # losing them costs a less-checked answer, not the answer.
             result.convo = list(history)
@@ -7197,8 +7262,7 @@ def _profile_context_block(settings):
     worse than not offering the field at all.
 
     Kept short and factual. This is prepended to every message in the
-    conversation, so anything verbose here is paid for on every turn -
-    and on an 8,000-token-per-minute budget that is not free.
+    conversation, so anything verbose here is paid for on every turn.
     """
     nickname = (settings.get("nickname") or "").strip()
     role = (settings.get("work_role") or "").strip()
@@ -7244,7 +7308,7 @@ def _generation_options(mode: str, strength: str, plan: str,
 
         bay defaults      CODE_MODEL_OPTIONS for code, num_ctx for all
         strength          quick / deep: ceiling, temperature, top_p
-        reasoning effort  per bay and strength (Groq only reads it)
+        reasoning effort  per bay and strength (pip 1.0 only reads it)
         plan limits       code only - features.limits_for(plan)
         the person        Settings > Model, bounded by the plan
 
@@ -7272,12 +7336,10 @@ def _generation_options(mode: str, strength: str, plan: str,
     options: dict[str, Any] = dict(CODE_MODEL_OPTIONS) if mode == "code" else {}
     options["num_ctx"] = 8192
     options.update(STRENGTH_LEVELS[strength]["options"])
-    # Only Groq reads this, and for it the setting is a budget decision
-    # as much as a quality one: the same maths question cost 297
-    # completion tokens at "low" effort and 683 at "high", for the same
-    # correct answer. Against an 8,000/minute ceiling that is the
-    # difference between roughly 25 replies a minute and 11.
-    options["reasoning_effort"] = groq_api.effort_for(mode, strength)
+    # Only pip 1.0 reads this: "high" lets it think before it answers,
+    # which Deep asks for and nothing else does - on one GPU thinking is
+    # paid for in everybody's waiting time.
+    options["reasoning_effort"] = pip_api.effort_for(mode, strength)
     limits = features.limits_for(plan)
     if mode == "code":
         # Quick's and Deep's ceilings are both prose-sized - real code
@@ -7307,6 +7369,23 @@ def _generation_options(mode: str, strength: str, plan: str,
     return options, wants
 
 
+def _owner_checked(question: str, pieces):
+    """`pieces`, with the reply to an owner question checked before any
+    of it is sent (pip_identity.enforce).
+
+    The engine does this itself for pip 1.0; this is the same guarantee
+    for a reply that came from a backup channel. An owner question's
+    reply is held back whole - it is a sentence or two, and a sentence
+    cannot be unsent - and everything else streams straight through.
+    A channel that refuses still raises before anything is yielded, so
+    the failover contract in providers.py is untouched.
+    """
+    if not pip_identity.is_question(question):
+        yield from pieces
+        return
+    yield pip_identity.enforce(question, "".join(pieces))
+
+
 def _stream_reply(thread, provider, model, web_results, files, strength):
     """Builds the system prompt + history from thread["messages"] as it
     currently stands, streams a reply, and persists + charges for it once
@@ -7320,8 +7399,7 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # Before this, the picture was simply dropped whenever the chosen
     # model could not see - silently, on the server - and the reply came
     # back as though nothing had been attached. Nobody was told why.
-    # Since the chat bay routes to gpt-oss-120b, which is text-only, that
-    # was every image on this deployment.
+    # Where the chat bay's model is text-only, that was every image.
     #
     # So: if there are images and this model is blind, look for one that
     # is not, among providers that are actually up, and use it for this
@@ -7360,6 +7438,9 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     ]
 
     system_prompt = CODING_SYSTEM_PROMPT if mode == "code" else CHAT_SYSTEM_PROMPT
+    # What was actually asked, before anything is attached to it - the
+    # owner check reads the person's words, not search results.
+    asked = pip_identity.last_user_text(thread.get("messages"))
 
     # THE TRIAGE MODEL, ON THE CHAT BAY ONLY (brain/intent.py).
     #
@@ -7416,67 +7497,71 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     history = ([{"role": "system", "content": system_prompt}]
                + _model_history(thread))
 
-    # THE FAST CHANNEL NO LONGER HAS TO BE RELIABLE ON ITS OWN
+    # pip 1.0 DOES NOT HAVE TO BE RELIABLE ON ITS OWN
     #
-    # Groq's ceiling is 8,000 tokens a minute shared by everybody using
-    # the site, which is what made it "work for a few seconds a minute":
-    # a few requests drained the window and every one after that failed
-    # until it rolled over. Two changes, and neither asks Groq for more.
+    # The engine is one GPU. It answers a few requests at a time and
+    # refuses the rest, and it is sometimes simply restarting. Two
+    # things keep that from reaching a person.
     #
-    # First, the budget is checked BEFORE the request. Every Groq
-    # response reports what is left, so when there is not enough for this
-    # one it goes straight to the local model - no wasted round trip, no
-    # error, and the person never learns there was a limit.
+    # First, it is asked BEFORE the request: when the engine has said it
+    # is busy, this one goes straight to a backup model - no wasted
+    # round trip, no error.
     #
-    # Second, a 429 that happens anyway is caught below and retried
-    # locally rather than surfaced. Between them the channel degrades
-    # instead of failing, which is the actual fix: it is not that Groq
-    # stops being rate-limited, it is that being rate-limited stops
-    # mattering.
+    # Second, a refusal that happens anyway is caught below and retried
+    # elsewhere rather than surfaced. Between them the channel degrades
+    # instead of failing.
     fell_back_to_cloud = False
     plan = features.normalize_plan(current_account()[0].get("plan"))
 
     # DeepSeek is first in the code bay but it is the only route here
     # that needs a paid key, so a request naming it on a server without
     # one - a stale tab, a saved preference, an older client - must not
-    # become a dead reply. It degrades to the free fast channel, and to
-    # the local model after that, the same way every other channel does.
+    # become a dead reply. It degrades to pip 1.0, and to the local
+    # model after that, the same way every other channel does.
     if provider == "openrouter" and not openrouter_api.budget_ok(model):
-        # Out of money for today rather than out of key. Same failover.
-        local = None
-        if groq_api.configured() and groq_api.models():
-            provider, model = "groq", groq_api.PREFERRED[0]
+        # Out of money for today rather than out of key.
+        #
+        # The free ids on this channel are tried BEFORE leaving it. The
+        # code bay's list carries free coding models (laguna,
+        # north-mini-code), and stepping off OpenRouter entirely traded a
+        # model built for code for a general one when a better answer was
+        # one line further down the same list.
+        free = _openrouter_model_for(mode)
+        if free:
+            model = free
+        elif pip_api.configured() and pip_api.models():
+            provider, model = "pip", pip_api.PREFERRED[0]
         else:
             local = _local_alternative(mode)
             if local:
                 provider, model = "ollama", local
 
     if provider == "openrouter" and not openrouter_api.configured():
-        if groq_api.configured() and groq_api.models():
-            provider = "groq"
-            model = groq_api.PREFERRED[0]
+        if pip_api.configured() and pip_api.models():
+            provider = "pip"
+            model = pip_api.PREFERRED[0]
         else:
             local = _local_alternative(mode)
             if local:
                 provider, model = "ollama", local
 
-    if provider == "groq":
-        if not _groq_has_room(plan):
+    if provider == "pip":
+        if not pip_api.has_room():
             local = _local_alternative(mode)
             if local:
                 provider, model = "ollama", local
                 fell_back_to_cloud = True
 
     if provider == "ollama" and not ollama_reachable():
-        # Local is unavailable too. Try the fast channel rather than
+        # Local is unavailable too. Try pip 1.0 rather than
         # giving up - the direction people usually need is the other way,
         # but a deployment with no local model at all is exactly the
         # hosted case, and refusing there would be gratuitous.
-        if groq_api.configured() and groq_api.models():
-            provider = "groq"
+        if pip_api.configured() and pip_api.models():
+            provider = "pip"
             model = next((m for _, p in BAY_ROUTES.get(mode, [])
-                          for m in groq_api.models() if p in m.lower()),
-                         groq_api.PREFERRED[0])
+                          for m in pip_api.models() if p in m.lower()),
+                         pip_api.PREFERRED[0])
         else:
             def unavailable():
                 yield stream_event({"event": "reply", "kind": "error"})
@@ -7498,12 +7583,12 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # This was switched off when the cloud provider was removed, on the
     # grounds that a small local model which hallucinates a tool call
     # answers worse than one that just talks. That reasoning still holds
-    # for Ollama - and no longer applies to the hosted channel, which is
-    # back. Both models it serves were checked before this was wired:
-    # asked to look something up, gpt-oss-120b and qwen3.8-27b each
-    # returned a well-formed web_search call with a sensible query.
+    # for the small models Ollama runs here - and does not apply to
+    # pip 1.0 or the hosted backups, whose models return a well-formed
+    # web_search call with a sensible query when asked to look
+    # something up.
     #
-    # So tools are offered on the hosted channels only. The loop runs
+    # So tools are offered on those channels only. The loop runs
     # inside generate() below, AFTER the response has started: a tool
     # call arrives as a name and a JSON blob, and half of either is
     # useless, so those turns are fetched whole and unseen - but the
@@ -7512,11 +7597,8 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     tool_specs = None
     connector_map = {}
     # The loop spends an extra non-streamed turn before the answer, so on
-    # the fast channel it is offered only while the shared per-minute
-    # budget can carry one. Under pressure the reply still happens, just
-    # without tools - the same degradation every other part of that
-    # channel makes. (Only Groq has that budget; the check used to gate
-    # OpenRouter's tools on Groq's headroom.)
+    # pip 1.0 it is offered only while the engine has room for one.
+    # Under pressure the reply still happens, just without tools.
     # A MESSAGE WITH A PICTURE SKIPS THE TOOL LOOP.
     #
     # The loop's first turn is chat_once, which carries text only, and
@@ -7530,7 +7612,8 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
             and features.FEATURES[plan]["builtin_tools"]
             and wants["tools"]
             and not images_b64
-            and (provider != "groq" or _groq_has_room(plan))):
+            and (provider != "pip"
+                 or (pip_api.has_room() and pip_api.supports_tools()))):
         tool_specs = tools.available_specs(
             allow_images=(mode != "image"),
             allow_code=True,
@@ -7596,7 +7679,8 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                 if tools_used.final_text is not None:
                     # The model answered in full without reaching for a
                     # tool. Handing that over beats generating it twice.
-                    full_reply = tools_used.final_text
+                    full_reply = pip_identity.enforce(
+                        asked, tools_used.final_text)
                     yield full_reply
                     return
 
@@ -7624,13 +7708,13 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                 t0 = time.monotonic()
                 t_first = None
                 try:
-                    for piece in PROVIDER_STREAMERS[p](
-                            m, history, **kwargs_for(p)):
+                    for piece in _owner_checked(asked, PROVIDER_STREAMERS[p](
+                            m, history, **kwargs_for(p))):
                         if t_first is None and piece:
                             t_first = time.monotonic()
                         full_reply += piece
                         yield piece
-                except groq_api.ProviderUnavailable as e:
+                except pip_api.ProviderUnavailable as e:
                     failures.append((p, e))
                     agent_router.record(
                         p, m, ok=False,
@@ -7657,14 +7741,10 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                 break
 
             if not answered and limited is not None:
-                # NOBODY COULD ANSWER, but one of them is only busy. The
-                # per-minute budget refills on a fixed window and the
-                # response headers say exactly when: "try again in a
-                # moment" was asking somebody to do by hand, without
-                # knowing the number, the one thing the server could do
-                # for them. A desktop install shares one free key with
-                # the public site, so it hits this while the site is
-                # busy and has no local model to fall back on.
+                # NOBODY COULD ANSWER, but one of them is only busy, and
+                # said for how long: "try again in a moment" was asking
+                # somebody to do by hand, without knowing the number,
+                # the one thing the server could do for them.
                 #
                 # Waited in slices, and the browser is told at each one
                 # how long is left, so the pause is a countdown in the
@@ -7690,7 +7770,7 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                         if (p, m) != candidates[0]:
                             provider, model = p, m
                             fell_back_to_cloud = True
-                    except groq_api.ProviderUnavailable as e:
+                    except pip_api.ProviderUnavailable as e:
                         # Still busy after the window rolled - the site
                         # is under sustained load rather than briefly
                         # spiky. Fall through and say so.

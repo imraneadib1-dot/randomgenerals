@@ -155,3 +155,54 @@ export function mountConnectors() {
   initConnectors();
 
 }
+
+
+/* ---- a key for other apps ---------------------------------------------
+   The route returns the key exactly once and stores only its hash, so the
+   value is put on screen and left there rather than being re-fetchable.
+   The confirm() is there because issuing a second key silently revokes
+   the first, which would stop a Blender add-on or MCP client already
+   using it with no error that points back here. */
+export function mountApiKey() {
+  const btn = document.getElementById("issueApiKey");
+  const out = /** @type {HTMLInputElement|null} */ (document.getElementById("apiKeyOut"));
+  const status = document.getElementById("apiKeyStatus");
+  const base = document.getElementById("apiKeyBase");
+  if (!btn || !out || !status) return;
+
+  out.addEventListener("click", () => out.select());
+
+  btn.addEventListener("click", async () => {
+    const replacing =
+      "Creating a key replaces the one you already have. Anything still " +
+      "using the old key will stop working. Continue?";
+    if (out.value && !confirm(replacing)) return;
+
+    btn.disabled = true;
+    status.textContent = "Creating\u2026";
+    let d;
+    try {
+      const r = await fetch("/api/account/api-key", { method: "POST" });
+      d = await r.json();
+      if (!r.ok) {
+        status.textContent = d.error || "Could not create a key.";
+        btn.disabled = false;
+        return;
+      }
+    } catch (_) {
+      status.textContent = "Could not reach the server.";
+      btn.disabled = false;
+      return;
+    }
+    out.value = d.api_key || "";
+    out.hidden = false;
+    if (base && d.base_url) {
+      base.textContent = "Server URL: " + d.base_url;
+      base.hidden = false;
+    }
+    status.textContent =
+      "Copy it now \u2014 it is not shown again. Click the box to select it.";
+    btn.textContent = "Create a new key";
+    btn.disabled = false;
+  });
+}

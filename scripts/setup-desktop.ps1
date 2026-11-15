@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  One-time setup for building the RandomGenerals desktop app.
+  One-time setup for building the pip 1.0 desktop app.
 
 .DESCRIPTION
   Checks for and installs the toolchain (Node.js), installs the Electron

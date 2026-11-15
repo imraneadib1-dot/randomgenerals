@@ -105,7 +105,10 @@ export function updateEmptyState() {
   // genuinely needs an explanation can unhide one of these without the
   // markup having to be rebuilt.
   if (typeof renderGreeting === "function") renderGreeting();
-  renderStarters();
+  // The suggestion cards are switched off: the empty screen is the
+  // greeting, the input and the modes, nothing else. renderStarters()
+  // and STARTERS are kept, so turning them back on is this one line.
+  emptyState?.querySelector(".starters")?.remove();
 }
 
 export function showEmptyState() {

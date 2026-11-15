@@ -1,147 +1,179 @@
-# RandomGenerals
+# pip 1.0
 
-A chat, coding, image and diagram assistant that runs on one free
-virtual machine — two ARM cores, 11.9 GB of RAM, no GPU.
+An AI assistant with its own model. Chat, code, images, diagrams, a
+Python sandbox, web search, file reading, memory across conversations,
+accounts with 2FA, and a Pro plan through Paddle. Owned and built by
+Imrane Adib.
 
-**Live at [randomgenerals.com](https://randomgenerals.com)**
+It is three things in one repository:
 
-Chat and code answers, image generation, Mermaid diagrams, a sandboxed
-Python runner, web search, file and image reading, memory that carries
-between conversations, accounts with two-factor authentication, and
-subscriptions through Paddle. It installs as an app from the browser.
-
----
-
-## How it answers
-
-Three channels, tried in order, so one being unavailable is a
-degradation rather than an outage.
-
-| Channel | Model | Cost |
+| Part | What it is | Where |
 | --- | --- | --- |
-| Groq | `openai/gpt-oss-120b` — 120B parameters | free |
-| OpenRouter | free vision + coding models; Kimi if funded | free tier / paid |
-| Ollama | whatever is installed locally | free, needs a GPU to be bearable |
+| The model | pip 1.0: an open-weight base plus a LoRA adapter trained here | `finetune/`, `pip_model.py` |
+| The engine | Loads the weights and serves them over an OpenAI-compatible API, with its own SQLite store | `pip_server.py`, `pip_store.py` |
+| The app | A Flask site with a plain-JavaScript front end that talks to the engine | `app.py`, `static/`, `templates/` |
 
-The routing table in `app.py` (`BAY_ROUTES`) is a ranked list per bay.
-Each entry is `(provider, name-pattern)` and the first one actually
-present wins, so the same code serves a laptop with four local models
-and a GPU-less VM with none — it simply falls further down the list.
+## The model
 
-**The binding limit is 8,000 tokens per minute**, shared across every
-visitor on one Groq key. Measured from the live rate-limit headers, not
-quoted from documentation. `groq_api.py` tracks the remaining budget and
-`app.py` routes to a local model *before* the ceiling rather than after
-it, so being rate-limited never surfaces as an error.
+The base is **Qwen3.5-4B** (Apache 2.0, a 262,144-token context
+window): the largest current open-weight model that can be both
+fine-tuned and served on one 8 GB GPU. What is trained on top of it is a
+LoRA adapter — under one percent of the parameters — on a dataset that
+teaches it who it is, keeps ordinary questions answered ordinarily, and
+drills the structured output the app asks for. `finetune/NOTICE` carries
+the base model's licence notice.
 
-## Things that were harder than they looked
+Whoever asks who owns, made, built or trained it gets one answer: **its
+owner is Imrane Adib.** That is held in three layers, because each
+alone leaks (`pip_identity.py`):
 
-Written down because each cost real debugging, and the reasons are in
-the code as comments where they apply.
-
-**Accuracy was leaking through an absence.** The default chat mode set no
-temperature, so it inherited Groq's documented default of 1.0 — maximum
-sampling randomness on questions with one right answer. An 18-question
-graded benchmark went from 16/18 to 18/18 by setting it to 0.2. The bug
-was invisible because it was a missing value rather than a wrong one.
-
-**The Instagram link was broken for every visitor.** Flask issues a
-session cookie with no expiry unless the session is marked permanent, and
-in-app browsers tear that context down between navigations. So the page
-created a thread as one guest, the cookie vanished, and the message
-arrived as another — `Unknown thread`, on everyone's first message.
-
-**A model will invent a tool result.** Asked for `4839 * 2718` with no
-tools available, it wrote *"running this in Python gives us 13287002"* —
-a number it made up, and the wrong one. Attributing an invented answer to
-a tool is worse than an ordinary mistake, because it tells the reader the
-number was checked.
-
-**"Fetch any URL the user pastes" is a hole, not a feature.** This VM has
-a metadata service at `169.254.169.254` that hands credentials to
-anything that asks. `connectors.py` resolves every hostname and refuses
-private, loopback and link-local addresses — on the first request, on
-every redirect hop, and on every later call.
-
-**A grader can be wrong more often than the model.** An early benchmark
-scored a model 3/6 twice; both times the model was right and the grader
-could not read a bare `9` or a LaTeX fraction. It now self-tests against
-eleven answer formats and refuses to report a score if that fails.
+1. **The prompt** opens every conversation on every channel.
+2. **The weights**: several hundred owner questions, in five languages,
+   are trained in, half of them with no system prompt at all.
+3. **The guard** reads the finished reply to an owner question and, if
+   it does not name the owner or names anyone else as the maker, sends
+   the canonical sentence instead. It runs in the engine and again in
+   the app, so it also covers a reply that came from a backup channel.
 
 ## Running it
 
 ```bash
 pip install -r requirements.txt
 cp .env.example .env          # SECRET_KEY is the only required value
-python app.py                 # http://127.0.0.1:5000
+
+python pip_server.py          # the engine   http://127.0.0.1:8765/v1
+python app.py                 # the app      http://127.0.0.1:5000
+python pip_cli.py             # or talk to the engine from a terminal
 ```
 
-Everything is optional beyond `SECRET_KEY`. With no keys at all it runs
-against a local Ollama; with `GROQ_API_KEY` it uses the fast channel.
-`.env.example` documents each one and what breaks without it.
+The engine needs the weights. Until an adapter has been trained it
+serves the base model alone, with the owner answer still enforced by
+the prompt and the guard. With no engine running, the app still works:
+it answers from the backup channels below.
 
-Port 5000 here, 5001 on the server: `deploy.sh` and `deploy/ORACLE.md`
-check 5001 because gunicorn is started with `PORT=5001` there, which
-leaves 5000 free for exactly this - a dev copy running beside it. Set
-`PORT` to move either one. This line said 5001 for a while, which is a
-small lie that costs whoever reads it the first five minutes of the
-project wondering why nothing is listening.
-
-Three scripts answer "is this actually working?" without guesswork:
+## Fine-tuning
 
 ```bash
-python check_mail.py you@example.com   # will verification codes arrive?
-python check_paddle.py                 # can it take real money?
-bash deploy.sh                         # deploy, then prove it landed
+python -m finetune.pip_data            # write the dataset (also done on demand)
+python -m finetune.train_pip           # the real run: Qwen3.5-4B, 4-bit, needs a GPU
+python -m finetune.train_pip --smoke   # a 0.5B base on the CPU, a few minutes
 ```
 
-## Layout
+The real run needs a CUDA build of torch and `bitsandbytes`; the script
+says so and stops rather than starting a 4B model on a CPU. `--base`
+takes any Hugging Face model id, so a bigger base can be trained on a
+machine with the memory for it. The adapter is written to
+`finetune/pip-1.0-adapter/`, which the engine loads by default; the
+smoke run writes to `finetune/pip-1.0-adapter-smoke/`
+(`python pip_server.py --adapter finetune/pip-1.0-adapter-smoke`).
+
+After training, the held-out owner questions are put to the weights
+alone — no system prompt, no guard — and the share that name the owner
+is printed and recorded in the adapter's `pip.json`.
+
+## Where the answers come from
+
+pip 1.0 is first in every bay. One GPU answers a few requests at a
+time, so the engine refuses the rest with a `Retry-After`, and the app
+moves that request to a backup channel before it fails rather than
+after. A busy or restarting engine is a slower site, not a broken one.
+
+| Channel | What it runs | When |
+| --- | --- | --- |
+| pip | pip 1.0, from the engine | always first |
+| OpenRouter | DeepSeek for code, a few free models | when the engine cannot answer; paid models have a daily ceiling |
+| Ollama | whatever is installed locally | the floor, when nothing else answers |
+
+The routing table is `BAY_ROUTES` in `app.py`: a ranked list per bay of
+`(channel, model-name-pattern)`, and the first one that actually exists
+wins. The backup channels are optional — leave `OPENROUTER_API_KEY`
+unset and stop Ollama, and pip 1.0 is the only thing that answers.
+
+Before any of those models sees a message, a tiny network in `brain/`
+reads it first — plain NumPy, gradients derived by hand, one file — and
+decides which bay it belongs to.
+
+## The database
+
+Two SQLite files, both in WAL mode with one connection per thread:
+
+- `app.db` (`db.py`) is the product: accounts, sessions, credits,
+  billing, people's threads, memories.
+- `pip.db` (`pip_store.py`) is the engine's working state:
+  conversations it keeps for callers that send a `conversation_id`
+  instead of their whole history, a cache of token counts so fitting a
+  long conversation into the context window does not re-count every
+  turn on every request, and metadata about what is being served. It
+  can be deleted without losing anything a person owns.
+
+## Checks
+
+```bash
+python check_pip.py            # identity, database, engine, channel, training data
+python check_pip.py --model    # also asks the real trained weights (slow on a CPU)
+```
+
+The rest of the suite covers the parts of the app that fail quietly —
+billing lifecycle, rate limits, streaming, the reply path, webhooks:
+
+```bash
+for f in check_*.py; do OLLAMA_URL=http://127.0.0.1:1 python $f || echo "FAILED $f"; done
+npx tsc -p jsconfig.json
+```
+
+`check_paddle.py`, `check_mail.py` and `check_webhook_security.py` need
+network or keys and belong on the server.
+
+## What's where
 
 ```
-app.py            routes, routing table, chat streaming   (~5,000 lines)
-db.py             SQLite, 18 tables, WAL
-groq_api.py       fast channel + per-minute budget tracking
-openrouter_api.py DeepSeek (V3, R1 in Deep mode) and the free models,
-                  with a daily spend ceiling
-videogen.py       the video engine: persistent jobs, a poller, validation
-higgsfield_api.py Higgsfield Cloud - Kling, Veo, Seedance, Sora, Wan, DoP
-agents/           the runtime agents: router (which channel is answering
-                  well right now), verifier (code is run before it is
-                  trusted), evaluate (the offline accuracy harness)
-brain/            neural networks from scratch in NumPy - the character
-                  models, and intent.py, which triages every message
-evals/            graded cases the evaluator runs, and its results
-.claude/agents/   the specialists Claude Code can run on this repo
-connectors.py     paste a link, it becomes a tool the model can call
-keystore.py       AES-GCM for provider keys; TOTP from RFC 6238
-tools.py          web search, Python runner, image generation
-attachments.py    file reading, with a content sniffer
-features.py       one table deciding what each plan can do
-static/sw.js      service worker — caches the shell, never the API
-mobile/           Capacitor shell for iOS and Android
+pip_identity.py    the name, the owner, the owner-question detector, the guard
+pip_model.py       loads the base model and the adapter
+pip_server.py      the engine: OpenAI-compatible API over the weights
+pip_store.py       the engine's SQLite store
+pip_api.py         the app's client for the engine (the "pip" channel)
+pip_cli.py         the engine from a terminal
+finetune/          pip_data.py (dataset), train_pip.py (LoRA with PEFT), NOTICE
+app.py             routes, the routing table, chat streaming
+db.py              the app's SQLite, migrations on boot
+openrouter_api.py  the hosted backup channel, with a daily spend ceiling
+providers.py       how every channel must fail, so failover works
+paddle_billing.py  subscriptions (Paddle is the merchant of record)
+videogen.py        video job engine: persistent jobs, a poller, validation
+agents/            router, verifier (code is run before it is trusted), evaluate
+brain/             the intent model - see brain/README.md
+connectors.py      paste a link, it becomes a tool the model can call
+keystore.py        AES-GCM for provider keys; TOTP from RFC 6238
+tools.py           web search, Python runner, image generation
+static/js/         ES modules, no bundler, an import map for versioning
+desktop/           Electron build (Windows installer via GitHub Actions)
+mobile/            Capacitor shell for iOS and Android
+deploy/            the Oracle VM setup script and notes
 ```
 
 ## Deploying
 
-Built for an Oracle Always Free ARM VM behind a Cloudflare Tunnel.
-`deploy/ORACLE.md` has the full setup. `deploy.sh` does updates and
-checks the live page afterwards for markup that only exists in the new
-build — so it cannot report success when a stale process is still
-serving.
+The web app runs on one small VM, gunicorn under systemd, with a
+Cloudflare tunnel in front (`deploy/ORACLE.md`). That VM has no GPU, so
+the engine runs on a machine that has one and the app is pointed at it
+with `PIP_ENGINE_URL` and `PIP_ENGINE_KEY`. Every update after the first
+is `bash deploy.sh` on the VM, which pulls, restarts, and then reads the
+build id out of the live page to prove the new code is what is serving.
 
-## Honest limitations
+## Limitations, honestly
 
-- **No GPU**, so local models are slow enough that the hosted channel is
-  the real product. Vision needs an OpenRouter key; nothing on Groq can
-  read an image.
-- **Video generation is not available.** Every free route was measured:
-  Hugging Face allows about three clips a month site-wide, PixVerse has
-  no free tier, and a Tripo account's balance came back 0. Diagrams took
-  that slot because Mermaid renders in the browser and is therefore free
-  at any volume.
-- **One process, one SQLite file.** Correct for the traffic it has;
-  it would need work before it was correct for much more.
+- **The model is 4B parameters.** That is what one 8 GB GPU can train
+  and serve. It is good at what it was tuned for and it is not a
+  frontier model; a bigger base needs a bigger GPU, and `--base` is
+  there for the day there is one.
+- **The engine is text-only for now.** The base model can read images;
+  the engine does not pass them through yet, so an attached picture goes
+  to a backup channel that can see.
+- **One GPU, one reply at a time.** Right for the traffic it has.
+- **One process, one SQLite file per service.** Also right for the
+  traffic it has.
 
 ## Licence
 
-MIT — see [LICENSE](LICENSE).
+The code is MIT — see [LICENSE](LICENSE). The base model is Apache 2.0 —
+see [finetune/NOTICE](finetune/NOTICE).

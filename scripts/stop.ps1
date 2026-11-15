@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Stops the RandomGenerals server and tunnel.
+  Stops the pip 1.0 server and tunnel.
 
 .DESCRIPTION
   The supervisor normally runs hidden (see start-hidden.vbs), so there is

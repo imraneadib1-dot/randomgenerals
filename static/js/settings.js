@@ -157,14 +157,15 @@ export function initDataControls() {
     // Named from what the server actually reports, not from a fixed
     // sentence - this app has been wrong about where prompts go before.
     fetch("/api/health").then((r) => r.json()).then((h) => {
-      const fast = h.fast_channel && h.fast_channel.configured;
-      egress.textContent = fast
-        ? "Chat and code are answered by Groq, so those messages leave "
-          + "this server. Images go to Pollinations. Web search goes to "
-          + "DuckDuckGo. Nothing else is sent anywhere."
-        : "Everything is answered on this server right now. Images go to "
-          + "Pollinations and web search to DuckDuckGo; nothing else "
-          + "leaves.";
+      const own = h.mode === "pip" || h.mode === "local";
+      egress.textContent = own
+        ? "Chat and code are answered by pip 1.0, on hardware we run. "
+          + "Images go to Pollinations and web search to DuckDuckGo; "
+          + "nothing else leaves."
+        : "pip 1.0 is not answering right now, so chat and code may be "
+          + "answered by a backup model through OpenRouter, and those "
+          + "messages leave this server. Images go to Pollinations. Web "
+          + "search goes to DuckDuckGo.";
     }).catch(() => {
       egress.textContent = "Could not check right now.";
     });

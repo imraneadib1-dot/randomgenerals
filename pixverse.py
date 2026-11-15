@@ -3,7 +3,7 @@
 WHY THIS IS GATED HARDER THAN ANYTHING ELSE IN THE APP
 
 Every other feature here is either free to run (Pollinations, DuckDuckGo)
-or free within a rate limit that costs nothing to hit (Groq, Ollama). A
+or runs on hardware already paid for (pip 1.0, Ollama). A
 generation is the first thing this app does that spends real money on
 every single call - about $0.13 for a five-second clip through a reseller,
 and up to $0.15 a second direct.

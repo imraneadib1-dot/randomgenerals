@@ -1,0 +1,20 @@
+pip 1.0
+Copyright (c) 2026 Imrane Adib
+
+pip 1.0 is a LoRA adapter, trained by this repository's
+finetune/train_pip.py, on top of an open-weight base model. The base
+model is not redistributed here; it is downloaded from its publisher
+when the engine or the trainer first runs.
+
+Base model (default):  Qwen/Qwen3.5-4B
+Published by:          Alibaba Cloud (the Qwen team)
+Licence:               Apache License, Version 2.0
+                       https://www.apache.org/licenses/LICENSE-2.0
+
+Base model (--smoke):  Qwen/Qwen2.5-0.5B-Instruct, same publisher and licence.
+
+The Apache 2.0 licence permits use, modification and redistribution,
+including under another name, provided the licence text and this kind of
+notice travel with any copy of the base weights or of weights merged
+with them. If you ever publish merged pip 1.0 weights, ship this file
+and the Apache 2.0 licence text beside them.

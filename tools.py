@@ -8,8 +8,8 @@ web search off gets a confident answer from stale training data.
 
 Here the model decides instead. It is handed a list of tools with their
 schemas, calls the ones it needs, sees the results, and continues. This
-is the OpenAI function-calling format, which Groq implements too, so the
-same definitions work for both providers.
+is the OpenAI function-calling format, which the pip engine implements
+too, so the same definitions work on every channel.
 
 WHAT THIS MODULE IS RESPONSIBLE FOR
 Turning a tool name plus a blob of model-supplied JSON into a string the
