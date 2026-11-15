@@ -219,6 +219,17 @@ services center centre house place agency firm group club co ltd inc
 # A pre-1900 date in a title is an artwork or an archive scan, not a photo.
 _OLD_ART = re.compile(r"\((1[0-8]\d\d)\)|\b1[0-8]\d\d\b.*\bby\b")
 
+# Someone else's shop. A street address or a shopfront survey in the
+# title means the picture shows another business's name and phone
+# number across its front - the hero of the first yoga site generated
+# with photos was "Myogi Yoga Studio, 63 Newport Road", sign and all.
+_STOREFRONT = re.compile(
+    r"geograph|shop ?front|store ?front|facade|façade|exterior|"
+    r"\b\d+[a-z]?,?\s+[a-z][\w'.-]*(?:\s+[a-z][\w'.-]*)?\s+"
+    r"(?:road|rd|street|st|avenue|ave|lane|ln|place|pl|boulevard|blvd|"
+    r"way|square|sq|drive|dr|parade|terrace|row)\b",
+    re.IGNORECASE)
+
 
 def _queries(topic: str) -> list[str]:
     """The full topic, then each adjacent pair, then each word: the
@@ -283,7 +294,8 @@ def photos_for(message: str, n: int = 8, deadline: float = 4.0) -> list[dict]:
             # picture three times over; a page wants different ones.
             series = re.sub(r"[\d\W_]+", " ", title).strip()[:40]
             if (p["url"] in seen or series in seen or score == 0
-                    or _OLD_ART.search(title)):
+                    or _OLD_ART.search(title) or _STOREFRONT.search(title)
+                    or _STOREFRONT.search(p.get("page") or "")):
                 continue
             seen.add(p["url"])
             seen.add(series)

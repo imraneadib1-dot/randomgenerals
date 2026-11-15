@@ -7500,8 +7500,8 @@ Deliver:
 - Asked for a change, return the whole updated file, never a fragment.
 
 Structure:
-- <header> with the name and a <nav>; on phones the links collapse behind a menu button (aria-expanded, toggled by a few lines of JS).
-- A hero: a specific headline, a one-line subhead, a primary call-to-action button and a secondary link, with a photo or a rich gradient behind or beside it.
+- <header> with the name and a <nav>. Always include a menu button that shows only below 768px wide (aria-expanded, aria-label="Menu", toggled by a few lines of JS) and hides the links behind it on phones.
+- A hero with the page's only <h1>: a specific headline, a one-line subhead, a primary call-to-action button and a secondary link, with a photo or a rich gradient behind or beside it. Text over a photo gets a dark overlay so it stays readable.
 - 4-6 sections that fit this business (services or menu with prices, about, gallery, testimonials, pricing, FAQ, opening hours, contact form), then a <footer>.
 
 Design:
@@ -7550,6 +7550,8 @@ def _photo_block(photos: list[dict]) -> str:
         "Use these exact URLs for the hero, the gallery and section images "
         "(<img src> with descriptive alt text, or a CSS background-image). "
         "Choose the ones that fit; the first is usually the strongest hero. "
+        "A photo whose title names a different business is fine in a "
+        "gallery but never as the hero. "
         "Never invent other image URLs and never use placeholder services. "
         "Put this credit line in the footer in small text: "
         + imagesearch.credit_line(photos))
