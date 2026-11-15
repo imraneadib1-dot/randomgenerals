@@ -1647,3 +1647,27 @@ html[data-motion="reduced"] .artifact-inner {
     max-width: 200px;
   }
 }
+
+/* ============================================================
+   Diagrams drawn in the conversation (diagram.js)
+   ============================================================ */
+.mermaid-view {
+  display: flex;
+  justify-content: center;
+  padding: 20px 16px;
+  overflow-x: auto;
+  background:
+    radial-gradient(60% 80% at 50% 0%, rgba(99, 102, 241, 0.08), transparent 70%),
+    var(--ws-editor);
+}
+.mermaid-view svg {
+  max-width: 100%;
+  height: auto;
+}
+/* Mermaid sizes each label box while the diagram is off-screen, at the
+   page's normal leading; inside a reply the bubble's 1.75 leading made
+   the text taller than its box and clipped every descender. */
+.mermaid-view,
+.mermaid-view * {
+  line-height: 1.2;
+}

@@ -6809,6 +6809,9 @@ TOOL_USE_PROMPT = (
     "and tells them you cannot tell the difference.\n"
     "When a tool answers, use its result. Do not restate a number "
     "you calculated yourself over one the tool returned.\n"
+    "When someone wants pictures of something, call find_images and "
+    "show the results as markdown images (![description](url)) with "
+    "the credit line underneath. Never invent an image URL.\n"
 )
 
 
@@ -6863,40 +6866,63 @@ def diagram_route():
 
     # Routed like the code bay: a diagram is source, and the model
     # that writes the best code writes the best Mermaid.
+    #
+    # THIS ONLY EVER KNEW ABOUT pip 1.0 AND THE LOCAL MODEL. When Groq
+    # came back as the chat and code channel, the bay kept asking for
+    # an engine that is not running and a 1B model on two CPU cores, and
+    # every diagram on the live site failed with "pip 1.0 is busy and no
+    # backup model is running". It now walks the same candidates as a
+    # code reply: Groq (and Groq's smaller model when the big one is at
+    # its limit), then whatever the old route picked.
     plan = features.normalize_plan(account_credits.get("plan"))
-    providers = [ollama_provider(plan)]
-    if pip_api.configured():
-        pip_models = pip_api.models()
-        providers.append({"id": "pip", "available": bool(pip_models),
-                          "models": pip_models,
-                          "model_info": []})
-    route = _recommended_routes(providers, plan).get("code") or {}
-    provider = route.get("provider") or "ollama"
-    model = route.get("model")
-    if not model:
+    candidates: list[tuple[str, str]] = []
+    groq_model = _groq_model_for("code")
+    if groq_model and _groq_has_room(plan):
+        candidates.append(("groq", groq_model))
+        candidates += _groq_fallbacks(groq_model)
+    if not _groq_only():
+        providers = [ollama_provider(plan)]
+        if pip_api.configured():
+            pip_models = pip_api.models()
+            providers.append({"id": "pip", "available": bool(pip_models),
+                              "models": pip_models,
+                              "model_info": []})
+        route = _recommended_routes(providers, plan).get("code") or {}
+        if route.get("model"):
+            candidates.append((route.get("provider") or "ollama", route["model"]))
+        free = _openrouter_model_for("code")
+        if free:
+            candidates.append(("openrouter", free))
+        local = _local_alternative("code")
+        if local:
+            candidates.append(("ollama", local))
+    if not candidates:
         return jsonify({"error": "No model is available right now."}), 503
 
-    streamer = PROVIDER_STREAMERS.get(provider)
-    if streamer is None:
-        return jsonify({
-            "error": "No model is available right now.",
-        }), 503
     history = [{"role": "system", "content": DIAGRAM_SYSTEM_PROMPT},
                {"role": "user", "content": prompt}]
-    opts = {"num_predict": 900, "temperature": 0.2, "num_ctx": 8192}
-    try:
-        text = "".join(streamer(model, history, options=opts))
-    except pip_api.ProviderUnavailable:
-        # Same failover the chat bay uses: a busy engine should
-        # degrade to the local model, not surface as an error.
-        local = _local_alternative("code")
-        if not local:
-            return jsonify({
-                "error": "%s is busy and no backup model is running. "
-                         "Try again in a moment." % pip_identity.FULL_NAME,
-            }), 503
-        text = "".join(
-            PROVIDER_STREAMERS["ollama"](local, history, options=opts))
+    # 1,500, up from 900: gpt-oss thinks before it writes, and that
+    # thinking comes out of the same allowance as the diagram.
+    opts = {"num_predict": 1500, "temperature": 0.2, "num_ctx": 8192}
+    text = ""
+    provider = model = None
+    tried: list[str] = []
+    for provider, model in candidates:
+        streamer = PROVIDER_STREAMERS.get(provider)
+        if streamer is None:
+            continue
+        try:
+            text = "".join(streamer(model, history, options=opts))
+        except pip_api.ProviderUnavailable:
+            tried.append(_channel_name(provider))
+            continue
+        if _clean_mermaid(text):
+            break
+    if not text:
+        return jsonify({
+            "error": "No model could draw that just now (%s). Try again "
+                     "in a moment." % (", ".join(tried) or "none answered"),
+        }), 503
 
     source = _clean_mermaid(text)
     if not source:
@@ -7515,6 +7541,26 @@ Content:
 - Real, specific copy for this business: names, services or menu items with prices, hours, testimonials with first names. No lorem ipsum, no "Your text here". Invented details must be plausible; use example.com emails and 555 phone numbers.
 - Semantic HTML, alt text on every image, a label on every form field, lang on <html>."""
 
+# Diagrams in the conversation. The page draws a ```mermaid block in
+# place (static/js/diagram.js); the model only has to be told that it
+# can, and how to write Mermaid that parses. Same rules as the Diagram
+# bay's own prompt, which were each learned from a render that broke.
+_DIAGRAM_HINT = re.compile(
+    r"\b(diagram|flow ?chart|sequence chart|mind ?map|org(?:anisation|anization)? chart|"
+    r"architecture|state machine|er ?d|entity.relationship|schema|"
+    r"visuali[sz]e|draw (?:me )?(?:a|the) (?:flow|process|system))\b",
+    re.IGNORECASE)
+
+CHAT_DIAGRAM_PROMPT = (
+    "DIAGRAMS: when a diagram helps, draw it as a ```mermaid code block - "
+    "the page renders it. Use flowchart for processes and architecture, "
+    "sequenceDiagram for messages between parties, erDiagram for "
+    "schemas, stateDiagram-v2 for states. Quote every label that "
+    "contains a space, bracket, slash or punctuation; keep node ids "
+    "short and alphanumeric; aim for 6-14 nodes; set no styles or "
+    "colours. Add a sentence or two of explanation around it."
+)
+
 NO_PHOTOS_NOTE = ("No photos were found for this topic. Use rich CSS "
                   "gradients, shapes and inline SVG instead of pictures. "
                   "Never invent an image URL or use a placeholder service.")
@@ -7728,6 +7774,8 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     site_block = _website_block(thread, asked)
     if site_block:
         system_prompt = system_prompt + "\n\n" + site_block
+    elif _DIAGRAM_HINT.search(asked or ""):
+        system_prompt = system_prompt + "\n\n" + CHAT_DIAGRAM_PROMPT
     nudge = STRENGTH_LEVELS[strength]["nudge"]
     if nudge:
         system_prompt = system_prompt + "\n\n" + nudge

@@ -115,6 +115,9 @@ function describe(block) {
   if (!code) return null;
   const content = (code.textContent || "").replace(/\n$/, "");
   const lang = langOf(block);
+  // A diagram is drawn in the conversation (diagram.js), not opened as
+  // a file to read.
+  if (lang.toLowerCase() === "mermaid") return null;
   const lines = content.split("\n").length;
   if (lines < MIN_LINES && !(previewKind(lang, content) && lines >= 3)) return null;
   return { content, lang, filename: block.dataset.filename || "" };

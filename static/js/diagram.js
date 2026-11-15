@@ -39,12 +39,23 @@ export function initMermaid() {
       // Nothing here needs either.
       securityLevel: "strict",
       theme: "dark",
+      // The glass theme's palette: near-black nodes, an indigo edge,
+      // zinc lines. Was the old navy-and-tan, which no longer matched
+      // anything else on the page.
       themeVariables: {
         background: "transparent",
-        primaryColor: "#2a4155",
-        primaryTextColor: "#dfe2dc",
-        primaryBorderColor: "#a08348",
-        lineColor: "#7fa3bd",
+        primaryColor: "#18181b",
+        primaryTextColor: "#fafafa",
+        primaryBorderColor: "#6366f1",
+        secondaryColor: "#27272a",
+        tertiaryColor: "#111114",
+        lineColor: "#a1a1aa",
+        textColor: "#e4e4e7",
+        edgeLabelBackground: "#18181b",
+        clusterBkg: "#111114",
+        clusterBorder: "#3f3f46",
+        noteBkgColor: "#27272a",
+        noteTextColor: "#fafafa",
         fontFamily: "Inter, system-ui, sans-serif",
       },
     });
@@ -97,6 +108,53 @@ export async function drawDiagram(source) {
       + "line needs quoting.";
     out.hidden = false;
     srcBox.open = true;
+  }
+}
+
+/* DIAGRAMS IN THE CONVERSATION.
+   A reply that contains a ```mermaid block is drawn, in place, once it
+   has finished arriving (markdown.js announces that with rg:rendered).
+   The source stays one click away behind a Code toggle, and a block
+   that does not parse is simply left as code - the reply is never
+   worse for having tried. */
+async function renderInlineDiagrams(bubble) {
+  const blocks = /** @type {HTMLElement[]} */ (
+    [...bubble.querySelectorAll('.code-block[data-lang="mermaid"]')]);
+  if (!blocks.length) return;
+  if (!(await loadMermaid()) || !initMermaid()) return;
+  for (const block of blocks) {
+    if (block.querySelector(".mermaid-view")) continue;
+    const pre = block.querySelector("pre");
+    const code = pre && pre.querySelector("code");
+    if (!code) continue;
+    const id = "mmd" + Date.now() + Math.random().toString(36).slice(2, 8);
+    try {
+      const { svg } = await window.mermaid.render(id, code.textContent || "");
+      const view = document.createElement("div");
+      view.className = "mermaid-view";
+      view.innerHTML = svg;
+      pre.hidden = true;
+      block.insertBefore(view, pre);
+
+      const header = block.querySelector(".code-block-header");
+      if (header) {
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "copy-btn";
+        toggle.textContent = "Code";
+        toggle.addEventListener("click", () => {
+          const showCode = pre.hidden;
+          pre.hidden = !showCode;
+          view.hidden = showCode;
+          toggle.textContent = showCode ? "Diagram" : "Code";
+        });
+        header.insertBefore(toggle, header.children[1] || null);
+      }
+    } catch (_) {
+      // Mermaid leaves its error drawing in the page on a failed parse.
+      document.getElementById("d" + id)?.remove();
+      document.getElementById(id)?.remove();
+    }
   }
 }
 
@@ -172,4 +230,11 @@ export function mountDiagram() {
 
   loadVideoLimits();
 
+  const log = document.getElementById("chatLog");
+  if (log) {
+    log.addEventListener("rg:rendered", (e) => {
+      const bubble = /** @type {HTMLElement} */ (e.target);
+      if (bubble instanceof HTMLElement) renderInlineDiagrams(bubble);
+    });
+  }
 }
