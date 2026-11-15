@@ -8227,8 +8227,16 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
             # a requests error carries a host, a port and a pool state.
             app.logger.warning("reply failed on %s: %s", provider, e)
             reply_kind = "error"
-            full_reply = ("[Something went wrong talking to %s. Try "
-                          "sending that again.]" % _channel_name(provider))
+            if site_job is not None:
+                # A build that stopped says so, and nothing half-made is
+                # saved: a blank site is worse than no site.
+                full_reply = ("[The website build stopped: %s Nothing was "
+                              "saved - send the request again to retry.]"
+                              % (str(e) if isinstance(e, (sitebuilder.EmptyFileError, RuntimeError))
+                                 else "the model stopped answering."))
+            else:
+                full_reply = ("[Something went wrong talking to %s. Try "
+                              "sending that again.]" % _channel_name(provider))
             yield stream_event({"event": "reply", "kind": reply_kind})
             yield full_reply
         finally:

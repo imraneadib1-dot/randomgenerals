@@ -408,10 +408,31 @@ and form submissions appear under **Your sites** in your account - no server to 
 
 
 # ---------------------------------------------------------------- the build
+# Below this, a file is not a file. Measured: a free model spent its
+# whole allowance thinking and returned nothing, and the first real build
+# saved a 0 KB styles.css, script.js and app.py as if all was well.
+MIN_FILE_CHARS = {"index.html": 600, "styles.css": 400, "script.js": 150, "app.py": 200}
+
+
+class EmptyFileError(RuntimeError):
+    """The model would not produce a usable file, even when asked again."""
+
+
 def _write(llm, name, label, messages, max_tokens, effort, small=False):
     """One file, continued if the model ran out of room. Generator; returns text."""
     text, finish = yield from llm(name, label, messages, max_tokens, effort, small)
     body = _fenced(text)
+    if len(body.strip()) < MIN_FILE_CHARS.get(name, 1):
+        # Almost always the thinking ate the allowance. Ask again with
+        # less of it, and say plainly that the file itself is wanted.
+        log("%s came back with %d chars; asking again" % (name, len(body.strip())))
+        text, finish = yield from llm(
+            name, label + " (second attempt)",
+            messages + [{"role": "user", "content": "Your reply contained no file. Write the complete " + name + " now, in a single ```" + LANG[name] + " block. Keep your reasoning brief."}],
+            max_tokens, "low", small)
+        body = _fenced(text)
+        if len(body.strip()) < MIN_FILE_CHARS.get(name, 1):
+            raise EmptyFileError("The model did not write %s - try again in a minute." % name)
     rounds = 0
     while finish == "length" and rounds < 2:
         rounds += 1
