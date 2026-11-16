@@ -29,6 +29,10 @@ import re
 # auth:  "none"   - no sign-in; connecting just saves it
 #        "oauth"  - one-click sign-in with dynamic registration (checked
 #                   against each server when this list was written)
+#        "allowlist" - the app's sign-in only accepts services it has
+#                   approved by hand (it refused RandomGenerals' registration
+#                   or redirect address when tested). Kept here so it is
+#                   clear why it is missing; never shown.
 #        "app"    - one-click for users once the site owner has
 #                   registered RandomGenerals with that service and set
 #                   MCP_<ID>_CLIENT_ID / MCP_<ID>_CLIENT_SECRET. Hidden
@@ -41,95 +45,95 @@ import re
 # ----------------------------------------------------------------------
 APPS = [
     # productivity
-    {"id": "notion", "title": "Notion", "url": "https://mcp.notion.com/mcp", "auth": "oauth",
+    {"id": "notion", "logo": "notion.svg", "title": "Notion", "url": "https://mcp.notion.com/mcp", "auth": "oauth",
      "category": "Productivity", "color": "#191919",
      "description": "Search, read and write pages and databases in your workspace.",
      "words": ["notion"]},
-    {"id": "linear", "title": "Linear", "url": "https://mcp.linear.app/mcp", "auth": "oauth",
+    {"id": "linear", "logo": "linear.svg", "title": "Linear", "url": "https://mcp.linear.app/mcp", "auth": "oauth",
      "category": "Productivity", "color": "#5e6ad2",
      "description": "Find, create and update issues, projects and cycles.",
      "words": ["linear", "issue", "issues", "ticket", "tickets"]},
-    {"id": "atlassian", "title": "Jira & Confluence", "url": "https://mcp.atlassian.com/v1/mcp",
+    {"id": "atlassian", "logo": "atlassian.svg", "title": "Jira & Confluence", "url": "https://mcp.atlassian.com/v1/mcp",
      "auth": "oauth", "category": "Productivity", "color": "#0c66e4",
      "description": "Work with Jira issues and Confluence pages.",
      "words": ["jira", "confluence", "atlassian"]},
-    {"id": "monday", "title": "monday.com", "url": "https://mcp.monday.com/mcp", "auth": "oauth",
+    {"id": "monday", "logo": "monday.png", "title": "monday.com", "url": "https://mcp.monday.com/mcp", "auth": "oauth",
      "category": "Productivity", "color": "#ff3d57",
      "description": "Read and update boards, items and updates.",
      "words": ["monday", "board", "boards"]},
-    {"id": "asana", "title": "Asana", "url": "https://mcp.asana.com/v2/mcp", "auth": "app",
+    {"id": "asana", "logo": "asana.svg", "title": "Asana", "url": "https://mcp.asana.com/v2/mcp", "auth": "app",
      "category": "Productivity", "color": "#f06a6a",
      "description": "Tasks, projects and goals in Asana.", "words": ["asana"]},
-    {"id": "intercom", "title": "Intercom", "url": "https://mcp.intercom.com/mcp", "auth": "oauth",
+    {"id": "intercom", "title": "Intercom", "url": "https://mcp.intercom.com/mcp", "auth": "allowlist",
      "category": "Productivity", "color": "#1f8ded",
      "description": "Search conversations and contacts.", "words": ["intercom", "support inbox"]},
-    {"id": "zapier", "title": "Zapier", "url": "https://mcp.zapier.com/api/mcp/mcp", "auth": "oauth",
+    {"id": "zapier", "logo": "zapier.ico", "title": "Zapier", "url": "https://mcp.zapier.com/api/mcp/mcp", "auth": "oauth",
      "category": "Productivity", "color": "#ff4f00",
      "description": "Run the actions you have set up in Zapier across 8,000 apps.",
      "words": ["zapier", "zap", "gmail", "google sheets", "slack", "calendar"]},
-    {"id": "box", "title": "Box", "url": "https://mcp.box.com", "auth": "app",
+    {"id": "box", "logo": "box.svg", "title": "Box", "url": "https://mcp.box.com", "auth": "app",
      "category": "Productivity", "color": "#0061d5",
      "description": "Search and read files in Box.", "words": ["box.com", "box files", "my box"]},
     # developer
-    {"id": "github", "title": "GitHub", "url": "https://api.githubcopilot.com/mcp/", "auth": "app",
+    {"id": "github", "logo": "github.svg", "title": "GitHub", "url": "https://api.githubcopilot.com/mcp/", "auth": "app",
      "category": "Developer", "color": "#24292f",
      "description": "Repositories, issues, pull requests and code search.",
      "words": ["github", "repo", "repository", "pull request", "pr "]},
-    {"id": "sentry", "title": "Sentry", "url": "https://mcp.sentry.dev/mcp", "auth": "oauth",
+    {"id": "sentry", "logo": "sentry.svg", "title": "Sentry", "url": "https://mcp.sentry.dev/mcp", "auth": "oauth",
      "category": "Developer", "color": "#362d59",
      "description": "Look up errors, issues and releases.", "words": ["sentry", "error report", "crash"]},
-    {"id": "vercel", "title": "Vercel", "url": "https://mcp.vercel.com", "auth": "oauth",
+    {"id": "vercel", "title": "Vercel", "url": "https://mcp.vercel.com", "auth": "allowlist",
      "category": "Developer", "color": "#000000",
      "description": "Projects, deployments and build logs.", "words": ["vercel", "deployment", "deploy"]},
-    {"id": "cloudflare", "title": "Cloudflare", "url": "https://bindings.mcp.cloudflare.com/mcp",
+    {"id": "cloudflare", "logo": "cloudflare.svg", "title": "Cloudflare", "url": "https://bindings.mcp.cloudflare.com/mcp",
      "auth": "oauth", "category": "Developer", "color": "#f38020",
      "description": "Workers, KV, R2 and D1 in your Cloudflare account.",
      "words": ["cloudflare", "worker", "workers", "r2", "d1"]},
-    {"id": "context7", "title": "Context7", "url": "https://mcp.context7.com/mcp", "auth": "none",
+    {"id": "context7", "logo": "context7.png", "title": "Context7", "url": "https://mcp.context7.com/mcp", "auth": "none",
      "category": "Developer", "color": "#059669",
      "description": "Up-to-date documentation and examples for thousands of libraries.",
      "words": ["docs", "documentation", "library", "framework", "api reference", "context7"]},
-    {"id": "deepwiki", "title": "DeepWiki", "url": "https://mcp.deepwiki.com/mcp", "auth": "none",
+    {"id": "deepwiki", "logo": "deepwiki.ico", "title": "DeepWiki", "url": "https://mcp.deepwiki.com/mcp", "auth": "none",
      "category": "Developer", "color": "#2563eb",
      "description": "Ask questions about any public GitHub repository.",
      "words": ["deepwiki", "github.com/", "open source", "repo", "repository"]},
-    {"id": "cfdocs", "title": "Cloudflare Docs", "url": "https://docs.mcp.cloudflare.com/mcp",
+    {"id": "cfdocs", "logo": "cfdocs.svg", "title": "Cloudflare Docs", "url": "https://docs.mcp.cloudflare.com/mcp",
      "auth": "none", "category": "Developer", "color": "#f38020",
      "description": "Search Cloudflare's documentation.", "words": ["cloudflare"]},
-    {"id": "huggingface", "title": "Hugging Face", "url": "https://huggingface.co/mcp", "auth": "none",
+    {"id": "huggingface", "logo": "huggingface.svg", "title": "Hugging Face", "url": "https://huggingface.co/mcp", "auth": "none",
      "category": "Developer", "color": "#ffbd2e",
      "description": "Find models, datasets, Spaces and papers.",
      "words": ["hugging face", "huggingface", "model", "dataset", "paper"]},
     # design & web
-    {"id": "figma", "title": "Figma", "url": "https://mcp.figma.com/mcp", "auth": "oauth",
+    {"id": "figma", "title": "Figma", "url": "https://mcp.figma.com/mcp", "auth": "allowlist",
      "category": "Design", "color": "#a259ff",
      "description": "Read designs, components and variables from your files.", "words": ["figma"]},
-    {"id": "canva", "title": "Canva", "url": "https://mcp.canva.com/mcp", "auth": "oauth",
+    {"id": "canva", "title": "Canva", "url": "https://mcp.canva.com/mcp", "auth": "allowlist",
      "category": "Design", "color": "#00c4cc",
      "description": "Search, create and export Canva designs.", "words": ["canva"]},
-    {"id": "webflow", "title": "Webflow", "url": "https://mcp.webflow.com/mcp", "auth": "oauth",
+    {"id": "webflow", "logo": "webflow.svg", "title": "Webflow", "url": "https://mcp.webflow.com/mcp", "auth": "oauth",
      "category": "Design", "color": "#146ef5",
      "description": "Manage Webflow sites, pages and CMS items.", "words": ["webflow"]},
-    {"id": "wix", "title": "Wix", "url": "https://mcp.wix.com/mcp", "auth": "oauth",
+    {"id": "wix", "logo": "wix.svg", "title": "Wix", "url": "https://mcp.wix.com/mcp", "auth": "oauth",
      "category": "Design", "color": "#0c6efc",
      "description": "Manage your Wix sites and business data.", "words": ["wix"]},
     # payments
-    {"id": "stripe", "title": "Stripe", "url": "https://mcp.stripe.com", "auth": "oauth",
+    {"id": "stripe", "logo": "stripe.svg", "title": "Stripe", "url": "https://mcp.stripe.com", "auth": "oauth",
      "category": "Payments", "color": "#635bff",
      "description": "Customers, payments, invoices and products.",
      "words": ["stripe", "payment", "payments", "invoice", "refund", "subscription"]},
-    {"id": "paypal", "title": "PayPal", "url": "https://mcp.paypal.com/mcp", "auth": "oauth",
+    {"id": "paypal", "logo": "paypal.svg", "title": "PayPal", "url": "https://mcp.paypal.com/mcp", "auth": "oauth",
      "category": "Payments", "color": "#003087",
      "description": "Invoices, orders and transactions.", "words": ["paypal"]},
-    {"id": "square", "title": "Square", "url": "https://mcp.squareup.com/mcp", "auth": "oauth",
+    {"id": "square", "title": "Square", "url": "https://mcp.squareup.com/mcp", "auth": "allowlist",
      "category": "Payments", "color": "#3e4348",
      "description": "Orders, catalog, customers and payments.", "words": ["square"]},
-    {"id": "hubspot", "title": "HubSpot", "url": "https://mcp.hubspot.com/", "auth": "app",
+    {"id": "hubspot", "logo": "hubspot.svg", "title": "HubSpot", "url": "https://mcp.hubspot.com/", "auth": "app",
      "category": "Payments", "color": "#ff7a59",
      "description": "Contacts, companies and deals in your CRM.",
      "words": ["hubspot", "crm", "deal", "deals", "contacts"]},
     # search
-    {"id": "exa", "title": "Exa Search", "url": "https://mcp.exa.ai/mcp", "auth": "none",
+    {"id": "exa", "logo": "exa.png", "title": "Exa Search", "url": "https://mcp.exa.ai/mcp", "auth": "none",
      "category": "Research", "color": "#1f40ed",
      "description": "Deep web search and page reading.",
      "words": ["exa", "research", "search the web", "find articles"]},
@@ -147,7 +151,8 @@ def app_client(app_id):
 
 def available_apps():
     """The gallery, minus "app"-auth entries the owner has not set up."""
-    return [a for a in APPS if a["auth"] != "app" or app_client(a["id"])[0]]
+    return [a for a in APPS if a["auth"] != "allowlist"
+            and (a["auth"] != "app" or app_client(a["id"])[0])]
 
 
 def app_mentioned(app, text):
@@ -357,15 +362,15 @@ PLUGIN_SKILLS = {
 # ----------------------------------------------------------------------
 PLUGINS = [
     {"id": "developer", "title": "Developer", "icon": "💻",
-     "description": "Code review, debugging and tests, plus GitHub, Sentry, Vercel and live library docs.",
+     "description": "Code review, debugging and tests, plus Sentry, Cloudflare and live library docs.",
      "skills": ["code-review", "debugging", "write-tests", "release-notes"],
-     "apps": ["github", "sentry", "vercel", "context7", "deepwiki"]},
+     "apps": ["github", "sentry", "cloudflare", "context7", "deepwiki"]},
     {"id": "productivity", "title": "Productivity", "icon": "⚡",
      "description": "Meeting notes, plans and status updates, connected to Notion, Linear, Jira and Zapier.",
      "skills": ["meeting-notes", "project-plan", "weekly-update", "documents", "email"],
      "apps": ["notion", "linear", "atlassian", "monday", "zapier"]},
     {"id": "marketing", "title": "Marketing", "icon": "📣",
-     "description": "SEO articles, social posts, email campaigns and brand voice, with Canva and Webflow.",
+     "description": "SEO articles, social posts, email campaigns and brand voice, with Webflow and Wix.",
      "skills": ["seo-blog", "social-media", "email-campaign", "brand-voice"],
      "apps": ["canva", "webflow", "wix", "hubspot"]},
     {"id": "commerce", "title": "Commerce", "icon": "🛒",
@@ -377,7 +382,7 @@ PLUGINS = [
      "skills": ["research-report", "data-analysis"],
      "apps": ["exa", "huggingface", "deepwiki"]},
     {"id": "design", "title": "Design", "icon": "🎨",
-     "description": "Design critique and UX writing, with Figma and Canva.",
+     "description": "Design critique, UX writing and slide decks.",
      "skills": ["design-critique", "ux-copy", "slides"],
      "apps": ["figma", "canva"]},
 ]

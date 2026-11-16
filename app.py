@@ -9059,6 +9059,12 @@ def extensions_overview():
         c = conns.get(a["id"])
         apps.append({"id": a["id"], "title": a["title"], "category": a["category"],
                      "description": a["description"], "color": a["color"],
+                     # SVG logos are one-colour shapes (Simple Icons), drawn
+                     # on the brand colour; PNG/ICO ones are the app's own
+                     # full-colour icon.
+                     "logo": (url_for("static", filename="apps/" + a["logo"])
+                              if a.get("logo") else None),
+                     "logo_mono": (a.get("logo") or "").endswith(".svg"),
                      "signin": a["auth"] != "none",
                      "connection": connections.public(c) if c else None})
     max_apps, plan = _plan_limit("max_apps")
