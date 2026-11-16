@@ -19,6 +19,7 @@ Connectors page can say so.
 """
 import datetime
 import json
+import re
 import secrets
 import time
 import uuid
@@ -222,31 +223,154 @@ def call(owner_id, conn_id, tool, args):
 
 
 # ---------------------------------------------------------------- a chat turn
-MAX_TURN_TOOLS = 60
+# ONLY THE TOOLS THIS MESSAGE NEEDS, AND ONLY WHAT THE MODEL MUST KNOW.
+#
+# Notion alone lists 40 tools and 135,882 characters of descriptions and
+# schemas - about 34,000 tokens, four times Groq's whole per-request
+# allowance on the free tier. Sending all of them meant every request
+# naming Notion was refused, the tool loop quietly gave up, and the
+# answer came back as if nothing were connected.
+#
+# So each turn ranks an app's tools against what was asked and offers
+# the best few, each compacted (descriptions shortened, deep schema
+# detail collapsed - the server still validates the real arguments),
+# within a character budget the caller sets for the model in use.
+TOOLS_PER_APP = 6
+DEFAULT_TURN_BUDGET = 11000         # characters of tool JSON, ~2,800 tokens
+DESC_CHARS = 240
+PROP_DESC_CHARS = 80
+SCHEMA_DEPTH = 4
+
+_STOP = set("the a an and or to of in on for with my me our your it this that is are be "
+            "can could please would should what which who how do does about from".split())
+# Reading comes before writing when nothing in the message says which:
+# a vague "check my Notion" should search, not create.
+_READ_WORDS = ("search", "fetch", "get", "list", "query", "find", "read", "retrieve")
 
 
-def tools_for_turn(owner_id, text):
+# How people say it -> how tools name it.
+_SYNONYMS = {
+    "add": "create", "new": "create", "make": "create", "write": "create",
+    "post": "create", "save": "create",
+    "edit": "update", "change": "update", "rename": "update", "modify": "update", "set": "update",
+    "move": "move", "mark": "update", "complete": "update", "close": "update", "assign": "update",
+    "remove": "delete", "erase": "delete", "cancel": "delete", "trash": "delete",
+    "show": "get", "see": "get", "view": "get", "look": "search", "check": "search",
+    "find": "search", "lookup": "search", "where": "search", "which": "search", "any": "search",
+    "pages": "page", "notes": "page", "note": "page", "doc": "page", "docs": "page",
+    "issues": "issue", "tickets": "issue", "ticket": "issue", "bug": "issue", "bugs": "issue",
+    "tasks": "task", "todo": "task", "todos": "task", "comments": "comment", "reply": "comment",
+    "tables": ("database", "query"), "table": ("database", "query"), "databases": ("database", "query"),
+    "rows": ("database", "query"), "records": ("database", "query"), "entries": ("database", "query"),
+    "filter": "query", "sort": "query", "count": "query",
+}
+
+
+def _words(text, expand=False):
+    """Content words. Plurals are folded both ways round; synonyms are
+    added only for what the PERSON wrote (expand=True) - expanding tool
+    names too made "delete databases" match a question about rows."""
+    out = {w for w in re.findall(r"[a-z][a-z0-9]{2,}", (text or "").lower()) if w not in _STOP}
+    out |= {w[:-1] for w in out if w.endswith("s") and len(w) > 4}
+    if expand:
+        for w in list(out):
+            syn = _SYNONYMS.get(w)
+            if syn:
+                out |= set(syn) if isinstance(syn, tuple) else {syn}
+    return out
+
+
+def compact_schema(schema, depth=0):
+    """A JSON schema with the shape kept and the prose cut."""
+    if not isinstance(schema, dict):
+        return schema
+    if depth >= SCHEMA_DEPTH:
+        kept = {k: schema[k] for k in ("type", "enum") if k in schema}
+        return kept or {"type": "object"}
+    out = {}
+    for k, v in schema.items():
+        if k in ("examples", "example", "$schema", "$comment", "title", "default", "$id",
+                 "additionalProperties", "markdownDescription"):
+            continue
+        if k == "description":
+            if isinstance(v, str) and v:
+                out[k] = v if len(v) <= PROP_DESC_CHARS else v[:PROP_DESC_CHARS - 1] + "…"
+        elif k == "properties" and isinstance(v, dict):
+            out[k] = {pk: compact_schema(pv, depth + 1) for pk, pv in v.items()}
+        elif k in ("items", "additionalItems", "not") and isinstance(v, dict):
+            out[k] = compact_schema(v, depth + 1)
+        elif k in ("anyOf", "oneOf", "allOf") and isinstance(v, list):
+            out[k] = [compact_schema(x, depth + 1) for x in v[:6]]
+        elif k in ("$defs", "definitions"):
+            continue                       # refs into them become loose objects
+        elif k == "$ref":
+            out.setdefault("type", "object")
+        else:
+            out[k] = v
+    return out
+
+
+def _rank(tools, text):
+    asked = _words(text, expand=True)
+
+    def score(item):
+        i, t = item
+        name_words = _words(t["name"].replace("-", " ").replace("_", " ") + " " + (t.get("title") or ""))
+        desc_words = _words((t.get("description") or "")[:300])
+        s = 3 * len(asked & name_words) + len(asked & desc_words)
+        # Finding a thing and opening it are how almost every request
+        # starts, so an app's search and fetch tools are always near
+        # the front.
+        if name_words & {"search", "fetch"}:
+            s += 3
+        elif any(w in name_words for w in _READ_WORDS):
+            s += 1
+        # Nothing destructive unless it was asked for.
+        if name_words & {"delete", "remove", "archive", "trash"} and not asked & {"delete", "remove", "archive"}:
+            s -= 6
+        if t.get("read_only"):
+            s += 0.5
+        return (-s, i)                     # best first; the app's own order breaks ties
+    return [t for _, t in sorted(enumerate(tools), key=score)]
+
+
+def _compact_tool(t):
+    desc = t.get("description") or t.get("title") or t["name"]
+    if len(desc) > DESC_CHARS:
+        desc = desc[:DESC_CHARS - 1] + "…"
+    return dict(t, description=desc, input_schema=compact_schema(t.get("input_schema") or {}))
+
+
+def tools_for_turn(owner_id, text, budget=DEFAULT_TURN_BUDGET):
     """-> (tool specs, {tool name: route}) for the apps this conversation
     is about. An app's tools are offered only when the recent messages
     mention it (by name, by one of its words, or as @app-id), so
-    connecting many apps does not make every request enormous."""
+    connecting many apps does not make every request enormous - and then
+    only its few tools that fit what was asked (see above)."""
     specs, routes = [], {}
     try:
         conns = db.connections_for(owner_id)
     except Exception:                       # noqa: BLE001
         return [], {}
+    used = 0
     for c in conns:
         app = extensions.APPS_BY_ID.get(c["app_id"])
         if not app or c.get("status") != "ok" or not extensions.app_mentioned(app, text):
             continue
-        for t in c.get("tools") or []:
-            if len(specs) >= MAX_TURN_TOOLS:
+        taken = 0
+        for t in _rank(c.get("tools") or [], text):
+            if taken >= TOOLS_PER_APP:
                 break
-            spec = mcp_client.tool_spec(app["id"], app["title"], t)
+            spec = mcp_client.tool_spec(app["id"], app["title"], _compact_tool(t))
+            size = len(json.dumps(spec))
+            if used + size > budget:
+                continue                   # a smaller one further down may still fit
             name = spec["function"]["name"]
             if name in routes:
                 continue
             specs.append(spec)
+            used += size
+            taken += 1
             routes[name] = {"kind": "mcp", "owner_id": owner_id, "conn_id": c["id"],
                             "tool": t["name"], "app_title": app["title"],
                             "tool_title": t.get("title") or t["name"]}

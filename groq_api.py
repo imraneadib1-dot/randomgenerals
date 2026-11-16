@@ -210,15 +210,20 @@ def estimate_tokens(messages):
     return int(total)
 
 
-def fit_to_budget(messages, want_reply_tokens):
+def fit_to_budget(messages, want_reply_tokens, extra_tokens=0):
     """Trim history and the reply ceiling so the request is accepted.
 
     -> (messages, reply_tokens). Drops the OLDEST turns first, and never
     the system prompt or the newest message: losing the question being
     asked to make room for the conversation about it would be the wrong
     trade every time.
+
+    `extra_tokens` is whatever else rides in the request - the tool
+    definitions. They count against the same per-minute allowance, and
+    leaving them out let a connected app's tools push a request that
+    "fitted" over the limit, so Groq refused it every time.
     """
-    room = TPM_LIMIT - TPM_MARGIN
+    room = TPM_LIMIT - TPM_MARGIN - max(0, int(extra_tokens or 0))
     reply = max(256, int(want_reply_tokens or 0) or 256)
 
     kept = list(messages or [])
@@ -234,14 +239,36 @@ def fit_to_budget(messages, want_reply_tokens):
     #
     # The system prompt is index 0 and the last message is the question
     # being asked, so trimming happens strictly between them.
-    while prompt + reply > room and len(kept) > 2:
-        drop_at = 1 if kept and kept[0].get("role") == "system" else 0
-        kept.pop(drop_at)
+    #
+    # A TOOL EXCHANGE IS ONE UNIT. In the tool loop the newest messages
+    # are the question, the model's tool call and the tool's result.
+    # Dropping "oldest first" could remove the question or the call and
+    # keep the result - an orphaned tool message, which Groq rejects
+    # outright. So only what comes BEFORE the last user message may go.
+    def _last_user(msgs):
+        return max((i for i, m in enumerate(msgs) if m.get("role") == "user"), default=len(msgs) - 1)
+
+    start = 1 if kept and kept[0].get("role") == "system" else 0
+    while prompt + reply > room and start < _last_user(kept):
+        kept.pop(start)
         prompt = estimate_tokens(kept)
 
     # Only once there is no old context left to give up.
     while prompt + reply > room and reply > 512:
         reply = max(512, reply - 256)
+
+    # Then a long tool result is shortened in place (the newest kept
+    # whole as long as possible), with a note so the model knows.
+    tool_idx = [i for i, m in enumerate(kept) if m.get("role") == "tool"
+                and isinstance(m.get("content"), str) and len(m["content"]) > 1200]
+    for i in sorted(tool_idx, key=lambda i: -len(kept[i]["content"])):
+        if prompt + reply <= room:
+            break
+        over_chars = (prompt + reply - room) * 4 + 200
+        text = kept[i]["content"]
+        cut = max(1000, len(text) - over_chars)
+        kept[i] = dict(kept[i], content=text[:cut] + "\n…[shortened to fit - ask for a narrower search if needed]")
+        prompt = estimate_tokens(kept)
 
     # STILL TOO BIG MEANS ONE ENORMOUS MESSAGE - a pasted file, usually.
     # There is nothing left to drop, and shrinking the reply cannot help
@@ -622,8 +649,10 @@ def chat_once(model, history, tools=None, options=None, timeout=120):
     # Fitting only stream_chat left the tool loop failing, and that
     # failure then cascaded into a local fallback which could not carry
     # the oversized prompt either.
+    tool_tokens = len(json.dumps(tools)) // 4 if tools else 0
     body["messages"], fitted = fit_to_budget(
-        body["messages"], body.get("max_tokens") or DEFAULT_REQUEST_TOKENS)
+        body["messages"], body.get("max_tokens") or DEFAULT_REQUEST_TOKENS,
+        extra_tokens=tool_tokens)
     body["max_tokens"] = fitted
 
     try:
@@ -638,6 +667,15 @@ def chat_once(model, history, tools=None, options=None, timeout=120):
         # spent - and only the number tells those two apart.
         raise RateLimited(r.headers.get("retry-after") or "per-minute token budget exhausted")
     if r.status_code != 200:
+        # Said in the log with Groq's own reason: a refused tool turn is
+        # otherwise invisible - the reply simply arrives without the
+        # tools, which is how connected apps "did nothing" unnoticed.
+        try:
+            why = (r.json().get("error") or {}).get("message", "")[:200]
+        except ValueError:
+            why = r.text[:200]
+        print("[groq] tool turn refused %d (%d tool tokens): %s"
+              % (r.status_code, tool_tokens, why))
         return None, "Groq error %d" % r.status_code
     try:
         choice = r.json()["choices"][0]
