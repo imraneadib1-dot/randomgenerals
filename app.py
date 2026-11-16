@@ -6317,6 +6317,44 @@ def _recent_user_text(thread, turns=3):
     return "\n".join(said[-turns:])
 
 
+def _connected_apps_note(owner_id, text):
+    """Tell the model which apps this person connected.
+
+    Handed Notion's tools with nothing else said, the model answered "do
+    you have access to Notion?" with "I don't have access to Notion" -
+    a model is cautious about access nobody told it it has. So it is
+    told, by name, and told to use them.
+    """
+    try:
+        conns = [c for c in db.connections_for(owner_id) if c.get("status") == "ok"]
+    except Exception:                       # noqa: BLE001
+        return ""
+    if not conns:
+        return ""
+    names, here = [], []
+    for c in conns:
+        app = extensions.APPS_BY_ID.get(c["app_id"])
+        if not app:
+            continue
+        names.append(app["title"])
+        if extensions.app_mentioned(app, text):
+            here.append(app["title"])
+    if not names:
+        return ""
+    note = ("CONNECTED APPS\nThis person has connected: %s. You DO have access to these "
+            "through tools whose names start with mcp__ - never say you cannot reach an app "
+            "listed here." % ", ".join(names))
+    if here:
+        note += (" Tools for %s are available in this reply: when the message is about it, "
+                 "call them (search or fetch first to find things) and answer from what they "
+                 "return. Asked whether you can access it, say yes and offer to look something "
+                 "up." % ", ".join(here))
+    else:
+        note += (" Their tools load when a message names the app - if the person asks about "
+                 "one without naming it, ask them to mention it by name.")
+    return note
+
+
 def _skills_for_turn(owner_id, text):
     """The skills this message switches on (extensions.match_skills)."""
     try:
@@ -8058,6 +8096,9 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     skills_on = [] if site_job else _skills_for_turn(owner_id, asked)
     for skill in skills_on:
         system_prompt = system_prompt + "\n\n" + extensions.skill_block(skill)
+    apps_note = _connected_apps_note(owner_id, asked)
+    if apps_note:
+        system_prompt = system_prompt + "\n\n" + apps_note
 
     history = ([{"role": "system", "content": system_prompt}]
                + _model_history(thread))
