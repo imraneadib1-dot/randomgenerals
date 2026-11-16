@@ -74,7 +74,11 @@ MODELS_TTL = 3600
 # only the ones the live catalogue still has - so a retired id is
 # skipped rather than 404ing the bay.
 PREFERRED = [
-    # paid: DeepSeek, the code bay's models
+    # paid: DeepSeek V4, the site's main models while the key has credit
+    # (see PRO_MODEL / FLASH_MODEL below)
+    "deepseek/deepseek-v4-pro",
+    "deepseek/deepseek-v4.1-flash",
+    # paid: the older DeepSeek line, kept for a picker that names it
     "deepseek/deepseek-v3.2",
     "deepseek/deepseek-r1-0528",
     "deepseek/deepseek-chat-v3-0324",
@@ -91,12 +95,68 @@ PREFERRED = [
 # catalogue has it and the day's ceiling allows it.
 DEEP_MODEL = "deepseek/deepseek-r1-0528"
 
+# DEEPSEEK V4, CHOSEN BY THE OWNER AS THE SITE'S MAIN MODEL.
+#
+# Pro writes the websites and answers the code bay; Flash answers chat,
+# where a fast cheap reply matters more than the last bit of quality.
+# Both are paid, so both sit behind the daily ceiling below - and when
+# the key has no credit, or the ceiling is reached, app.py routes to
+# Groq instead (see deepseek_ready()).
+PRO_MODEL = "deepseek/deepseek-v4-pro"
+FLASH_MODEL = "deepseek/deepseek-v4.1-flash"
+
+# OpenRouter serves each model through several hosts at very different
+# prices - V4.1 Flash ranged from $1.20 to $12 per million output tokens
+# when this was written. Without a cap a request can land on the
+# expensive one. These are a little above DeepSeek's own peak price, in
+# dollars per million tokens, so the normal hosts qualify and the
+# outliers do not.
+MAX_PRICE = {
+    PRO_MODEL: {"prompt": 2.0, "completion": 4.0},
+    FLASH_MODEL: {"prompt": 0.5, "completion": 1.5},
+}
+
+# Set when OpenRouter answers 402 (no credit left). For this long the
+# paid models are treated as unavailable, so every message does not
+# first knock on a door that is known to be shut.
+NO_CREDIT_PAUSE = 600
+_no_credit = {"until": 0.0}
+
+
+def _mark_no_credit():
+    _no_credit["until"] = time.time() + NO_CREDIT_PAUSE
+
+
+def has_credit():
+    return time.time() >= _no_credit["until"]
+
+
+def deepseek_ready(model=None):
+    """Whether a DeepSeek V4 model can answer right now: a key, the model
+    in the live catalogue, credit on the account and room under today's
+    ceiling. `model` defaults to PRO_MODEL.
+
+    OFF unless DEEPSEEK_PRIMARY=1 is set: the owner turns it on once the
+    OpenRouter account has credit."""
+    model = model or PRO_MODEL
+    if os.environ.get("DEEPSEEK_PRIMARY", "0").strip().lower() not in ("1", "on", "true", "yes"):
+        return False
+    if not (configured() and has_credit()):
+        return False
+    return model in (models() or []) and budget_ok(model)
+
 # What the picker offers. OpenRouter lists several hundred models from
 # every lab, which is not a menu anyone wants in a settings dropdown, so
 # this is narrowed to the ones this app has a reason to route to.
 EXPOSED_MODELS = tuple(PREFERRED)
 
 FALLBACK_MODELS = list(PREFERRED[:2])
+
+
+def _routing(model):
+    """OpenRouter's provider preferences for this model, or None."""
+    cap = MAX_PRICE.get(model)
+    return {"max_price": cap} if cap else None
 
 _models_cache = {"at": 0.0, "models": None, "error": "",
                  # Every id in the catalogue whose architecture lists
@@ -315,6 +375,8 @@ def chat_once(model, history, tools=None, options=None, timeout=120):
         "messages": _to_messages(history),
         "stream": False,
     }
+    if _routing(body["model"]):
+        body["provider"] = _routing(body["model"])
     if tools:
         body["tools"] = tools
         body["tool_choice"] = "auto"
@@ -334,6 +396,7 @@ def chat_once(model, history, tools=None, options=None, timeout=120):
         # it would treat the same as a bad request.
         raise RateLimited("OpenRouter rate limit")
     if r.status_code == 402:
+        _mark_no_credit()
         return None, ("This OpenRouter key is out of credit - DeepSeek "
                       "is a paid model.")
     if r.status_code != 200:
@@ -402,6 +465,8 @@ def stream_chat(model, history, options=None, images=None, usage=None):
         "messages": _with_images(_to_messages(history), images),
         "stream": True,
     }
+    if _routing(body["model"]):
+        body["provider"] = _routing(body["model"])
     if opts.get("tools"):
         body["tools"] = opts["tools"]
         body["tool_choice"] = "auto"
@@ -438,14 +503,15 @@ def stream_chat(model, history, options=None, images=None, usage=None):
                 raise RateLimited(r.headers.get("retry-after")
                                   or "OpenRouter rate limit")
             if r.status_code == 402:
-                # Worth its own message. "error 402" tells someone
-                # nothing, and this is the one failure here with an
-                # obvious remedy. Said, not raised: another provider
-                # cannot top the key up.
-                yield ("[This OpenRouter key is out of credit. DeepSeek "
-                       "is a paid model - top the key up, or unset "
-                       "OPENROUTER_API_KEY to go back to the free channel.]")
-                return
+                # Out of credit. Raised, so the reply is answered by
+                # Groq instead of becoming an error the person has to
+                # read - and remembered for NO_CREDIT_PAUSE, so the next
+                # messages go straight there. The owner sees it in the
+                # log; the visitor never has to.
+                _mark_no_credit()
+                print("[openrouter] out of credit (402) - routing to the "
+                      "backup for %ds" % NO_CREDIT_PAUSE)
+                raise Unreachable("OpenRouter key is out of credit")
             if r.status_code in (401, 403):
                 yield "[OpenRouter rejected the key.]"
                 return

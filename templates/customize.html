@@ -1,0 +1,386 @@
+<!doctype html>
+{# Customize: skills, connectors (one-click apps) and plugins. Everything
+   is drawn from /api/extensions; text that a person wrote (their skills)
+   is only ever set with textContent. #}
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Customize — RandomGenerals</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" href="{{ asset('favicon.svg') }}" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg: #09090b; --glass: rgba(255,255,255,.04); --glass-2: rgba(255,255,255,.07);
+        --line: rgba(255,255,255,.08); --line-2: rgba(255,255,255,.16);
+        --ink: #fafafa; --ink-2: #a1a1aa; --ink-3: #71717a; --accent: #a5b4fc;
+        --ok: #4ade80; --warn: #fbbf24; --danger: #ff8f8f;
+      }
+      @media (prefers-color-scheme: light) {
+        :root:not([data-theme="dark"]) {
+          --bg: #fafafa; --glass: rgba(255,255,255,.7); --glass-2: #fff;
+          --line: rgba(0,0,0,.08); --line-2: rgba(0,0,0,.16);
+          --ink: #09090b; --ink-2: #52525b; --ink-3: #71717a; --accent: #4338ca;
+          --ok: #15803d; --warn: #b45309; --danger: #b42318;
+        }
+      }
+      :root[data-theme="light"] {
+        --bg: #fafafa; --glass: rgba(255,255,255,.7); --glass-2: #fff;
+        --line: rgba(0,0,0,.08); --line-2: rgba(0,0,0,.16);
+        --ink: #09090b; --ink-2: #52525b; --ink-3: #71717a; --accent: #4338ca;
+        --ok: #15803d; --warn: #b45309; --danger: #b42318;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; min-height: 100vh; font: 15px/1.55 Inter, system-ui, sans-serif; color: var(--ink);
+        background:
+          radial-gradient(70% 45% at 50% -10%, rgba(99,102,241,.16), transparent 70%),
+          radial-gradient(40% 40% at 0% 100%, rgba(168,85,247,.08), transparent 70%),
+          var(--bg);
+        overflow-x: hidden;
+      }
+      .wrap { max-width: 1040px; margin: 0 auto; padding: 28px 16px 80px; }
+      .top a.back { color: var(--ink-2); text-decoration: none; font-size: 14px; }
+      .top a.back:hover { color: var(--ink); }
+      h1 { margin: 18px 0 6px; font-size: clamp(26px, 4vw, 34px); letter-spacing: -.03em; }
+      .sub { margin: 0 0 22px; color: var(--ink-2); }
+      .tabs { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 999px; background: var(--glass); margin-bottom: 26px; }
+      .tabs button { border: 0; background: transparent; color: var(--ink-2); font: 500 14px Inter, system-ui, sans-serif; padding: 8px 16px; border-radius: 999px; cursor: pointer; transition: all .2s ease; }
+      .tabs button[aria-selected="true"] { background: var(--glass-2); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-2); }
+      h2 { font-size: 15px; letter-spacing: -.01em; margin: 28px 0 12px; color: var(--ink-2); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; font-size: 12px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 12px; }
+      .card {
+        border: 1px solid var(--line); background: var(--glass); border-radius: 16px; padding: 16px;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.06); display: flex; flex-direction: column; gap: 10px; min-width: 0;
+      }
+      .card-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+      .card-head h3 { margin: 0; font-size: 15px; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .card p { margin: 0; color: var(--ink-2); font-size: 13.5px; }
+      .tile { width: 38px; height: 38px; flex: none; border-radius: 10px; display: grid; place-items: center; font-weight: 700; color: #fff; font-size: 16px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); }
+      .emoji { width: 38px; height: 38px; flex: none; border-radius: 10px; display: grid; place-items: center; font-size: 20px; background: var(--glass-2); border: 1px solid var(--line); }
+      .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: auto; }
+      .btn {
+        display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 9px;
+        border: 1px solid var(--line-2); background: transparent; color: var(--ink-2);
+        font: 500 13px Inter, system-ui, sans-serif; text-decoration: none; cursor: pointer; transition: all .2s ease;
+      }
+      .btn:hover { color: var(--ink); background: var(--glass-2); }
+      .btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+      .btn.primary:hover { opacity: .9; }
+      .btn.danger:hover { color: var(--danger); border-color: var(--danger); }
+      .btn[disabled] { opacity: .5; cursor: progress; }
+      .pill { font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--ink-2); white-space: nowrap; }
+      .pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+      .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+      .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+      .chip { font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--glass-2); color: var(--ink-2); }
+      code { font-family: "JetBrains Mono", monospace; font-size: 12.5px; color: var(--accent); }
+      .banner { border: 1px solid var(--line-2); border-radius: 14px; padding: 12px 14px; margin-bottom: 18px; color: var(--ink-2); background: var(--glass); }
+      .banner.ok { border-color: color-mix(in srgb, var(--ok) 45%, transparent); color: var(--ink); }
+      .banner.err { border-color: color-mix(in srgb, var(--danger) 45%, transparent); color: var(--ink); }
+      .banner a { color: var(--accent); }
+      form.skill { border: 1px solid var(--line-2); background: var(--glass); border-radius: 16px; padding: 16px; display: grid; gap: 12px; margin-bottom: 14px; }
+      label { display: grid; gap: 5px; font-size: 13px; color: var(--ink-2); }
+      input, textarea {
+        width: 100%; font: 14px Inter, system-ui, sans-serif; color: var(--ink); background: var(--glass-2);
+        border: 1px solid var(--line-2); border-radius: 10px; padding: 9px 11px; outline: none;
+      }
+      textarea { min-height: 160px; resize: vertical; font-family: "JetBrains Mono", monospace; font-size: 13px; }
+      input:focus, textarea:focus { border-color: var(--accent); }
+      .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      @media (max-width: 600px) { .two { grid-template-columns: 1fr; } .tabs { display: flex; } .tabs button { flex: 1; padding: 8px 6px; } }
+      .muted { color: var(--ink-3); font-size: 13px; }
+      .status { min-height: 20px; font-size: 13px; color: var(--danger); }
+      [hidden] { display: none !important; }
+      .tools { font-size: 12.5px; color: var(--ink-3); }
+    </style>
+    <script>
+      try { var t = localStorage.getItem("theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <main class="wrap">
+      <div class="top"><a class="back" href="/app">&larr; Back to chat</a></div>
+      <h1>Customize</h1>
+      <p class="sub">Give the AI skills for specific jobs, connect the apps you use, and install plugins that bundle both.</p>
+
+      <div id="banner" class="banner" hidden></div>
+      {% if not signed_in %}
+        <div class="banner">Built-in skills already work for everyone. <a href="/app">Sign in</a> to write your own skills, install plugins and connect apps.</div>
+      {% endif %}
+
+      <div class="tabs" role="tablist">
+        <button role="tab" data-tab="skills" aria-selected="true">Skills</button>
+        <button role="tab" data-tab="connectors" aria-selected="false">Connectors</button>
+        <button role="tab" data-tab="plugins" aria-selected="false">Plugins</button>
+      </div>
+
+      <section data-panel="skills">
+        <div class="row" style="justify-content: space-between; margin: 0;">
+          <p class="muted" style="margin:0">Skills switch on by themselves when a message matches - or call one by name, like <code>/slides</code>.</p>
+          <button class="btn primary" id="newSkill" type="button">+ New skill</button>
+        </div>
+        <form class="skill" id="skillForm" hidden>
+          <div class="two">
+            <label>Title<input name="title" maxlength="80" placeholder="Meal planner" required /></label>
+            <label>Name (what you type after /)<input name="slug" maxlength="32" placeholder="meal-planner" pattern="[a-z0-9][a-z0-9\-]{1,31}" required /></label>
+          </div>
+          <label>Short description<input name="description" maxlength="240" placeholder="Weekly meal plans with a shopping list" /></label>
+          <label>Instructions - what the AI should do when this skill is on
+            <textarea name="instructions" maxlength="8000" placeholder="Plan 7 days of dinners for the number of people I give. Keep each under 30 minutes. End with a shopping list grouped by aisle." required></textarea></label>
+          <label>Trigger words (optional, comma-separated) - the skill also switches on when a message contains one
+            <input name="triggers" maxlength="400" placeholder="meal plan, dinner ideas, shopping list" /></label>
+          <div class="row" style="margin:0">
+            <button class="btn primary" type="submit">Save skill</button>
+            <button class="btn" type="button" id="cancelSkill">Cancel</button>
+            <span class="status" id="skillStatus"></span>
+          </div>
+        </form>
+        <h2>Your skills</h2>
+        <div class="grid" id="mySkills"></div>
+        <h2 id="pluginSkillsHead" hidden>From your plugins</h2>
+        <div class="grid" id="pluginSkills"></div>
+        <h2>Built in</h2>
+        <div class="grid" id="builtinSkills"></div>
+      </section>
+
+      <section data-panel="connectors" hidden>
+        <p class="muted" style="margin:0 0 4px">Press <strong>Connect</strong> and sign in to the app - that's it. Then mention the app in a chat (for example <em>"find my Notion notes about the launch"</em>) and the AI can use it.</p>
+        <p class="muted" id="appCount" style="margin:0"></p>
+        <div id="appGroups"></div>
+      </section>
+
+      <section data-panel="plugins" hidden>
+        <p class="muted" style="margin:0">A plugin adds a set of skills in one click and lists the apps they work best with.</p>
+        <div class="grid" id="pluginGrid" style="margin-top:16px"></div>
+      </section>
+    </main>
+
+    <script>
+    (() => {
+      const $ = (s, el = document) => el.querySelector(s);
+      let data = null;
+      let editing = null;
+
+      function el(tag, attrs = {}, ...kids) {
+        const n = document.createElement(tag);
+        for (const [k, v] of Object.entries(attrs)) {
+          if (k === "class") n.className = v;
+          else if (k === "text") n.textContent = v;
+          else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+          else if (v !== undefined && v !== null && v !== false) n.setAttribute(k, v === true ? "" : v);
+        }
+        for (const kid of kids) if (kid) n.append(kid);
+        return n;
+      }
+
+      function banner(text, kind) {
+        const b = $("#banner");
+        b.textContent = text;
+        b.className = "banner " + (kind || "");
+        b.hidden = !text;
+        if (text) window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+
+      async function api(method, url, body) {
+        const r = await fetch(url, {
+          method, headers: body ? { "Content-Type": "application/json" } : {},
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        let d = {};
+        try { d = await r.json(); } catch (e) {}
+        if (!r.ok) throw new Error(d.error || ("Something went wrong (" + r.status + ")."));
+        return d;
+      }
+
+      function selectTab(name) {
+        document.querySelectorAll("[role=tab]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
+        document.querySelectorAll("[data-panel]").forEach(p => { p.hidden = p.dataset.panel !== name; });
+        const u = new URL(location.href);
+        u.searchParams.set("tab", name);
+        history.replaceState(null, "", u.pathname + "?" + u.searchParams.toString());
+      }
+      document.querySelectorAll("[role=tab]").forEach(b => b.addEventListener("click", () => selectTab(b.dataset.tab)));
+
+      // ---------------------------------------------------------- skills
+      function skillCard(s, extra) {
+        return el("div", { class: "card" },
+          el("div", { class: "card-head" },
+            el("span", { class: "emoji", "aria-hidden": "true", text: s.icon || "✨" }),
+            el("div", { style: "min-width:0" },
+              el("h3", { text: s.title }),
+              s.handled_by ? el("span", { class: "muted", text: "Automatic" })
+                           : el("code", { text: "/" + (s.slug || s.id) }))),
+          el("p", { text: s.description || "" }),
+          extra || null);
+      }
+
+      function renderSkills() {
+        const mine = $("#mySkills"); mine.replaceChildren();
+        if (!data.mine.length) {
+          mine.append(el("p", { class: "muted", text: data.signed_in
+            ? "No skills yet. Press “New skill” to teach the AI something you ask for often."
+            : "Sign in to write your own skills." }));
+        }
+        for (const s of data.mine) {
+          const toggle = el("button", { class: "btn", type: "button", text: s.enabled ? "Turn off" : "Turn on",
+            onclick: async () => { try { await api("PUT", "/api/skills/" + s.id, { enabled: !s.enabled }); load(); } catch (e) { banner(e.message, "err"); } } });
+          const edit = el("button", { class: "btn", type: "button", text: "Edit", onclick: () => openForm(s) });
+          const del = el("button", { class: "btn danger", type: "button", text: "Delete",
+            onclick: async () => { if (!confirm("Delete the /" + s.slug + " skill?")) return;
+              try { await api("DELETE", "/api/skills/" + s.id); load(); } catch (e) { banner(e.message, "err"); } } });
+          const card = skillCard({ ...s, icon: "✨" }, el("div", { class: "row" },
+            el("span", { class: "pill " + (s.enabled ? "ok" : ""), text: s.enabled ? "On" : "Off" }), toggle, edit, del));
+          mine.append(card);
+        }
+        const fromPlugins = data.active.filter(s => s.source.startsWith("plugin:"));
+        $("#pluginSkillsHead").hidden = !fromPlugins.length;
+        $("#pluginSkills").replaceChildren(...fromPlugins.map(s => skillCard(s)));
+        $("#builtinSkills").replaceChildren(...data.builtin.map(s => skillCard(s)));
+        $("#newSkill").disabled = !data.signed_in;
+      }
+
+      function openForm(s) {
+        editing = s || null;
+        const f = $("#skillForm");
+        f.hidden = false;
+        f.elements.title.value = s ? s.title : "";
+        f.elements.slug.value = s ? s.slug : "";
+        f.elements.description.value = s ? s.description : "";
+        f.elements.instructions.value = s ? s.instructions : "";
+        f.elements.triggers.value = s ? s.triggers : "";
+        $("#skillStatus").textContent = "";
+        f.elements.title.focus();
+      }
+      $("#newSkill").addEventListener("click", () => openForm(null));
+      $("#cancelSkill").addEventListener("click", () => { $("#skillForm").hidden = true; editing = null; });
+      $("#skillForm").addEventListener("input", (e) => {
+        const f = $("#skillForm");
+        if (e.target === f.elements.title && !editing && !f.elements.slug.dataset.touched) {
+          f.elements.slug.value = f.elements.title.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32);
+        }
+        if (e.target === f.elements.slug) f.elements.slug.dataset.touched = "1";
+      });
+      $("#skillForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const f = e.target;
+        const body = { title: f.elements.title.value, slug: f.elements.slug.value, description: f.elements.description.value,
+                       instructions: f.elements.instructions.value, triggers: f.elements.triggers.value };
+        try {
+          if (editing) await api("PUT", "/api/skills/" + editing.id, body);
+          else await api("POST", "/api/skills", body);
+          f.hidden = true; editing = null; delete f.elements.slug.dataset.touched;
+          banner("Saved. Type /" + body.slug + " in a chat to use it.", "ok");
+          load();
+        } catch (err) { $("#skillStatus").textContent = err.message; }
+      });
+
+      // ---------------------------------------------------------- connectors
+      async function connect(app, btn) {
+        if (!data.signed_in) { banner("Sign in first, then press Connect.", "err"); return; }
+        btn.disabled = true; btn.textContent = "Connecting…";
+        try {
+          const d = await api("POST", "/api/apps/" + encodeURIComponent(app.id) + "/connect");
+          if (d.redirect) { location.href = d.redirect; return; }
+          banner(app.title + " is connected. Mention it in a chat to use it.", "ok");
+          load();
+        } catch (e) { banner(e.message, "err"); btn.disabled = false; btn.textContent = "Connect"; }
+      }
+
+      function appCard(a) {
+        const c = a.connection;
+        const tile = el("span", { class: "tile", style: "background:" + a.color, "aria-hidden": "true", text: a.title[0] });
+        const row = el("div", { class: "row" });
+        if (!c) {
+          const b = el("button", { class: "btn primary", type: "button", text: "Connect" });
+          b.addEventListener("click", () => connect(a, b));
+          row.append(b, el("span", { class: "muted", text: a.signin ? "Sign in with " + a.title : "No sign-in needed" }));
+        } else if (c.status !== "ok") {
+          const b = el("button", { class: "btn primary", type: "button", text: "Reconnect" });
+          b.addEventListener("click", () => connect(a, b));
+          row.append(el("span", { class: "pill warn", text: "Needs sign-in" }), b);
+        } else {
+          const refresh = el("button", { class: "btn", type: "button", text: "Refresh" });
+          refresh.addEventListener("click", async () => {
+            refresh.disabled = true;
+            try { await api("POST", "/api/apps/connections/" + c.id + "/refresh"); load(); }
+            catch (e) { banner(e.message, "err"); refresh.disabled = false; }
+          });
+          const off = el("button", { class: "btn danger", type: "button", text: "Disconnect" });
+          off.addEventListener("click", async () => {
+            if (!confirm("Disconnect " + a.title + "?")) return;
+            try { await api("DELETE", "/api/apps/connections/" + c.id); load(); } catch (e) { banner(e.message, "err"); }
+          });
+          row.append(el("span", { class: "pill ok", text: "Connected" }), refresh, off);
+        }
+        const tools = c && c.tools && c.tools.length
+          ? el("details", {}, el("summary", { class: "tools", text: c.tools.length + " tools" }),
+              el("div", { class: "chips", style: "margin-top:6px" }, ...c.tools.map(t => el("span", { class: "chip", title: t.description, text: t.title || t.name }))))
+          : null;
+        return el("div", { class: "card", id: "app-" + a.id },
+          el("div", { class: "card-head" }, tile, el("h3", { text: a.title })),
+          el("p", { text: a.description }), tools, row);
+      }
+
+      function renderApps() {
+        const groups = {};
+        for (const a of data.apps) (groups[a.category] = groups[a.category] || []).push(a);
+        const wanted = new Set(data.plugins.filter(p => p.installed).flatMap(p => p.app_list.map(x => x.id)));
+        const out = $("#appGroups"); out.replaceChildren();
+        const recommended = data.apps.filter(a => wanted.has(a.id) && !a.connection);
+        if (recommended.length) {
+          out.append(el("h2", { text: "Suggested by your plugins" }), el("div", { class: "grid" }, ...recommended.map(appCard)));
+        }
+        for (const [cat, apps] of Object.entries(groups)) {
+          out.append(el("h2", { text: cat }), el("div", { class: "grid" }, ...apps.filter(a => !recommended.includes(a)).map(appCard)));
+        }
+        const n = data.apps.filter(a => a.connection).length;
+        $("#appCount").textContent = data.signed_in ? n + " of " + data.limits.apps + " apps connected on your plan." : "";
+      }
+
+      // ---------------------------------------------------------- plugins
+      function renderPlugins() {
+        $("#pluginGrid").replaceChildren(...data.plugins.map(p => {
+          const b = el("button", { class: "btn " + (p.installed ? "" : "primary"), type: "button", text: p.installed ? "Uninstall" : "Install" });
+          b.addEventListener("click", async () => {
+            if (!data.signed_in) { banner("Sign in first to install plugins.", "err"); return; }
+            b.disabled = true;
+            try {
+              await api(p.installed ? "DELETE" : "POST", "/api/plugins/" + p.id);
+              if (!p.installed) banner(p.title + " installed. Its skills are on - connect its apps in the Connectors tab.", "ok");
+              await load();
+            } catch (e) { banner(e.message, "err"); b.disabled = false; }
+          });
+          return el("div", { class: "card" },
+            el("div", { class: "card-head" }, el("span", { class: "emoji", "aria-hidden": "true", text: p.icon }),
+              el("h3", { text: p.title }), p.installed ? el("span", { class: "pill ok", text: "Installed" }) : null),
+            el("p", { text: p.description }),
+            el("div", {}, el("div", { class: "muted", text: "Skills" }),
+              el("div", { class: "chips" }, ...p.skill_list.map(s => el("span", { class: "chip", text: s.title })))),
+            p.app_list.length ? el("div", {}, el("div", { class: "muted", text: "Works with" }),
+              el("div", { class: "chips" }, ...p.app_list.map(a => el("span", { class: "chip", text: a.title })))) : null,
+            el("div", { class: "row" }, b));
+        }));
+      }
+
+      async function load() {
+        data = await api("GET", "/api/extensions");
+        renderSkills(); renderApps(); renderPlugins();
+      }
+
+      const q = new URLSearchParams(location.search);
+      selectTab(["skills", "connectors", "plugins"].includes(q.get("tab")) ? q.get("tab") : "skills");
+      if (q.get("error")) banner(q.get("error"), "err");
+      load().then(() => {
+        const done = q.get("connected");
+        if (done) {
+          const a = data.apps.find(x => x.id === done);
+          banner((a ? a.title : "The app") + " is connected. Mention it in a chat to use it.", "ok");
+        }
+      }).catch(e => banner(e.message, "err"));
+    })();
+    </script>
+  </body>
+</html>

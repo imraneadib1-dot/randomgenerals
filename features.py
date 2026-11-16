@@ -124,6 +124,12 @@ FEATURES = {
         # connectors.py resolves and re-checks every host against the
         # private ranges.
         "max_connectors": 1,
+        # One-click apps (MCP) and skills people write themselves -
+        # extensions.py. Apps only reach the prompt when a message
+        # mentions them, so these can be more generous than the
+        # paste-a-link connectors above.
+        "max_apps": 3,
+        "max_skills": 5,
     },
     PRO: {
         "max_output_tokens_code": 8000,
@@ -158,6 +164,8 @@ FEATURES = {
         "terminal_timeout_seconds": 1800,
         "external_connectors": True,
         "max_connectors": 8,
+        "max_apps": 30,
+        "max_skills": 50,
     },
 }
 

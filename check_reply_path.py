@@ -432,10 +432,16 @@ def fake_turn(*replies):
 
 
 def send_pip(tid, text):
-    return client.post("/api/chat", json={
+    r = client.post("/api/chat", json={
         "thread_id": tid, "provider": "pip", "model": "fake-pip",
         "message": text,
     })
+    # Read the whole stream, as a browser does. The test client only
+    # runs a streamed reply up to its first chunk otherwise, and a reply
+    # that opens with a status row (a skill switching on) would never
+    # reach the part that saves it.
+    r.get_data()
+    return r
 
 
 appmod.PROVIDER_TURNS["pip"] = fake_turn(

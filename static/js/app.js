@@ -30,6 +30,7 @@ import { mountAccount } from "./account.js";
 import { mountConnectors, mountApiKey } from "./connectors.js";
 import { mountInstall } from "./install.js";
 import { mountProfile } from "./profile.js";
+import { mountSlashMenu } from "./slashmenu.js";
 import { boot } from "./boot.js";
 import { installErrorReporting } from "./toast.js";
 
@@ -62,6 +63,7 @@ mountConnectors();
 mountApiKey();
 mountInstall();
 mountProfile();
+mountSlashMenu();
 
 // Anything nobody caught becomes a toast, not a console line.
 installErrorReporting();

@@ -65,6 +65,8 @@ import tripo3d  # noqa: E402  text-to-3D generation - see tripo3d.py
 import higgsfield_api  # noqa: E402  Higgsfield Cloud video - see higgsfield_api.py
 import videogen  # noqa: E402  the video job engine - see videogen.py
 import tools  # noqa: E402  model-callable tools - see tools.py
+import extensions  # noqa: E402  skills, one-click apps and plugins - see extensions.py
+import connections  # noqa: E402  connected apps (MCP) - see connections.py
 from agents import router as agent_router  # noqa: E402  who is answering well right now
 try:
     from brain import intent as brain_intent  # noqa: E402  the triage model
@@ -5067,6 +5069,9 @@ BAY_ROUTES = {
         # and then the local ones carry the bay when the ceiling is
         # reached or no OpenRouter key is set.
         ("pip", "pip-1.0"),
+        # DeepSeek V4 Pro, the owner's choice for code, while it has
+        # credit (openrouter_api.deepseek_ready).
+        ("openrouter", "deepseek-v4-pro"),
         # Groq next: gpt-oss-120b on dedicated accelerators streams at
         # hundreds of tokens a second, and the key costs nothing. It is
         # what answers "make me a website" in seconds while the engine
@@ -5091,6 +5096,7 @@ BAY_ROUTES = {
         # bought about $10 of credit once, 1,000 after. They are what
         # answers while the engine is down, not a second default.
         ("pip", "pip-1.0"),
+        ("openrouter", "deepseek-v4.1-flash"),
         ("groq", "gpt-oss-120b"),
         ("openrouter", "nemotron-3-ultra-550b-a55b:free"),
         ("openrouter", "glm-5.2:free"),
@@ -5336,6 +5342,27 @@ def _groq_only() -> bool:
     return groq_api.configured() and bool(groq_api.models())
 
 
+def _deepseek_model_for(mode: str, strength: str = "") -> str | None:
+    """DEEPSEEK FIRST, wherever it can answer - the owner's choice.
+
+    V4 Pro for the code bay, Deep mode and website builds; V4.1 Flash
+    for chat. None when neither can answer right now (no key, no credit,
+    today's ceiling reached, or not switched on with DEEPSEEK_PRIMARY=1),
+    and the caller falls through to Groq exactly as before.
+    """
+    pro, flash = openrouter_api.PRO_MODEL, openrouter_api.FLASH_MODEL
+    wanted = pro if (mode == "code" or strength == "deep") else flash
+    for m in (wanted, pro if wanted == flash else flash):
+        if openrouter_api.deepseek_ready(m):
+            return m
+    return None
+
+
+def _is_deepseek(provider: str, model: str) -> bool:
+    return provider == "openrouter" and model in (
+        openrouter_api.PRO_MODEL, openrouter_api.FLASH_MODEL)
+
+
 def _groq_fallbacks(model: str) -> list[tuple[str, str]]:
     """Other Groq text models to try when `model` is rate-limited.
     Groq meters each model separately, so the smaller one usually still
@@ -5406,6 +5433,11 @@ def _failover_chain(provider: str, mode: str) -> list[tuple[str, str]]:
     it. Checking budget here would only refuse a channel a second
     before it refused itself.
     """
+    if provider == "openrouter" and _groq_only():
+        # DeepSeek refused (no credit, an outage, an empty reply): Groq's
+        # main model takes it, then Groq's others.
+        main = _groq_model_for(mode) or ""
+        return ([("groq", main)] if main else []) + _groq_fallbacks(main)
     if _groq_only():
         return _groq_fallbacks(_groq_model_for(mode) or "")
     chain: list[tuple[str, str]] = []
@@ -5616,7 +5648,9 @@ def _recommended_routes(providers, plan=None):
                  # picker that cannot answer. Ask the same guard the
                  # request will ask.
                  and (provider_id != "openrouter"
-                      or openrouter_api.budget_ok(m))
+                      or (openrouter_api.budget_ok(m)
+                          and (openrouter_api.is_free(m)
+                               or openrouter_api.has_credit())))
                  and (provider_id != "groq" or _groq_only()
                       or _groq_has_room(plan))), None)
             if not match:
@@ -5701,7 +5735,24 @@ def list_providers():
                      "account and are capped at about 50 requests a day."),
         })
 
-    if _groq_only():
+    v4 = [m for m in (openrouter_api.PRO_MODEL, openrouter_api.FLASH_MODEL)
+          if openrouter_api.deepseek_ready(m)]
+    if v4:
+        # DeepSeek answers every text message while it has credit
+        # (_stream_reply), so the picker shows what is answering: the
+        # two V4 models and nothing else. Groq stays behind them as the
+        # backup and returns to the picker when the credit runs out.
+        providers = [{
+            "id": "openrouter",
+            "label": "DeepSeek",
+            "available": True,
+            "models": v4,
+            "model_info": [describe_model(m, plan) for m in v4],
+            "note": ("DeepSeek V4: Pro writes code and websites, Flash "
+                     "answers chat. RandomGenerals Turbo takes over if "
+                     "it is unavailable."),
+        }]
+    elif _groq_only():
         providers = [p for p in providers if p["id"] == "groq"]
     live = [p for p in providers if p["available"]]
     if live:
@@ -6258,17 +6309,37 @@ def max_connectors(plan):
 # guard and the actual calling all live in connectors.py; what is here is
 # the plumbing between that and a chat turn.
 # ----------------------------------------------------------------------
-def _connector_tools(owner_id):
+def _recent_user_text(thread, turns=3):
+    """The last few things the person said, for deciding which connected
+    apps this conversation is about."""
+    said = [m.get("content") or "" for m in (thread.get("messages") or [])
+            if m.get("role") == "user" and isinstance(m.get("content"), str)]
+    return "\n".join(said[-turns:])
+
+
+def _skills_for_turn(owner_id, text):
+    """The skills this message switches on (extensions.match_skills)."""
+    try:
+        mine = db.skills_for(owner_id)
+        installed = db.plugins_for(owner_id)
+    except Exception:                       # noqa: BLE001 - skills are an extra
+        mine, installed = [], []
+    return extensions.match_skills(text, extensions.active_skills(mine, installed))
+
+
+def _connector_tools(owner_id, text=""):
     """-> (tool specs, {tool name: connector}).
 
     The map is what turns a tool name back into the connection it came
-    from, including its token, which never leaves the server.
+    from, including its token, which never leaves the server. One-click
+    apps (connections.py) are included when `text` - the recent
+    messages - mentions them.
     """
-    specs, by_name = [], {}
+    specs, by_name = connections.tools_for_turn(owner_id, text) if text else ([], {})
     try:
         saved = db.load_connectors(owner_id, with_tokens=True)
     except Exception:                       # noqa: BLE001
-        return [], {}
+        return specs, by_name
     for item in saved:
         spec = connectors.tool_spec(item)
         name = spec["function"]["name"]
@@ -6287,6 +6358,16 @@ def _dispatch_tool(name, raw_args, connector_map):
     item = (connector_map or {}).get(name)
     if item is None:
         return tools.dispatch(name, raw_args)
+    if item.get("kind") == "mcp":
+        try:
+            args = raw_args if isinstance(raw_args, dict) else json.loads(raw_args or "{}")
+        except (ValueError, TypeError):
+            return {"text": "Your arguments were not valid JSON. Call the "
+                            "tool again with correct JSON.", "display": None}
+        if not isinstance(args, dict):
+            return {"text": "Arguments must be a JSON object.", "display": None}
+        return {"text": connections.call(item["owner_id"], item["conn_id"],
+                                         item["tool"], args), "display": None}
     if isinstance(raw_args, dict):
         args = raw_args
     else:
@@ -7406,7 +7487,11 @@ def _run_tool_loop(model: str, history: list[dict], specs: list[dict],
         for call in calls:
             fn = (call.get("function") or {})
             name = fn.get("name") or ""
-            yield tool_event({"tool": name, "status": "start"})
+            route = (connector_map or {}).get(name) or {}
+            label = ("%s: %s" % (route["app_title"], route["tool_title"])
+                     if route.get("kind") == "mcp" else None)
+            yield tool_event({"tool": name, "status": "start", "label": label}
+                             if label else {"tool": name, "status": "start"})
             tool_result = _dispatch_tool(name, fn.get("arguments"),
                                          connector_map)
             display = tool_result.get("display")
@@ -7422,8 +7507,10 @@ def _run_tool_loop(model: str, history: list[dict], specs: list[dict],
             # the browser at all. The model is told the image "is
             # already shown to the user" (tools.py) - that was untrue
             # until this event carried it.
-            yield tool_event({"tool": name, "status": "done",
-                              "display": display})
+            done = {"tool": name, "status": "done", "display": display}
+            if label:
+                done["label"] = "Used " + label
+            yield tool_event(done)
             result.convo.append({
                 "role": "tool",
                 "tool_call_id": call.get("id"),
@@ -7770,6 +7857,13 @@ def _auto_continue(provider, model, history, so_far, usage, kwargs):
             {"role": "user", "content": CONTINUE_PROMPT},
         ]
         row = "continue-%d" % part
+        if provider == "openrouter" and not openrouter_api.has_credit():
+            # DeepSeek ran out of credit part-way through a long reply:
+            # Groq writes the rest rather than the reply waiting on a
+            # balance nobody is about to top up.
+            fast = _groq_model_for("code")
+            if fast:
+                provider, model = "groq", fast
         yield stream_event({"tool": row, "status": "start",
                             "label": "Writing part %d of the reply" % part})
         attempts = 0
@@ -7874,9 +7968,15 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
         if seer_provider and seer_model:
             provider, model = seer_provider, seer_model
 
-    if _groq_only() and (provider != "groq" or not (
+    wants_sight = may_see and any(f["kind"] == "image" for f in files)
+    # DeepSeek answers every text message while it has credit (see
+    # _deepseek_model_for). It cannot see, so a message with a picture
+    # keeps the vision route below.
+    deepseek = None if wants_sight else _deepseek_model_for(mode, strength)
+    if deepseek:
+        provider, model = "openrouter", deepseek
+    elif _groq_only() and (provider != "groq" or not (
             model in groq_api.models() or model in groq_api.vision_models())):
-        wants_sight = may_see and any(f["kind"] == "image" for f in files)
         seer = (_vision_route() if wants_sight else (None, None))
         if seer[0] == "groq":
             provider, model = seer
@@ -7952,6 +8052,12 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     nudge = STRENGTH_LEVELS[strength]["nudge"]
     if nudge:
         system_prompt = system_prompt + "\n\n" + nudge
+    # SKILLS (extensions.py): expert instructions for the job this
+    # message is - picked by /name or by what it asks for. A website
+    # build has its own pipeline and takes none.
+    skills_on = [] if site_job else _skills_for_turn(owner_id, asked)
+    for skill in skills_on:
+        system_prompt = system_prompt + "\n\n" + extensions.skill_block(skill)
 
     history = ([{"role": "system", "content": system_prompt}]
                + _model_history(thread))
@@ -8085,7 +8191,8 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
         # is enforced when one is added rather than here. This stays a
         # flag check so a tier could still switch them off entirely.
         if features.FEATURES[plan]["external_connectors"]:
-            extra, connector_map = _connector_tools(current_owner_id())
+            extra, connector_map = _connector_tools(
+                current_owner_id(), _recent_user_text(thread))
             tool_specs = tool_specs + extra
         # NO TOOL TURN FOR A MESSAGE THAT NEEDS NO TOOL.
         #
@@ -8142,6 +8249,9 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
         reply_kind = "text"
         tools_used = ToolLoopResult(convo=history)
         try:
+            for skill in skills_on:
+                yield stream_event({"tool": "skill-" + skill["id"], "status": "done",
+                                    "label": "Using the %s skill" % skill["title"]})
             if site_job is not None:
                 # A website: planned, written file by file and reviewed
                 # by sitebuilder.py, then saved as a project with a card.
@@ -8548,7 +8658,15 @@ def _builder_llm(usage: dict):
         else:
             free = _openrouter_model_for("code")
             order = [("openrouter", free)] if free else []
-        order = [o for o in order if o[1] not in daily_out] or order
+        # DeepSeek V4 Pro writes the site while the key has credit; the
+        # Groq models above stay behind it, so running out of credit
+        # mid-build finishes the build there instead of failing it.
+        deepseek = _deepseek_model_for("code")
+        if deepseek and not any(m == deepseek for _, m in order):
+            order = [("openrouter", deepseek)] + order
+        order = [o for o in order if o[1] not in daily_out
+                 and not (o[0] == "openrouter" and not openrouter_api.is_free(o[1])
+                          and not openrouter_api.has_credit())] or order
         if not order:
             raise RuntimeError("No model is available to build with.")
         opts = {"num_predict": max_tokens, "temperature": 0.4,
@@ -8894,6 +9012,226 @@ def sites_page():
     return render_template("sites.html", sites=sites,
                            signed_in=_signed_in(),
                            domain=PUBLISH_DOMAIN)
+
+
+# ---- skills, connectors and plugins (extensions.py) ----------------
+#
+# One page, /customize, with three tabs; these routes are what it and the
+# composer's "/" menu read and write. Built-in skills work for everyone,
+# signed in or not. Anything that is SAVED - a skill, an installed plugin,
+# a connected app - needs an account, because a guest's identity lives in
+# a session cookie and a connected Notion workspace should not vanish
+# with it.
+def _need_account():
+    if not _signed_in():
+        return jsonify({"error": "Sign in to save skills, plugins and connected apps.",
+                        "signin": True}), 401
+    return None
+
+
+def _plan_limit(key):
+    plan = features.normalize_plan(current_account()[0].get("plan"))
+    return features.FEATURES[plan][key], plan
+
+
+def _skill_view(s):
+    return {"id": s["id"], "title": s["title"], "icon": s.get("icon") or "✨",
+            "description": s.get("description") or "", "source": s.get("source", "builtin"),
+            "handled_by": s.get("handled_by")}
+
+
+@app.route("/customize")
+def customize_page():
+    return render_template("customize.html", signed_in=_signed_in())
+
+
+@app.route("/api/extensions", methods=["GET"])
+def extensions_overview():
+    owner_id = current_owner_id()
+    mine = db.skills_for(owner_id) if _signed_in() else []
+    installed = db.plugins_for(owner_id) if _signed_in() else []
+    active = extensions.active_skills(mine, installed)
+    conns = {c["app_id"]: c for c in (db.connections_for(owner_id) if _signed_in() else [])}
+    plugin_skill_ids = {sid for p in installed for sid in
+                        extensions.PLUGINS_BY_ID.get(p, {}).get("skills", [])}
+    apps = []
+    for a in extensions.available_apps():
+        c = conns.get(a["id"])
+        apps.append({"id": a["id"], "title": a["title"], "category": a["category"],
+                     "description": a["description"], "color": a["color"],
+                     "signin": a["auth"] != "none",
+                     "connection": connections.public(c) if c else None})
+    max_apps, plan = _plan_limit("max_apps")
+    max_skills, _ = _plan_limit("max_skills")
+    return jsonify({
+        "signed_in": _signed_in(),
+        "plan": plan,
+        "limits": {"apps": max_apps, "skills": max_skills},
+        # Everything that is on for this person, for the "/" menu.
+        "active": [_skill_view(s) for s in active],
+        "builtin": [_skill_view(dict(s, source="builtin")) for s in extensions.BUILTIN_SKILLS],
+        "mine": mine,
+        "plugins": [dict(p, installed=p["id"] in installed,
+                         skill_list=[{"id": sid, "title": (extensions.BUILTIN_BY_ID.get(sid)
+                                                           or extensions.PLUGIN_SKILLS.get(sid, {})).get("title", sid)}
+                                     for sid in p["skills"]],
+                         app_list=[{"id": aid, "title": extensions.APPS_BY_ID[aid]["title"]}
+                                   for aid in p["apps"] if aid in extensions.APPS_BY_ID
+                                   and extensions.APPS_BY_ID[aid] in extensions.available_apps()])
+                    for p in extensions.PLUGINS],
+        "plugin_skills": sorted(plugin_skill_ids),
+        "apps": apps,
+    })
+
+
+def _clean_skill(payload, existing=None):
+    """-> (skill dict, error)."""
+    slug = (payload.get("slug") or (existing or {}).get("slug") or "").strip().lower().lstrip("/")
+    title = (payload.get("title") or "").strip()[:80]
+    instructions = (payload.get("instructions") or "").strip()
+    if not extensions.SLUG_RE.match(slug):
+        return None, "The name must be 2-32 lowercase letters, numbers or dashes, like meal-planner."
+    if extensions.reserved_slug(slug):
+        return None, "/%s is already a built-in skill. Pick another name." % slug
+    if not title:
+        return None, "Give the skill a title."
+    if len(instructions) < 10:
+        return None, "Write the instructions the AI should follow (at least a sentence)."
+    if len(instructions) > extensions.MAX_USER_INSTRUCTIONS:
+        return None, "Instructions can be up to %d characters." % extensions.MAX_USER_INSTRUCTIONS
+    triggers = ",".join(w.strip()[:40] for w in (payload.get("triggers") or "").split(",")
+                        if w.strip())[:400]
+    return {"id": (existing or {}).get("id") or uuid.uuid4().hex[:16], "slug": slug,
+            "title": title, "description": (payload.get("description") or "").strip()[:240],
+            "instructions": instructions, "triggers": triggers,
+            "enabled": bool(payload.get("enabled", True))}, None
+
+
+@app.route("/api/skills", methods=["POST"])
+def create_skill():
+    refused = _need_account()
+    if refused:
+        return refused
+    owner_id = current_owner_id()
+    limit, plan = _plan_limit("max_skills")
+    if len(db.skills_for(owner_id)) >= limit:
+        return jsonify({"error": "You can have up to %d skills on this plan%s." % (
+            limit, "" if plan == features.PRO else " - Pro allows %d"
+            % features.FEATURES[features.PRO]["max_skills"]), "upgrade": plan != features.PRO}), 400
+    skill, err = _clean_skill(request.get_json(force=True, silent=True) or {})
+    if err:
+        return jsonify({"error": err}), 400
+    if any(s["slug"] == skill["slug"] for s in db.skills_for(owner_id)):
+        return jsonify({"error": "You already have a skill called /%s." % skill["slug"]}), 400
+    db.skill_save(owner_id, skill, datetime.datetime.now(datetime.timezone.utc).isoformat())
+    return jsonify({"ok": True, "skill": db.skill_get(owner_id, skill["id"])})
+
+
+@app.route("/api/skills/<skill_id>", methods=["PUT", "DELETE"])
+def change_skill(skill_id):
+    refused = _need_account()
+    if refused:
+        return refused
+    owner_id = current_owner_id()
+    existing = db.skill_get(owner_id, skill_id)
+    if not existing:
+        return jsonify({"error": "No such skill."}), 404
+    if request.method == "DELETE":
+        db.skill_delete(owner_id, skill_id)
+        return jsonify({"ok": True})
+    payload = request.get_json(force=True, silent=True) or {}
+    merged = dict(existing, **{k: v for k, v in payload.items()
+                               if k in ("slug", "title", "description", "instructions",
+                                        "triggers", "enabled")})
+    skill, err = _clean_skill(merged, existing)
+    if err:
+        return jsonify({"error": err}), 400
+    if any(s["slug"] == skill["slug"] and s["id"] != skill_id for s in db.skills_for(owner_id)):
+        return jsonify({"error": "You already have a skill called /%s." % skill["slug"]}), 400
+    db.skill_save(owner_id, skill, datetime.datetime.now(datetime.timezone.utc).isoformat())
+    return jsonify({"ok": True, "skill": db.skill_get(owner_id, skill_id)})
+
+
+@app.route("/api/plugins/<plugin_id>", methods=["POST", "DELETE"])
+def toggle_plugin(plugin_id):
+    refused = _need_account()
+    if refused:
+        return refused
+    if plugin_id not in extensions.PLUGINS_BY_ID:
+        return jsonify({"error": "No such plugin."}), 404
+    owner_id = current_owner_id()
+    if request.method == "DELETE":
+        db.plugin_uninstall(owner_id, plugin_id)
+    else:
+        db.plugin_install(owner_id, plugin_id,
+                          datetime.datetime.now(datetime.timezone.utc).isoformat())
+    return jsonify({"ok": True, "installed": request.method == "POST"})
+
+
+LIMIT_CONNECT = Limiter(rate=20, per=600, burst=10)
+
+
+@app.route("/api/apps/<app_id>/connect", methods=["POST"])
+@limited("connect", LIMIT_CONNECT, key=_limit_key_account)
+def connect_app(app_id):
+    """One click: connected at once (apps that need no sign-in), or the
+    address of the app's own sign-in page to send the browser to."""
+    refused = _need_account()
+    if refused:
+        return refused
+    owner_id = current_owner_id()
+    limit, plan = _plan_limit("max_apps")
+    current = db.connections_for(owner_id)
+    if len(current) >= limit and not any(c["app_id"] == app_id for c in current):
+        return jsonify({"error": "You can connect up to %d apps on this plan%s." % (
+            limit, "" if plan == features.PRO else " - Pro allows %d"
+            % features.FEATURES[features.PRO]["max_apps"]), "upgrade": plan != features.PRO}), 400
+    try:
+        kind, value = connections.begin(owner_id, app_id,
+                                        url_for("apps_callback", _external=True))
+    except connections.ConnectError as e:
+        return jsonify({"error": str(e)}), 400
+    if kind == "redirect":
+        return jsonify({"redirect": value})
+    return jsonify({"connected": value})
+
+
+@app.route("/api/apps/callback")
+def apps_callback():
+    """Where an app's sign-in page sends the browser back."""
+    if request.args.get("error"):
+        return redirect("/customize?tab=connectors&error=" + urllib.parse.quote(
+            "The sign-in was cancelled or refused (%s)." % request.args.get("error")[:60]))
+    if not _signed_in():
+        return redirect("/customize?tab=connectors&error=" + urllib.parse.quote(
+            "Sign in to RandomGenerals first, then press Connect again."))
+    try:
+        item = connections.finish(current_owner_id(), request.args.get("state", ""),
+                                  request.args.get("code", ""))
+    except connections.ConnectError as e:
+        return redirect("/customize?tab=connectors&error=" + urllib.parse.quote(str(e)))
+    return redirect("/customize?tab=connectors&connected=" + urllib.parse.quote(item["app_id"]))
+
+
+@app.route("/api/apps/connections/<conn_id>/refresh", methods=["POST"])
+def refresh_app(conn_id):
+    refused = _need_account()
+    if refused:
+        return refused
+    try:
+        return jsonify({"connection": connections.refresh_tools(current_owner_id(), conn_id)})
+    except connections.ConnectError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/apps/connections/<conn_id>", methods=["DELETE"])
+def disconnect_app(conn_id):
+    refused = _need_account()
+    if refused:
+        return refused
+    if not db.connection_delete(current_owner_id(), conn_id):
+        return jsonify({"error": "No such connection."}), 404
+    return jsonify({"ok": True})
 
 
 # ---- serving a published site --------------------------------------

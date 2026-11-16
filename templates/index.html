@@ -237,6 +237,10 @@
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5" stroke="currentColor" stroke-width="1.7"/><path d="M3 9h18M7 6.5h.01M10 6.5h.01" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
               <span>Your sites</span>
             </a>
+            <a class="profile-menu-item" id="profileCustomize" role="menuitem" href="/customize">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="2" stroke="currentColor" stroke-width="1.7"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2" stroke="currentColor" stroke-width="1.7"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2" stroke="currentColor" stroke-width="1.7"/><path d="M17.25 13.5v7.5M13.5 17.25H21" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+              <span>Skills, apps &amp; plugins</span>
+            </a>
             <button type="button" class="profile-menu-item" id="profileAppearance" role="menuitem">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18c1 0 1.5-.8 1.5-1.6 0-.5-.2-.9-.5-1.2a1.7 1.7 0 0 1 1.3-2.8H16a5 5 0 0 0 5-5c0-4-4-7.4-9-7.4Z" stroke="currentColor" stroke-width="1.7"/><circle cx="7.5" cy="11" r="1.2" fill="currentColor"/><circle cx="10.5" cy="7.5" r="1.2" fill="currentColor"/><circle cx="15" cy="7.5" r="1.2" fill="currentColor"/></svg>
               <span>Appearance</span>
@@ -647,8 +651,18 @@
                     <small>Every readable file inside</small>
                   </span>
                 </button>
+                <a class="composer-menu-item" id="customizeLink" role="menuitem" href="/customize?tab=connectors">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <rect x="3" y="3" width="7.5" height="7.5" rx="2" stroke="currentColor" stroke-width="1.8"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2" stroke="currentColor" stroke-width="1.8"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M17.25 13.5v7.5M13.5 17.25H21" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                  </svg>
+                  <span class="composer-menu-text">
+                    <span>Skills &amp; apps</span>
+                    <small>Connect Notion, Linear, Stripe…</small>
+                  </span>
+                </a>
               </div>
             </div>
+            <div class="slash-menu" id="slashMenu" role="listbox" aria-label="Skills" hidden></div>
             <textarea
               id="messageInput"
               class="composer-input"

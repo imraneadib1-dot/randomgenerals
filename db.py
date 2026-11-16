@@ -590,6 +590,79 @@ CREATE TABLE IF NOT EXISTS site_submissions (
     created   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_site_submissions ON site_submissions(site_id, created);
+
+-- SKILLS, PLUGINS AND APP CONNECTIONS (extensions.py, mcp_client.py).
+--
+-- A skill someone wrote: instructions applied when they type /slug, or
+-- when a message contains one of its comma-separated trigger words.
+CREATE TABLE IF NOT EXISTS user_skills (
+    id           TEXT PRIMARY KEY,
+    owner_id     TEXT NOT NULL,
+    slug         TEXT NOT NULL,
+    title        TEXT NOT NULL,
+    description  TEXT NOT NULL DEFAULT '',
+    instructions TEXT NOT NULL DEFAULT '',
+    triggers     TEXT NOT NULL DEFAULT '',
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    created      TEXT NOT NULL,
+    updated      TEXT NOT NULL,
+    UNIQUE (owner_id, slug)
+);
+
+CREATE TABLE IF NOT EXISTS user_plugins (
+    owner_id  TEXT NOT NULL,
+    plugin_id TEXT NOT NULL,
+    installed TEXT NOT NULL,
+    PRIMARY KEY (owner_id, plugin_id)
+);
+
+-- One connected app (an MCP server). The sign-in tokens are kept in
+-- `secret` - AES-GCM encrypted under SETTINGS_ENCRYPTION_KEY when the
+-- server has one (secret_enc = 1), as plain JSON otherwise - and never
+-- leave the server. `tools` is the server's tool list, cached at
+-- connect time and refreshed on demand.
+CREATE TABLE IF NOT EXISTS app_connections (
+    id         TEXT PRIMARY KEY,
+    owner_id   TEXT NOT NULL,
+    app_id     TEXT NOT NULL,
+    title      TEXT NOT NULL,
+    url        TEXT NOT NULL,
+    auth_json  TEXT NOT NULL DEFAULT '{}',
+    secret     BLOB,
+    nonce      BLOB,
+    secret_enc INTEGER NOT NULL DEFAULT 0,
+    tools_json TEXT NOT NULL DEFAULT '[]',
+    status     TEXT NOT NULL DEFAULT 'ok',
+    created    TEXT NOT NULL,
+    updated    TEXT NOT NULL,
+    UNIQUE (owner_id, app_id)
+);
+
+-- This site's registration with each app's sign-in server (dynamic
+-- client registration), shared by every user: RandomGenerals registers
+-- once per app and redirect address, not once per person.
+CREATE TABLE IF NOT EXISTS app_clients (
+    issuer        TEXT NOT NULL,
+    redirect_uri  TEXT NOT NULL,
+    client_id     TEXT NOT NULL,
+    client_secret TEXT NOT NULL DEFAULT '',
+    created       TEXT NOT NULL,
+    PRIMARY KEY (issuer, redirect_uri)
+);
+
+-- A sign-in in progress: the state sent to the app and the PKCE
+-- verifier needed to finish it. Deleted when used; ignored after 15
+-- minutes.
+CREATE TABLE IF NOT EXISTS app_signins (
+    state     TEXT PRIMARY KEY,
+    owner_id  TEXT NOT NULL,
+    app_id    TEXT NOT NULL,
+    verifier  TEXT NOT NULL,
+    auth_json TEXT NOT NULL,
+    client_id TEXT NOT NULL,
+    redirect  TEXT NOT NULL,
+    created   REAL NOT NULL
+);
 """
 
 
@@ -2686,3 +2759,205 @@ def submission_count(site_id):
         "SELECT COUNT(*) AS n FROM site_submissions WHERE site_id = ?",
         (site_id,)).fetchone()
     return row["n"] if row else 0
+
+
+# ----------------------------------------------------------------------
+# Skills, plugins and app connections
+# ----------------------------------------------------------------------
+def _skill_row(r):
+    return {"id": r["id"], "slug": r["slug"], "title": r["title"],
+            "description": r["description"], "instructions": r["instructions"],
+            "triggers": r["triggers"], "enabled": bool(r["enabled"]),
+            "created": r["created"], "updated": r["updated"]}
+
+
+def skills_for(owner_id):
+    rows = _connect().execute(
+        "SELECT * FROM user_skills WHERE owner_id = ? ORDER BY created",
+        (owner_id,)).fetchall()
+    return [_skill_row(r) for r in rows]
+
+
+def skill_get(owner_id, skill_id):
+    r = _connect().execute(
+        "SELECT * FROM user_skills WHERE owner_id = ? AND id = ?",
+        (owner_id, skill_id)).fetchone()
+    return _skill_row(r) if r else None
+
+
+def skill_save(owner_id, skill, now):
+    """Insert or update one skill. Raises sqlite3.IntegrityError when the
+    slug is already used by another of this owner's skills."""
+    conn = _connect()
+    with _lock:
+        conn.execute(
+            "INSERT INTO user_skills (id, owner_id, slug, title, description, "
+            "instructions, triggers, enabled, created, updated) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET slug = excluded.slug, "
+            "title = excluded.title, description = excluded.description, "
+            "instructions = excluded.instructions, triggers = excluded.triggers, "
+            "enabled = excluded.enabled, updated = excluded.updated",
+            (skill["id"], owner_id, skill["slug"], skill["title"],
+             skill.get("description", ""), skill.get("instructions", ""),
+             skill.get("triggers", ""), 1 if skill.get("enabled", True) else 0,
+             now, now))
+        conn.commit()
+
+
+def skill_delete(owner_id, skill_id):
+    conn = _connect()
+    with _lock:
+        cur = conn.execute("DELETE FROM user_skills WHERE owner_id = ? AND id = ?",
+                           (owner_id, skill_id))
+        conn.commit()
+    return (cur.rowcount or 0) > 0
+
+
+def plugins_for(owner_id):
+    rows = _connect().execute(
+        "SELECT plugin_id FROM user_plugins WHERE owner_id = ? ORDER BY installed",
+        (owner_id,)).fetchall()
+    return [r["plugin_id"] for r in rows]
+
+
+def plugin_install(owner_id, plugin_id, now):
+    conn = _connect()
+    with _lock:
+        conn.execute("INSERT OR IGNORE INTO user_plugins (owner_id, plugin_id, installed) "
+                     "VALUES (?, ?, ?)", (owner_id, plugin_id, now))
+        conn.commit()
+
+
+def plugin_uninstall(owner_id, plugin_id):
+    conn = _connect()
+    with _lock:
+        cur = conn.execute("DELETE FROM user_plugins WHERE owner_id = ? AND plugin_id = ?",
+                           (owner_id, plugin_id))
+        conn.commit()
+    return (cur.rowcount or 0) > 0
+
+
+def _conn_row(r, with_secret=False):
+    item = {"id": r["id"], "app_id": r["app_id"], "title": r["title"],
+            "url": r["url"], "status": r["status"],
+            "created": r["created"], "updated": r["updated"]}
+    try:
+        item["auth"] = json.loads(r["auth_json"] or "{}")
+    except (ValueError, TypeError):
+        item["auth"] = {}
+    try:
+        item["tools"] = json.loads(r["tools_json"] or "[]")
+    except (ValueError, TypeError):
+        item["tools"] = []
+    if with_secret:
+        item["secret"] = r["secret"]
+        item["nonce"] = r["nonce"]
+        item["secret_enc"] = bool(r["secret_enc"])
+    return item
+
+
+def connections_for(owner_id, with_secret=False):
+    rows = _connect().execute(
+        "SELECT * FROM app_connections WHERE owner_id = ? ORDER BY created",
+        (owner_id,)).fetchall()
+    return [_conn_row(r, with_secret) for r in rows]
+
+
+def connection_get(owner_id, conn_id, with_secret=False):
+    r = _connect().execute(
+        "SELECT * FROM app_connections WHERE owner_id = ? AND id = ?",
+        (owner_id, conn_id)).fetchone()
+    return _conn_row(r, with_secret) if r else None
+
+
+def connection_save(owner_id, item, now):
+    """Insert the connection for (owner, app), or replace it."""
+    conn = _connect()
+    with _lock:
+        conn.execute(
+            "INSERT INTO app_connections (id, owner_id, app_id, title, url, auth_json, "
+            "secret, nonce, secret_enc, tools_json, status, created, updated) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(owner_id, app_id) DO UPDATE SET title = excluded.title, "
+            "url = excluded.url, auth_json = excluded.auth_json, secret = excluded.secret, "
+            "nonce = excluded.nonce, secret_enc = excluded.secret_enc, "
+            "tools_json = excluded.tools_json, status = excluded.status, "
+            "updated = excluded.updated",
+            (item["id"], owner_id, item["app_id"], item["title"], item["url"],
+             json.dumps(item.get("auth") or {}), item.get("secret"), item.get("nonce"),
+             1 if item.get("secret_enc") else 0, json.dumps(item.get("tools") or []),
+             item.get("status", "ok"), now, now))
+        conn.commit()
+
+
+def connection_update(owner_id, conn_id, now, **fields):
+    allowed = {"secret", "nonce", "secret_enc", "tools_json", "status"}
+    sets = {k: v for k, v in fields.items() if k in allowed}
+    if not sets:
+        return
+    conn = _connect()
+    with _lock:
+        conn.execute(
+            "UPDATE app_connections SET %s, updated = ? WHERE owner_id = ? AND id = ?"
+            % ", ".join("%s = ?" % k for k in sets),
+            list(sets.values()) + [now, owner_id, conn_id])
+        conn.commit()
+
+
+def connection_delete(owner_id, conn_id):
+    conn = _connect()
+    with _lock:
+        cur = conn.execute("DELETE FROM app_connections WHERE owner_id = ? AND id = ?",
+                           (owner_id, conn_id))
+        conn.commit()
+    return (cur.rowcount or 0) > 0
+
+
+def app_client_get(issuer, redirect_uri):
+    r = _connect().execute(
+        "SELECT client_id, client_secret FROM app_clients WHERE issuer = ? AND redirect_uri = ?",
+        (issuer, redirect_uri)).fetchone()
+    return (r["client_id"], r["client_secret"]) if r else (None, None)
+
+
+def app_client_save(issuer, redirect_uri, client_id, client_secret, now):
+    conn = _connect()
+    with _lock:
+        conn.execute("INSERT OR REPLACE INTO app_clients (issuer, redirect_uri, client_id, "
+                     "client_secret, created) VALUES (?, ?, ?, ?, ?)",
+                     (issuer, redirect_uri, client_id, client_secret or "", now))
+        conn.commit()
+
+
+def app_client_forget(issuer, redirect_uri):
+    conn = _connect()
+    with _lock:
+        conn.execute("DELETE FROM app_clients WHERE issuer = ? AND redirect_uri = ?",
+                     (issuer, redirect_uri))
+        conn.commit()
+
+
+def signin_save(state, owner_id, app_id, verifier, auth, client_id, redirect, now_ts):
+    conn = _connect()
+    with _lock:
+        conn.execute("DELETE FROM app_signins WHERE created < ?", (now_ts - 900,))
+        conn.execute("INSERT INTO app_signins (state, owner_id, app_id, verifier, auth_json, "
+                     "client_id, redirect, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                     (state, owner_id, app_id, verifier, json.dumps(auth), client_id,
+                      redirect, now_ts))
+        conn.commit()
+
+
+def signin_take(state, now_ts):
+    """The sign-in for this state, deleted as it is read (single use)."""
+    conn = _connect()
+    with _lock:
+        r = conn.execute("SELECT * FROM app_signins WHERE state = ?", (state,)).fetchone()
+        conn.execute("DELETE FROM app_signins WHERE state = ?", (state,))
+        conn.commit()
+    if not r or r["created"] < now_ts - 900:
+        return None
+    return {"owner_id": r["owner_id"], "app_id": r["app_id"], "verifier": r["verifier"],
+            "auth": json.loads(r["auth_json"]), "client_id": r["client_id"],
+            "redirect": r["redirect"]}
