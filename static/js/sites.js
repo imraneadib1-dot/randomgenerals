@@ -132,7 +132,10 @@ export function renderSiteCard(msgEl, d) {
     input.value = s.slug || s.suggested_slug || "";
     input.required = true;
     input.maxLength = 32;
-    input.pattern = "[a-z0-9][a-z0-9-]{1,30}[a-z0-9]";
+    // The dash is escaped: browsers compile `pattern` with the regex v
+    // flag, where a bare "-" in a class is an error and the pattern is
+    // silently ignored.
+    input.pattern = "[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]";
     input.setAttribute("aria-label", "Site address");
     input.autocomplete = "off";
     input.spellcheck = false;

@@ -316,7 +316,7 @@ def check_files(files: dict, plan: dict) -> dict[str, list[str]]:
         p.append("Serve index.html and the static files with send_from_directory.")
     if p:
         issues["app.py"] = p
-    return issues
+    return _merge(issues, check_connections(files, plan, False))
 
 
 # ---------------------------------------------------------------- prompts
@@ -369,7 +369,15 @@ def _file_messages(name: str, brief: str, plan: dict, photos: list[dict],
                 "store each submission in SQLite (submissions.db, table submissions: id, form, data JSON, created_at UTC ISO), "
                 "and answer as the contract says with the form's success message. Unknown form -> 404 JSON. "
                 "Add GET /api/forms/<form>/submissions that requires Authorization: Bearer <ADMIN_TOKEN from the environment> and returns the newest first. "
-                "Rate-limit submissions to 10 per IP per 10 minutes in memory. Run on PORT from the environment (default 5000) with debug off. "
+                "Rate-limit submissions to 10 per IP per 10 minutes in memory. "
+                "It is run and tested locally exactly as follows, so match it: define `app = Flask(__name__)` at module level "
+                "(the tests do `from app import app`); serve files from the folder app.py is in, "
+                "os.path.dirname(os.path.abspath(__file__)), never the working directory; keep submissions.db in the folder named by the "
+                "STORAGE_DIR environment variable (default: that same folder), creating it if needed, and create the table at import time or "
+                "on first use - never only under __main__; read each submission with request.get_json(silent=True), falling back to request.form, "
+                "because the page posts JSON; answer missing or invalid input with "
+                "status 400 and {\"ok\": false, \"error\": ...}, an unknown form with 404 JSON, and the submissions endpoint with 401 when the "
+                "token is missing or wrong; end with `if __name__ == \"__main__\": app.run(host=\"127.0.0.1\", port=int(os.environ.get(\"PORT\", 5000)))`. "
                 "Comment the code where it helps someone extend it.")
         ctx = "Forms:\n" + json.dumps(plan.get("forms"), indent=1)
     else:
@@ -552,7 +560,8 @@ def build(brief: str, photos: list[dict], credit: str, llm):
     fixed = yield from _review(llm, plan, files)
     add_safety(files)
     files["requirements.txt"] = "flask>=3.0\n"
-    files["README.md"] = readme(plan)
+    files.update(local_kit(plan, files, False))
+    files["README.md"] = readme(plan) + LOCAL_README.format(port=5000)
     return {"name": plan["name"], "slug": plan["slug"], "plan": plan,
             "files": {n: files[n] for n in FILE_ORDER if n in files}, "fixed": fixed}
 
@@ -587,7 +596,8 @@ def revise(instruction: str, project: dict, photos: list[dict], llm):
     fixed = yield from _review(llm, plan, files)
     add_safety(files)
     files["requirements.txt"] = files.get("requirements.txt") or "flask>=3.0\n"
-    files["README.md"] = readme(plan)
+    files.update(local_kit(plan, files, False))
+    files["README.md"] = readme(plan) + LOCAL_README.format(port=5000)
     return {"name": plan["name"], "slug": plan["slug"], "plan": plan,
             "files": {n: files[n] for n in FILE_ORDER if n in files}, "fixed": fixed,
             "touched": touched}
@@ -749,7 +759,7 @@ Served to visitors (no build step - browsers run these files as written):
 - Footer: <footer class="site-footer"> with the photo credit line in <small class="credits"> and <span data-year></span>.
 - Images: only provided photo URLs (or URLs inside the datasets, which come from the same list), each <img> with width, height and real alt text; loading="lazy" except the hero.
 For self-hosting (downloaded, never run by the publishing service):
-- backend/app.py: a Flask app object named `app`, importable as backend.app and runnable with `python -m backend.app` from the project root. It serves the static site from the project root (index.html, css/, js/, data/ only), implements POST /api/forms/<form> exactly as above for the planned forms, GET /api/forms/<form>/submissions behind Authorization: Bearer <ADMIN_TOKEN>, and any planned API endpoints. It imports persistence with `from backend import storage`. Configuration only from environment variables (ADMIN_TOKEN, PORT default 8000, STORAGE_DIR default ./storage). Rate-limit form posts per IP.
+- backend/app.py: a Flask app object named `app`, importable as backend.app and runnable with `python -m backend.app` from the project root. It serves the static site from the project root (index.html, css/, js/, data/ only), implements POST /api/forms/<form> exactly as above for the planned forms, GET /api/forms/<form>/submissions behind Authorization: Bearer <ADMIN_TOKEN>, and any planned API endpoints. It imports persistence with `from backend import storage`. Configuration only from environment variables (ADMIN_TOKEN, PORT default 8000, STORAGE_DIR default ./storage), read when a request arrives rather than frozen at import. Missing or invalid input gets status 400 with {"ok": false, "error": ...}, an unknown form 404 JSON, and the submissions endpoint 401 without the right token. Rate-limit form posts per IP. The included tests do `from backend.app import app`.
 - backend/storage.py: SQLite in STORAGE_DIR, created on first use, with the functions backend/app.py needs; parameterised queries only."""
 
 PREMIUM_DESIGN = DESIGN + """
@@ -971,7 +981,7 @@ def check_premium(files: dict, plan: dict) -> dict[str, list[str]]:
                 issues[name] = ["It must be a non-empty JSON array."]
         except ValueError as e:
             issues[name] = ["Invalid JSON: %s" % e]
-    return issues
+    return _merge(issues, check_connections(files, plan, True))
 
 
 def _premium_fix_messages(name, plan, files, problems):
@@ -1174,7 +1184,8 @@ def build_premium(brief: str, photos: list[dict], credit: str, research_notes: s
     fixed = yield from _review_premium(llm, plan, files)
     add_safety(files)
     files.update(scaffolding(plan))
-    files["README.md"] = premium_readme(plan, files)
+    files.update(local_kit(plan, files, True))
+    files["README.md"] = premium_readme(plan, files) + LOCAL_README.format(port=8000)
     return {"name": plan["name"], "slug": plan["slug"], "plan": plan,
             "files": dict(sorted(files.items(), key=lambda kv: _premium_order(kv[0]))),
             "fixed": fixed}
@@ -1228,7 +1239,321 @@ def revise_premium(instruction: str, project: dict, photos: list[dict], llm):
         yield ("step", name, "done", "Updated %s (%.1f KB)" % (name, len(files[name]) / 1024))
     fixed = yield from _review_premium(llm, plan, files)
     add_safety(files)
-    files["README.md"] = premium_readme(plan, {k: v for k, v in files.items() if k != "README.md"})
+    files.update(local_kit(plan, files, True))
+    files["README.md"] = (premium_readme(plan, {k: v for k, v in files.items() if k != "README.md"})
+                          + LOCAL_README.format(port=8000))
     return {"name": plan["name"], "slug": plan["slug"], "plan": plan,
             "files": dict(sorted(files.items(), key=lambda kv: _premium_order(kv[0]))),
             "fixed": fixed, "touched": touched}
+
+
+# =====================================================================
+# ZERO BROKEN CONNECTIONS, AND A PROJECT THAT RUNS AND TESTS ITSELF
+#
+# A project is only "integrated" if every connection between its parts
+# lands somewhere: each href and src names a file that exists, each CSS
+# url() too, each fetch() the browser makes is answered by a route the
+# Python backend defines, and each form posts where the backend listens.
+# check_connections() proves that statically - no generated code is run
+# on this server - and anything that does not line up goes to the
+# review's fix pass like any other problem.
+#
+# local_kit() then makes the download self-sufficient: run.bat and
+# run.sh build a virtualenv, install, RUN THE TESTS, and only then start
+# the server and open the browser; test_app.py drives the real backend
+# through Flask's test client - the home page, every file the page
+# loads, every form with good and bad input, and the locked admin route.
+# Tested locally first, then published.
+# =====================================================================
+
+_EXTERNAL = ("http:", "https:", "//", "#", "mailto:", "tel:", "data:", "javascript:", "sms:")
+
+
+def _backend_routes(src: str) -> list[re.Pattern]:
+    """Every route the Flask app declares, as a regex over request paths."""
+    found = re.findall(r"@\w+\.(?:route|get|post|put|patch|delete)\(\s*[rbu]?[\"']([^\"']+)[\"']", src or "")
+    pats = []
+    for r in found:
+        rx = "^" + re.sub(r"<[^>]+>", "[^/]+", re.escape(r).replace("\\<", "<").replace("\\>", ">")) + "/?$"
+        try:
+            pats.append(re.compile(rx))
+        except re.error:
+            continue
+    return pats
+
+
+def _norm(ref: str) -> str:
+    return ref.split("#")[0].split("?")[0].lstrip("./").lstrip("/")
+
+
+def check_connections(files: dict, plan: dict, premium: bool) -> dict[str, list[str]]:
+    issues: dict[str, list[str]] = {}
+
+    def add(name, msg):
+        issues.setdefault(name, [])
+        if msg not in issues[name]:
+            issues[name].append(msg)
+
+    backend_name = "backend/app.py" if premium else "app.py"
+    backend = files.get(backend_name, "")
+    routes = _backend_routes(backend)
+
+    def answered(path):
+        path = "/" + path.lstrip("/")
+        return any(r.match(path) for r in routes)
+
+    # Pages: every local href and src exists.
+    for name, body in files.items():
+        if not name.endswith(".html"):
+            continue
+        for ref in re.findall(r"(?:href|src)\s*=\s*[\"']([^\"']+)[\"']", body):
+            if ref.startswith(_EXTERNAL) or ref.strip() in ("", "/"):
+                continue
+            path = _norm(ref)
+            if not path or path in files or (path.rstrip("/") + "/index.html") in files:
+                continue
+            if path.startswith("api/") and answered(path):
+                continue
+            add(name, '%s refers to "%s", which is not a file in the project. '
+                      'Point it at an existing file or remove it.' % (name, ref))
+
+    # Stylesheets: every local url() exists.
+    for name, body in files.items():
+        if not name.endswith(".css"):
+            continue
+        for ref in re.findall(r"url\(\s*['\"]?([^'\")]+)['\"]?\s*\)", body):
+            if ref.startswith(_EXTERNAL):
+                continue
+            base = name.rsplit("/", 1)[0] + "/" if "/" in name else ""
+            path = _norm(ref if not ref.startswith("../") else ref[3:])
+            if path in files or (base + path) in files:
+                continue
+            add(name, '%s uses url(%s), which is not a file in the project. Use a gradient or an '
+                      'existing image URL instead.' % (name, ref))
+
+    # Scripts: every literal fetch() is answered - by a backend route or a file.
+    for name, body in files.items():
+        if not name.endswith(".js"):
+            continue
+        for _q, url, joined in re.findall(r"fetch\(\s*([`'\"])([^`'\"]+)\1\s*(\+)?", body):
+            if url.startswith(_EXTERNAL):
+                continue
+            probe = re.sub(r"\$\{[^}]*\}", "x", url)
+            if joined:
+                # '/api/forms/' + name: only the start of the address is
+                # written down; the rest is a variable.
+                probe += "x"
+            path = _norm(probe)
+            if path.startswith("api/"):
+                if not answered(path):
+                    add(backend_name, '%s calls "%s" but %s has no route for it. Add the route.'
+                        % (name, url, backend_name))
+            elif joined:
+                # Only a prefix is known: fine if any file starts with it.
+                prefix = _norm(url)
+                if prefix and not any(n.startswith(prefix) for n in files):
+                    add(name, '%s fetches files under "%s", but the project has none there.' % (name, url))
+            elif path and "x" != path and path not in files and "${" not in url:
+                add(name, '%s fetches "%s", which is not a file in the project.' % (name, url))
+
+    # Forms: each one posts where the backend listens.
+    for form in plan.get("forms", []):
+        if not answered("api/forms/%s" % form["name"]):
+            add(backend_name, "%s must answer POST /api/forms/%s (the %s form posts there)."
+                % (backend_name, form["name"], form["name"]))
+    if backend:
+        if not re.search(r"^\s*app\s*=\s*Flask\(", backend, re.M):
+            add(backend_name, "Define the Flask app at module level as `app = Flask(__name__)` - the tests and run scripts import it.")
+        if "__main__" not in backend:
+            add(backend_name, "End with `if __name__ == \"__main__\":` starting the server on PORT from the environment.")
+        # The page and the backend must agree on HOW a form is sent. Every
+        # real build's script posts JSON; two of four backends read
+        # request.form, so their forms failed whenever the site was run
+        # on its own.
+        page_js = "\n".join(b for n, b in files.items() if n.endswith(".js"))
+        sends_json = bool(re.search(r"JSON\.stringify", page_js)) and "/api/forms" in page_js
+        if sends_json and "request.form" in backend and not re.search(r"get_json|request\.json", backend):
+            add(backend_name, "The page sends forms as JSON (fetch with JSON.stringify), but %s reads "
+                              "request.form, so every submission arrives empty. Read request.get_json(silent=True) "
+                              "(and fall back to request.form)." % backend_name)
+        # A module used but never imported fails only when that line runs -
+        # usually the admin endpoint nobody tries until it matters.
+        for mod in ("sqlite3", "json", "os", "re", "time", "datetime", "hashlib", "hmac",
+                    "secrets", "uuid", "threading", "collections"):
+            # Module level only: an import inside one function does not
+            # reach the others (a real build used sqlite3 in three
+            # functions and imported it in a fourth).
+            if re.search(r"(?<![\w.])%s\." % mod, backend) and not re.search(
+                    r"^(?:import\s+(?:[\w.]+\s*,\s*)*%s\b|from\s+%s\s+import)" % (mod, mod), backend, re.M):
+                add(backend_name, "%s uses %s but does not import it at the top of the file. "
+                                  "Add `import %s` with the other imports." % (backend_name, mod, mod))
+        # Tables created only under __main__ do not exist when the app is
+        # imported (tests, gunicorn, flask run).
+        main_at = backend.find('if __name__')
+        create_at = backend.find("CREATE TABLE")
+        if create_at != -1 and main_at != -1:
+            init = re.search(r"def\s+(\w+)\([^)]*\):[^\n]*\n(?:[ \t]+.*\n)*?[ \t]+.*CREATE TABLE", backend)
+            init_name = init.group(1) if init else None
+            called_outside_main = init_name and re.search(
+                r"^(?!\s*def\b).*\b%s\(" % re.escape(init_name), backend[:main_at], re.M)
+            if create_at > main_at or (init_name and not called_outside_main
+                                       and "before_request" not in backend
+                                       and "before_first_request" not in backend):
+                add(backend_name, "The database tables are only created when the file is run directly, so "
+                                  "they do not exist when the app is imported (tests, gunicorn). Create them "
+                                  "at import time or on first use.")
+    return issues
+
+
+def _merge(a: dict, b: dict) -> dict:
+    for k, v in b.items():
+        a.setdefault(k, [])
+        a[k] += [x for x in v if x not in a[k]]
+    return a
+
+
+def _sample_value(field: dict) -> str:
+    return {"email": "test@example.com", "tel": "+1 555 0100", "number": "2",
+            "date": "2030-01-15", "time": "10:30"}.get(field.get("type"), "Test value")
+
+
+def local_kit(plan: dict, files: dict, premium: bool) -> dict[str, str]:
+    """run.bat, run.sh, test_app.py and requirements-dev.txt for the download."""
+    served = sorted(n for n in files if n.endswith((".html", ".css", ".js", ".json"))
+                    and not n.startswith(("backend/", "wasm/", "types/"))
+                    and n not in ("package.json", "tsconfig.json"))
+    forms = [{"name": f["name"],
+              "good": {x["name"]: _sample_value(x) for x in f["fields"]},
+              "required": [x["name"] for x in f["fields"] if x.get("required")]}
+             for f in plan.get("forms", [])]
+    port = 8000 if premium else 5000
+    importer = ("from backend.app import app" if premium else "from app import app")
+    runner = ("python -m backend.app" if premium else "python app.py")
+    reqs = "backend/requirements.txt" if premium else "requirements.txt"
+    test = f'''"""Smoke tests: the site, its files and its API are wired together.
+
+Run with:  python -m pytest -q
+The run scripts (run.bat / run.sh) run these before starting the server.
+"""
+import json
+import os
+import tempfile
+
+import pytest
+
+os.environ.setdefault("STORAGE_DIR", tempfile.mkdtemp(prefix="site-test-"))
+os.environ.setdefault("ADMIN_TOKEN", "test-admin-token")
+
+{importer}  # noqa: E402
+
+SERVED = {json.dumps(served)}
+FORMS = {json.dumps(forms, indent=4)}
+
+
+@pytest.fixture()
+def client():
+    app.config["TESTING"] = True
+    with app.test_client() as c:
+        yield c
+
+
+def test_home_page_loads(client):
+    r = client.get("/")
+    assert r.status_code == 200
+    assert b"<html" in r.data.lower()
+
+
+@pytest.mark.parametrize("path", SERVED)
+def test_every_file_the_site_uses_is_served(client, path):
+    assert client.get("/" + path).status_code == 200, path
+
+
+def test_unknown_file_is_404(client):
+    assert client.get("/no-such-file.html").status_code == 404
+
+
+@pytest.mark.parametrize("form", FORMS, ids=[f["name"] for f in FORMS])
+def test_form_accepts_good_input(client, form):
+    r = client.post("/api/forms/" + form["name"], json=form["good"],
+                    headers={{"X-Forwarded-For": "203.0.113.%d" % (hash(form["name"]) % 200)}})
+    assert r.status_code == 200, r.data
+    assert r.get_json().get("ok") is True
+
+
+@pytest.mark.parametrize("form", [f for f in FORMS if f["required"]], ids=lambda f: f["name"])
+def test_form_rejects_missing_fields(client, form):
+    r = client.post("/api/forms/" + form["name"], json={{}})
+    assert r.status_code in (400, 422), r.data
+    assert r.get_json().get("ok") is False
+
+
+def test_unknown_form_is_404(client):
+    assert client.post("/api/forms/no-such-form", json={{}}).status_code == 404
+
+
+@pytest.mark.parametrize("form", FORMS, ids=[f["name"] for f in FORMS])
+def test_submissions_need_the_admin_token(client, form):
+    url = "/api/forms/%s/submissions" % form["name"]
+    assert client.get(url).status_code in (401, 403)
+    ok = client.get(url, headers={{"Authorization": "Bearer test-admin-token"}})
+    assert ok.status_code == 200
+'''
+    bat = f"""@echo off
+rem Builds the environment, runs the tests, then starts {plan['name']}.
+cd /d "%~dp0"
+if not exist .venv (
+  py -3 -m venv .venv 2>nul || python -m venv .venv
+)
+call .venv\\Scripts\\activate.bat
+python -m pip install --quiet --upgrade pip
+pip install --quiet -r {reqs.replace('/', chr(92))} -r requirements-dev.txt
+if not defined ADMIN_TOKEN set ADMIN_TOKEN=change-me
+echo Running the tests...
+python -m pytest -q
+if errorlevel 1 (
+  echo.
+  echo Some checks failed - see above. Starting anyway so you can look at the site;
+  echo the failures say what to fix.
+  echo.
+)
+echo Starting on http://localhost:{port}
+start "" http://localhost:{port}
+{runner}
+"""
+    sh = f"""#!/usr/bin/env sh
+# Builds the environment, runs the tests, then starts {plan['name']}.
+set -e
+cd "$(dirname "$0")"
+[ -d .venv ] || python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install --quiet --upgrade pip
+pip install --quiet -r {reqs} -r requirements-dev.txt
+export ADMIN_TOKEN="${{ADMIN_TOKEN:-change-me}}"
+echo "Running the tests..."
+python -m pytest -q || printf '\\nSome checks failed - see above. Starting anyway so you can look at the site;\\nthe failures say what to fix.\\n\\n'
+echo "Starting on http://localhost:{port}"
+( sleep 1; (command -v open >/dev/null && open http://localhost:{port}) || (command -v xdg-open >/dev/null && xdg-open http://localhost:{port}) || true ) &
+{runner}
+"""
+    return {"test_app.py": test, "run.bat": bat.replace("\n", "\r\n"), "run.sh": sh,
+            "requirements-dev.txt": "pytest>=8.0\n"}
+
+
+LOCAL_README = """
+## Run it on your computer
+
+Everything is here - no publishing needed to try it.
+
+- **Windows:** double-click `run.bat`
+- **Mac / Linux:** `sh run.sh`
+
+The script creates a virtual environment, installs the requirements, **runs the
+tests**, then starts the server and opens your browser at
+http://localhost:{port}. If a test fails it says which, and starts anyway so
+you can still look at the site.
+
+Run the tests on their own with `python -m pytest -q` (after
+`pip install -r requirements-dev.txt`). They check that the home page and every
+file it loads are served, that each form accepts good input and rejects missing
+fields, and that form submissions are only readable with the admin token.
+"""
