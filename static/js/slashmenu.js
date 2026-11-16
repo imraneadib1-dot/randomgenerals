@@ -76,9 +76,13 @@ export function mountSlashMenu() {
   }
 
   input.addEventListener("input", async () => {
-    const m = /^\/([a-z0-9-]*)$/i.exec(input.value);
-    if (!m) { if (!menu.hidden) close(); return; }
+    if (!/^\/([a-z0-9-]*)$/i.test(input.value)) { if (!menu.hidden) close(); return; }
     const list = await loadSkills();
+    // Read the box AFTER the list arrives: typing "/sl" fast fires three
+    // events, and the first one's answer used to land last and show the
+    // unfiltered list.
+    const m = /^\/([a-z0-9-]*)$/i.exec(input.value);
+    if (!m) { close(); return; }
     const q = m[1].toLowerCase();
     /** @param {{id: string, title: string}} s */
     const rank = (s) => (s.id.startsWith(q) ? 0 : s.title.toLowerCase().startsWith(q) ? 1 : 2);
