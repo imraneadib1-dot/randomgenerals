@@ -4,8 +4,8 @@
     python tools/make_icons.py
 
 Drawn rather than exported so the icons stay in step with static/logo.svg
-without a design tool in the loop - the three circles and their tangency
-rule are the same ones written down in that file.
+without a design tool in the loop - the crescent's two arcs are the same
+ones written down in that file.
 
 Two families are produced:
 
@@ -18,6 +18,7 @@ a rounded square - so anything within about 10% of the edge can be cut
 off. A single icon used for both either floats too small on iOS or loses
 its outer ring on Android.
 """
+import math
 import os
 import sys
 
@@ -26,45 +27,86 @@ from PIL import Image, ImageDraw
 OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "static", "icons")
 
-# From static/favicon.svg. Cream ground, bronze mark.
-GROUND = (242, 236, 228, 255)
-MARK = (110, 100, 32, 255)
+# From static/favicon.svg: the original RandomGenerals mark - a pink-red
+# crescent with a navy shadow, on a periwinkle tile.
+GROUND = (112, 120, 242, 255)      # #7078f2
+MARK = (255, 31, 90, 255)          # #ff1f5a
+SHADOW = (59, 69, 148, 255)        # #3b4594
 
-# The logo, expressed as fractions of the mark's own box, so it scales to
-# any size. Internal tangency: the distance between two centres is the
-# DIFFERENCE of their radii, which is what makes the gap sweep round into
-# a coil instead of stacking into a crescent.
-#   outer  r 88  at cy 100
-#   middle r 57, touching the outer at the TOP    -> cy 69
-#   inner  r 33, touching the middle at the BOTTOM -> cy 93
-CIRCLES = [(100 / 200.0, 88 / 200.0),
-           (69 / 200.0, 57 / 200.0),
-           (93 / 200.0, 33 / 200.0)]
-STROKE_FRACTION = 6.5 / 200.0
+# The crescent, in the 200-unit box static/logo.svg uses. It is the
+# region inside the OUTER circle and outside the INNER one, and the line
+# is drawn as that region minus a hollow (the same two circles, outer
+# shrunk and inner grown by the line width) - so the horns come to sharp
+# points exactly where the circles cross, as in the original logo, and
+# the shadow shows through the hollow.
+OUTER = (72.5, 100.0, 73.5)       # centre x, centre y, radius
+INNER = (42.3, 100.0, 73.7)
+LINE = 9.0                        # line width, same units
+SHADOW_OFFSET = (7.0, 8.0)
+
+
+def _crossing(c1, c2):
+    """Where two circles centred on the same horizontal line cross:
+    -> (x, half height)."""
+    (x1, _, r1), (x2, _, r2) = c1, c2
+    d = x1 - x2
+    a = (d * d + r2 * r2 - r1 * r1) / (2 * d)
+    return x2 + a, math.sqrt(max(0.0, r2 * r2 - a * a))
+
+
+def _side(c, x, h, steps, reverse=False):
+    """Points on circle c from (x, cy-h) round its right side to (x, cy+h)."""
+    cx, cy, r = c
+    a = math.atan2(h, x - cx)
+    pts = [(cx + r * math.cos(t), cy + r * math.sin(t))
+           for t in (-a + 2 * a * i / steps for i in range(steps + 1))]
+    return list(reversed(pts)) if reverse else pts
+
+
+def crescent(outer, inner, steps=120):
+    """Closed outline of the region inside `outer` and outside `inner`."""
+    x, h = _crossing(outer, inner)
+    return _side(outer, x, h, steps) + _side(inner, x, h, steps, reverse=True)
+
+
+def crescent_shapes(line=LINE):
+    """(filled crescent, hollow) outlines for a given line width."""
+    ox, oy, orad = OUTER
+    ix, iy, irad = INNER
+    return (crescent(OUTER, INNER),
+            crescent((ox, oy, orad - line), (ix, iy, irad + line)))
+
+
+def svg_path(line=LINE):
+    """The same shape as an SVG path (evenodd: crescent, then hollow)."""
+    out = []
+    for pts in crescent_shapes(line):
+        out.append("M" + " L".join("%.2f %.2f" % p for p in pts[::4] + [pts[-1]]) + "Z")
+    return " ".join(out)
 
 
 def draw_icon(size, inset_fraction, radius_fraction):
     """One icon. `inset_fraction` is the empty margin around the mark."""
-    # 4x supersampling: PIL has no antialiased stroke, and a thin ring
-    # drawn at 192px directly comes out visibly stepped.
-    scale = 4
+    scale = 4                      # supersampled, then downsized smoothly
     px = size * scale
     img = Image.new("RGBA", (px, px), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-
     corner = int(px * radius_fraction)
     draw.rounded_rectangle([0, 0, px - 1, px - 1], radius=corner, fill=GROUND)
 
     box = px * (1 - 2 * inset_fraction)
     origin = px * inset_fraction
-    width = max(1, int(box * STROKE_FRACTION))
-
-    for cy_frac, r_frac in CIRCLES:
-        cx = origin + box / 2.0
-        cy = origin + box * cy_frac
-        r = box * r_frac
-        draw.ellipse([cx - r, cy - r, cx + r, cy + r],
-                     outline=MARK, width=width)
+    unit = box / 200.0
+    # A heavier line at 16-48px so the crescent survives being tiny.
+    line = LINE * (1.45 if size <= 48 else 1.0)
+    body, hollow = crescent_shapes(line)
+    for (dx, dy), colour in ((SHADOW_OFFSET, SHADOW), ((0.0, 0.0), MARK)):
+        layer = Image.new("RGBA", (px, px), (0, 0, 0, 0))
+        ld = ImageDraw.Draw(layer)
+        place = lambda pts: [(origin + (x + dx) * unit, origin + (y + dy) * unit) for x, y in pts]
+        ld.polygon(place(body), fill=colour)
+        ld.polygon(place(hollow), fill=(0, 0, 0, 0))      # cut the hollow out
+        img.alpha_composite(layer)
 
     return img.resize((size, size), Image.LANCZOS)
 
