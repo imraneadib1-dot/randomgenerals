@@ -55,6 +55,7 @@ import openai_api  # noqa: E402  OpenAI-compatible API - see openai_api.py
 import connectors  # noqa: E402  pasted links, turned into tools
 import keystore  # noqa: E402  provider-key encryption + TOTP
 import openrouter_api  # noqa: E402  DeepSeek for the code bay - see openrouter_api.py
+import google_api  # noqa: E402  Gemma 4 31B on Google AI Studio - see google_api.py
 import groq_api  # noqa: E402  the fast channel - see groq_api.py
 import imagesearch  # noqa: E402  real photos for generated sites
 import sitebuilder  # noqa: E402  plans and writes whole website projects
@@ -5098,6 +5099,8 @@ BAY_ROUTES = {
         ("pip", "pip-1.0"),
         ("openrouter", "deepseek-v4.1-flash"),
         ("groq", "gpt-oss-120b"),
+        # Gemma 4 31B, offered in the picker after Turbo (see _gemma_model).
+        ("google", "gemma-4"),
         ("openrouter", "nemotron-3-ultra-550b-a55b:free"),
         ("openrouter", "glm-5.2:free"),
         ("ollama", "gemma3:1b"),
@@ -5358,6 +5361,13 @@ def _deepseek_model_for(mode: str, strength: str = "") -> str | None:
     return None
 
 
+def _gemma_model() -> str | None:
+    """GEMMA 4 31B FIRST, the owner's choice of main model, wherever Google
+    AI Studio is configured and not cooling down after a rate limit. None
+    otherwise, and the caller falls through to Groq exactly as before."""
+    return google_api.model_id() if google_api.ready() else None
+
+
 def _is_deepseek(provider: str, model: str) -> bool:
     return provider == "openrouter" and model in (
         openrouter_api.PRO_MODEL, openrouter_api.FLASH_MODEL)
@@ -5433,9 +5443,9 @@ def _failover_chain(provider: str, mode: str) -> list[tuple[str, str]]:
     it. Checking budget here would only refuse a channel a second
     before it refused itself.
     """
-    if provider == "openrouter" and _groq_only():
-        # DeepSeek refused (no credit, an outage, an empty reply): Groq's
-        # main model takes it, then Groq's others.
+    if provider in ("openrouter", "google") and _groq_only():
+        # DeepSeek or Gemma refused (no credit, a rate limit, an outage,
+        # an empty reply): Groq's main model takes it, then Groq's others.
         main = _groq_model_for(mode) or ""
         return ([("groq", main)] if main else []) + _groq_fallbacks(main)
     if _groq_only():
@@ -5754,6 +5764,20 @@ def list_providers():
         }]
     elif _groq_only():
         providers = [p for p in providers if p["id"] == "groq"]
+        # Both models, the person's choice: gpt-oss-120b (fast, the
+        # default) and Gemma 4 31B (slower - it thinks first - and
+        # metered by Google's free tier; Groq answers when it is busy).
+        if _gemma_model():
+            gm = [_gemma_model()]
+            providers.append({
+                "id": "google",
+                "label": "Gemma",
+                "available": True,
+                "models": gm,
+                "model_info": [describe_model(m, plan) for m in gm],
+                "note": ("Gemma 4 31B by Google - more polished writing and "
+                         "design, but slower. Turbo answers if it is busy."),
+            })
     live = [p for p in providers if p["available"]]
     if live:
         providers = live
@@ -5779,6 +5803,8 @@ def list_providers():
 # About tab still states plainly which open models are underneath. The
 # aim is a clear capability ladder, not hiding what this is built on.
 MODEL_DISPLAY_NAMES = {
+    # the main model (Google AI Studio)
+    "gemma-4-31b-it": ("Gemma 4", "Google's open model - chat, code and websites"),
     # local
     "gemma3:1b": ("Swift", "Fastest replies - the default here"),
     "gemma3:4b": ("Sight", "Sees attached images, thinks a little harder"),
@@ -6279,6 +6305,7 @@ PROVIDER_STREAMERS = {
     "pip": pip_api.stream_chat,
     "openrouter": openrouter_api.stream_chat,
     "groq": groq_api.stream_chat,
+    "google": google_api.stream_chat,
 }
 
 # The non-streamed turn each hosted provider uses inside the tool loop.
@@ -6288,6 +6315,7 @@ PROVIDER_TURNS = {
     "pip": pip_api.chat_once,
     "openrouter": openrouter_api.chat_once,
     "groq": groq_api.chat_once,
+    "google": google_api.chat_once,
 }
 
 # Per account, and per PLAN - free connects one, Pro connects eight.
@@ -7895,7 +7923,8 @@ def _auto_continue(provider, model, history, so_far, usage, kwargs):
             {"role": "user", "content": CONTINUE_PROMPT},
         ]
         row = "continue-%d" % part
-        if provider == "openrouter" and not openrouter_api.has_credit():
+        if (provider == "openrouter" and not openrouter_api.has_credit()) or (
+                provider == "google" and not google_api.ready()):
             # DeepSeek ran out of credit part-way through a long reply:
             # Groq writes the rest rather than the reply waiting on a
             # balance nobody is about to top up.
@@ -8011,8 +8040,16 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # _deepseek_model_for). It cannot see, so a message with a picture
     # keeps the vision route below.
     deepseek = None if wants_sight else _deepseek_model_for(mode, strength)
+    # Gemma 4 31B answers when the person PICKED it in the model picker
+    # (gpt-oss-120b on Groq stays the fast default). A picture keeps the
+    # vision route below; Gemma cooling down after a rate limit falls
+    # through to Groq.
+    gemma = (_gemma_model() if provider == "google" and not (wants_sight or deepseek)
+             else None)
     if deepseek:
         provider, model = "openrouter", deepseek
+    elif gemma:
+        provider, model = "google", gemma
     elif _groq_only() and (provider != "groq" or not (
             model in groq_api.models() or model in groq_api.vision_models())):
         seer = (_vision_route() if wants_sight else (None, None))
@@ -8082,6 +8119,8 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
             files, vision_available)
     site_job = _site_job_for(thread, asked, bool(files and any(
         f.get("kind") == "image" for f in files)), strength)
+    if site_job is not None:
+        site_job["model"] = provider      # a site is built by the model picked
     site_block = "" if site_job else _website_block(thread, asked)
     if site_block:
         system_prompt = system_prompt + "\n\n" + site_block
@@ -8678,7 +8717,7 @@ def _site_job_for(thread, asked: str, has_images: bool, strength: str = "quick")
     return None
 
 
-def _builder_llm(usage: dict):
+def _builder_llm(usage: dict, use_gemma: bool = False):
     """The model call the builder makes, as a generator: yields progress
     while it waits, returns (text, finish_reason).
 
@@ -8705,9 +8744,15 @@ def _builder_llm(usage: dict):
         deepseek = _deepseek_model_for("code")
         if deepseek and not any(m == deepseek for _, m in order):
             order = [("openrouter", deepseek)] + order
+        # Gemma 4 31B writes the site when the person picked it; Groq stays
+        # behind it, so a rate limit mid-build finishes the build there.
+        gemma = _gemma_model() if (use_gemma and not deepseek) else None
+        if gemma:
+            order = [("google", gemma)] + order
         order = [o for o in order if o[1] not in daily_out
                  and not (o[0] == "openrouter" and not openrouter_api.is_free(o[1])
-                          and not openrouter_api.has_credit())] or order
+                          and not openrouter_api.has_credit())
+                 and not (o[0] == "google" and not google_api.ready())] or order
         if not order:
             raise RuntimeError("No model is available to build with.")
         opts = {"num_predict": max_tokens, "temperature": 0.4,
@@ -8731,6 +8776,13 @@ def _builder_llm(usage: dict):
                     msg, err = None, e
                     break
             pool.shutdown(wait=False)
+            if isinstance(err, providers.ProviderUnavailable) and provider == "google" \
+                    and len(order) > 1:
+                # Gemma's free tier is out for now: hand the step to Groq
+                # at once instead of waiting on Google's cool-down.
+                order = [o for o in order if o[0] != "google"] or order
+                idx = 0
+                continue
             if isinstance(err, providers.ProviderUnavailable) or (
                     err and "429" in str(err)):
                 attempts += 1
@@ -8896,7 +8948,7 @@ def _site_research(brief: str) -> tuple[str, int]:
 def _run_site_job(job, thread, asked, usage):
     """The whole build or revision, streamed. Returns (reply, display)."""
     owner = current_owner_id()
-    llm = _builder_llm(usage)
+    llm = _builder_llm(usage, use_gemma=job.get("model") == "google")
     if job["kind"] == "build":
         premium = job.get("premium")
         notes = ""
