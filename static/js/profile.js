@@ -1,6 +1,7 @@
 import { state } from "./state.js";
 import { renderGreeting } from "./boot.js";
 import { S, patchSettings, patchSettingsDebounced } from "./settings.js";
+import { loadCredits } from "./credits.js";
 
 /* ================================================================
    Usage, notifications, profile picture, saved prompts
@@ -13,37 +14,130 @@ export const EVENT_LABELS = {
 
 export const CHANNEL_LABELS = { email: "Email", in_app: "In the app" };
 
+/* SETTINGS > USAGE. The credit meter (credits.js keeps it current) and,
+   under it, tokens / messages / credits by day for 7, 30 or 90 days.
+   The three totals double as the switch for what the chart shows, and
+   a day - clicked, or reached with the arrow keys - shows its numbers
+   underneath: the preview. A plain bar chart in buttons; a charting
+   library for ninety bars would outweigh the whole settings panel. */
+const usageView = { days: 30, metric: "tokens", data: null, picked: -1 };
+const METRIC_WORD = { tokens: "tokens", messages: "messages", credits: "credits" };
+
+const fmtDay = (iso, long = false) => new Date(iso + "T00:00:00").toLocaleDateString(
+  undefined, long ? { weekday: "short", month: "short", day: "numeric" } : { month: "short", day: "numeric" });
+
+function showUsageDay(i) {
+  const box = S("usageDay");
+  const data = usageView.data;
+  if (!box || !data) return;
+  const series = data.series;
+  box.textContent = "";
+  const head = document.createElement("strong");
+  const rest = document.createElement("span");
+  if (i < 0 || i >= series.length) {
+    // Nothing picked: the period as a whole.
+    const t = data.totals;
+    head.textContent = `Last ${data.days} days`;
+    rest.textContent = t.busiest
+      ? ` · busiest day ${fmtDay(t.busiest, true)} · click a day for its numbers`
+      : " · nothing yet";
+  } else {
+    const d = series[i];
+    head.textContent = fmtDay(d.day, true);
+    rest.textContent = ` · ${d.tokens.toLocaleString()} tokens · ${d.messages.toLocaleString()} `
+      + `message${d.messages === 1 ? "" : "s"} · ${d.credits.toLocaleString()} credits`;
+  }
+  box.append(head, rest);
+}
+
+function pickUsageDay(i) {
+  const chart = S("usageChart");
+  usageView.picked = i;
+  const stop = i < 0 ? chart.children.length - 1 : i;
+  [...chart.children].forEach((b, k) => {
+    b.setAttribute("aria-selected", String(k === i));
+    /** @type {HTMLElement} */ (b).tabIndex = k === stop ? 0 : -1;
+  });
+  showUsageDay(i);
+}
+
+function drawUsage() {
+  const chart = S("usageChart");
+  const data = usageView.data;
+  if (!chart || !data) return;
+  const metric = usageView.metric;
+  const peak = Math.max(1, ...data.series.map((d) => d[metric]));
+  chart.replaceChildren();
+  chart.classList.toggle("is-dense", data.series.length > 40);
+  data.series.forEach((day, i) => {
+    const bar = document.createElement("button");
+    bar.type = "button";
+    bar.className = "usage-bar";
+    bar.setAttribute("role", "option");
+    const v = day[metric];
+    // A day with activity always gets a visible sliver, so "one" and
+    // "none at all" do not look identical.
+    bar.style.setProperty("--h", (v ? Math.max(6, (v / peak) * 100) : 0) + "%");
+    if (!v) bar.classList.add("is-empty");
+    bar.title = `${fmtDay(day.day)}: ${v.toLocaleString()} ${METRIC_WORD[metric]}`;
+    bar.setAttribute("aria-label", bar.title);
+    bar.addEventListener("click", () => pickUsageDay(usageView.picked === i ? -1 : i));
+    bar.addEventListener("keydown", (e) => {
+      const n = data.series.length;
+      let to = null;
+      if (e.key === "ArrowLeft") to = Math.max(0, i - 1);
+      else if (e.key === "ArrowRight") to = Math.min(n - 1, i + 1);
+      else if (e.key === "Home") to = 0;
+      else if (e.key === "End") to = n - 1;
+      if (to === null) return;
+      e.preventDefault();
+      pickUsageDay(to);
+      /** @type {HTMLElement} */ (chart.children[to])?.focus();
+    });
+    chart.appendChild(bar);
+  });
+  const first = data.series[0], last = data.series[data.series.length - 1];
+  S("usageFrom").textContent = first ? fmtDay(first.day) : "";
+  S("usageTo").textContent = last ? fmtDay(last.day) : "";
+  pickUsageDay(usageView.picked < data.series.length ? usageView.picked : -1);
+}
+
 export async function loadUsage() {
   const chart = S("usageChart");
   if (!chart) return;
   try {
-    const res = await fetch("/api/usage?days=30");
+    const res = await fetch(`/api/usage?days=${usageView.days}`);
     if (!res.ok) return;
     const data = await res.json();
+    usageView.data = data;
+    usageView.picked = -1;
+    S("usageTokens").textContent = (data.totals.tokens || 0).toLocaleString();
     S("usageMessages").textContent = data.totals.messages.toLocaleString();
     S("usageCredits").textContent = data.totals.credits.toLocaleString();
     S("usageBalance").textContent = (data.balance ?? 0).toLocaleString();
-
-    // A plain bar chart in divs. A charting library for thirty bars
-    // would be more bytes than the whole settings panel.
-    const peak = Math.max(1, ...data.series.map((d) => d.messages));
-    chart.innerHTML = "";
-    for (const day of data.series) {
-      const bar = document.createElement("div");
-      bar.className = "usage-bar";
-      // A day with activity always gets a visible sliver, so "one
-      // message" and "none at all" do not look identical.
-      const share = day.messages ? Math.max(6, (day.messages / peak) * 100) : 0;
-      bar.style.height = share + "%";
-      bar.title = `${day.day}: ${day.messages} message(s), ${day.credits} credits`;
-      if (!day.messages) bar.classList.add("is-empty");
-      chart.appendChild(bar);
-    }
-    const first = data.series[0], last = data.series[data.series.length - 1];
-    S("usageRange").textContent =
-      `${first.day} to ${last.day}` +
-      (data.totals.busiest ? ` · busiest day ${data.totals.busiest}` : "");
+    drawUsage();
   } catch (_) { /* leave the panel as it is */ }
+}
+
+function initUsageControls() {
+  const radios = (group, key, onPick) => {
+    const box = S(group);
+    if (!box) return;
+    box.querySelectorAll('[role="radio"]').forEach((/** @type {HTMLElement} */ b) =>
+      b.addEventListener("click", () => {
+        box.querySelectorAll('[role="radio"]').forEach((x) =>
+          x.setAttribute("aria-checked", String(x === b)));
+        onPick(b.dataset[key]);
+      }));
+  };
+  radios("usageDays", "days", (v) => { usageView.days = Number(v) || 30; loadUsage(); });
+  radios("usageMetric", "metric", (v) => { usageView.metric = v; drawUsage(); });
+  // Fresh numbers every time the tab is opened - a reply sent since the
+  // page loaded has moved them.
+  document.querySelector('.modal-tab[data-tab="usage"]')?.addEventListener("click", () => {
+    loadUsage();
+    loadCredits();
+  });
 }
 
 export async function loadInvoices() {
@@ -320,6 +414,8 @@ export function mountProfile() {
   loadNotifyPrefs();
 
   loadTemplates();
+
+  initUsageControls();
 
   loadUsage();
 

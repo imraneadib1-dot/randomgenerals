@@ -1642,7 +1642,7 @@ def credits_view(credits):
     return view
 
 
-def spend_credits(amount: int) -> int:
+def spend_credits(amount: int, tokens: int = 0) -> int:
     """Charge the current account for work already done. -> what was
     actually charged, which may be less than asked.
 
@@ -1664,10 +1664,12 @@ def spend_credits(amount: int) -> int:
     save()              # the refill, and for a new guest the row itself
     charged, new_balance = db.debit_to_floor(owner, int(amount))
     credits["balance"] = new_balance
-    if charged:
+    if charged or tokens:
         # Counters for the usage chart. Written here rather than at the
         # call sites so no future spender can forget to record itself.
-        db.note_usage(owner, charged)
+        # Tokens count even when the balance was already empty and
+        # nothing could be charged: the model still wrote them.
+        db.note_usage(owner, charged, tokens=tokens)
     return charged
 
 
@@ -3827,8 +3829,9 @@ def _v1_charged(pieces, user: dict, usage: dict):
             cost = usage_based_cost(usage.get("eval_count"), "code")
             charged, new_balance = db.debit_to_floor(user["id"], cost)
             user["credits"]["balance"] = new_balance
-            if charged:
-                db.note_usage(user["id"], charged)
+            tokens = usage.get("eval_count") or 0
+            if charged or tokens:
+                db.note_usage(user["id"], charged, tokens=tokens)
 
 
 def _v1_pieces(candidates, history, opts, usage, failure):
@@ -4291,6 +4294,7 @@ def usage_dashboard():
         "totals": {
             "messages": sum(d["messages"] for d in series),
             "credits": sum(d["credits"] for d in series),
+            "tokens": sum(d["tokens"] for d in series),
             # None when nothing happened. max() over all-zero days
             # returns the first one, which would label an idle month's
             # opening day as its busiest.
@@ -8725,7 +8729,8 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                     cost = (usage_based_cost(usage.get("eval_count"), mode)
                             + tools_used.cost)
                     try:
-                        charged = spend_credits(cost)
+                        charged = spend_credits(
+                            cost, tokens=usage.get("eval_count") or 0)
                     except Exception as e:              # noqa: BLE001
                         # Charging runs before the save below so the
                         # amount can be recorded on the turn. A failure

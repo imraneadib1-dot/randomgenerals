@@ -134,6 +134,9 @@ CREATE TABLE IF NOT EXISTS usage_log (
     day      TEXT NOT NULL,
     messages INTEGER NOT NULL DEFAULT 0,
     credits  INTEGER NOT NULL DEFAULT 0,
+    -- Tokens the model generated for this owner that day (eval_count),
+    -- for Settings > Usage.
+    tokens   INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (owner_id, day)
 );
 
@@ -745,6 +748,12 @@ def _migrate_columns(conn):
         conn.commit()
     if "project_id" not in thread_cols:
         conn.execute("ALTER TABLE threads ADD COLUMN project_id TEXT")
+        conn.commit()
+
+    usage_cols = {row["name"] for row in conn.execute("PRAGMA table_info(usage_log)")}
+    if usage_cols and "tokens" not in usage_cols:
+        conn.execute("ALTER TABLE usage_log ADD COLUMN tokens "
+                     "INTEGER NOT NULL DEFAULT 0")
         conn.commit()
 
 
@@ -1394,7 +1403,7 @@ SETTINGS_DEFAULTS = {
 }
 
 
-def note_usage(owner_id, credits, messages=1):
+def note_usage(owner_id, credits, messages=1, tokens=0):
     """Add to today's counters. Never raises.
 
     Wrapped because this runs on the reply path: a usage counter that
@@ -1406,18 +1415,19 @@ def note_usage(owner_id, credits, messages=1):
         conn = _connect()
         with conn:
             conn.execute(
-                "INSERT INTO usage_log (owner_id, day, messages, credits) "
-                "VALUES (?, ?, ?, ?) "
+                "INSERT INTO usage_log (owner_id, day, messages, credits, tokens) "
+                "VALUES (?, ?, ?, ?, ?) "
                 "ON CONFLICT(owner_id, day) DO UPDATE SET "
                 "  messages = messages + excluded.messages, "
-                "  credits  = credits  + excluded.credits",
-                (owner_id, day, messages, int(credits)))
+                "  credits  = credits  + excluded.credits, "
+                "  tokens   = tokens   + excluded.tokens",
+                (owner_id, day, messages, int(credits), max(0, int(tokens or 0))))
     except Exception:                          # noqa: BLE001
         pass
 
 
 def usage_series(owner_id, days=30):
-    """-> [{day, messages, credits}], oldest first, with empty days
+    """-> [{day, messages, credits, tokens}], oldest first, with empty days
     filled in. A chart with holes in it reads as missing data rather
     than as a quiet day."""
     import datetime as _dt
@@ -1425,7 +1435,7 @@ def usage_series(owner_id, days=30):
     start = today - _dt.timedelta(days=days - 1)
     conn = _connect()
     rows = {r["day"]: r for r in conn.execute(
-        "SELECT day, messages, credits FROM usage_log "
+        "SELECT day, messages, credits, tokens FROM usage_log "
         "WHERE owner_id = ? AND day >= ? ORDER BY day",
         (owner_id, start.isoformat())).fetchall()}
     out = []
@@ -1436,6 +1446,7 @@ def usage_series(owner_id, days=30):
             "day": key,
             "messages": row["messages"] if row else 0,
             "credits": row["credits"] if row else 0,
+            "tokens": row["tokens"] if row else 0,
         })
     return out
 

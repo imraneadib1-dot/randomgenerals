@@ -4664,6 +4664,8 @@ input[type="range"]:focus-visible { outline: 2px solid var(--deck); outline-offs
   margin-bottom: 14px;
 }
 .usage-figure { display: flex; flex-direction: column; gap: 2px; }
+/* The totals are buttons now (they choose what the chart shows), and
+   the bars are buttons (each one previews its day). */
 .usage-number {
   font-size: 22px;
   font-weight: 600;
@@ -4675,22 +4677,40 @@ input[type="range"]:focus-visible { outline: 2px solid var(--deck); outline-offs
   display: flex;
   align-items: flex-end;
   gap: 3px;
-  height: 88px;
-  padding: 6px 0;
+  height: 120px;
+  padding: 6px 0 0;
   border-bottom: 1px solid var(--border);
-  margin-bottom: 8px;
 }
+.usage-chart.is-dense { gap: 1px; }
+/* The bar is the whole column, so a short day is still easy to hit;
+   the visible part is its ::before, --h tall. */
 .usage-bar {
   flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.usage-bar::before {
+  content: "";
+  width: 100%;
+  height: var(--h, 0%);
   min-height: 2px;
-  background: var(--deck);
-  border-radius: 2px 2px 0 0;
-  transition: opacity 0.15s ease;
+  border-radius: 3px 3px 0 0;
+  background: var(--ink-soft);
+  opacity: 0.55;
+  transition: opacity var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
 /* An empty day is a visible baseline rather than nothing, so a gap in
    the chart reads as a quiet day and not as missing data. */
-.usage-bar.is-empty { height: 2px !important; background: var(--border); }
-.usage-bar:hover { opacity: 0.75; }
+.usage-bar.is-empty::before { height: 2px; background: var(--border); opacity: 1; }
+.usage-bar:hover::before { opacity: 0.85; }
+.usage-bar[aria-selected="true"]::before { opacity: 1; background: var(--ink); }
+.usage-bar:focus-visible { outline: 2px solid var(--border-strong); outline-offset: 1px; border-radius: 3px; }
 
 .notify-group { margin-bottom: 18px; }
 .notify-title {

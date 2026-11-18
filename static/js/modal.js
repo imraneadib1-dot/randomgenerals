@@ -17,6 +17,7 @@ export const modalPanels = {
   notify: document.getElementById("notifyPanel"),
   apps: document.getElementById("appsPanel"),
   data: document.getElementById("dataPanel"),
+  usage: document.getElementById("usagePanel"),
   about: document.getElementById("aboutPanel"),
 };
 

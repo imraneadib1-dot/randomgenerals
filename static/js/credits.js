@@ -12,7 +12,25 @@ export function renderCredits(data) {
   creditBarFill.classList.remove("mid", "low");
   if (pct <= 15) creditBarFill.classList.add("low");
   else if (pct <= 45) creditBarFill.classList.add("mid");
-  creditCount.textContent = `${data.balance} / ${data.starting}`;
+  creditCount.textContent =
+    `${data.balance.toLocaleString()} / ${(data.starting || 0).toLocaleString()}`;
+  // Settings > Usage says when it fills back up.
+  const refill = document.getElementById("usageRefill");
+  if (refill) {
+    const s = Number(data.next_refill_in);
+    refill.textContent = Number.isFinite(s) && data.balance < data.starting
+      ? `Refills to ${(data.starting || 0).toLocaleString()} in ${duration(s)}.`
+      : "Full.";
+  }
+}
+
+/** 7260 -> "2h 1m", 300 -> "5m". */
+function duration(seconds) {
+  const m = Math.max(1, Math.round(seconds / 60));
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}h ${m % 60}m`;
+  return `${Math.round(h / 24)} days`;
 }
 
 export async function loadCredits() {

@@ -198,6 +198,7 @@ function mountProfile() {
   };
   $("profileUpgrade").addEventListener("click", () => openAt("plan"));
   $("profileAppearance").addEventListener("click", () => openAt("appearance"));
+  $("profileUsage")?.addEventListener("click", () => openAt("usage"));
   // #settingsBtn opens Settings through modal.js; this only closes the menu.
   $("settingsBtn").addEventListener("click", () => setOpen(false));
   $("profileAuth").addEventListener("click", () => {

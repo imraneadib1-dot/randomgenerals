@@ -79,6 +79,7 @@ export const SETTINGS_KEYWORDS = {
   appearance: "colour color accent theme sky dark light background",
   memory: "custom instructions remember personalization name",
   data: "export delete download privacy conversations egress",
+  usage: "tokens credits usage messages chart spent balance",
   plan: "billing upgrade pro credits subscription payment",
   about: "version model provider status licence",
 };

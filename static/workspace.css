@@ -2901,7 +2901,8 @@ a.profile-menu-item {
    Search (search.js) - a <dialog>
    ============================================================ */
 .search-dialog {
-  width: min(640px, calc(100vw - 32px));
+  /* 520, down from 640: titles and a one-line snippet, not a page. */
+  width: min(520px, calc(100vw - 32px));
   max-height: min(70vh, 560px);
   margin: 12vh auto auto;
   padding: 0;
@@ -3138,4 +3139,101 @@ a.profile-menu-item {
    red it turns when credits run low stay, because those are warnings. */
 .credit-bar-fill:not(.mid):not(.low) {
   background: var(--ws-ink-2);
+}
+
+/* ============================================================
+   Settings > Usage - credits, and tokens by day
+   ============================================================ */
+.usage-credits {
+  margin: 4px 0 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--rg-border);
+  border-radius: 12px;
+  background: var(--rg-surface);
+}
+.usage-credits .credit-count {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--ws-ink-2);
+}
+.usage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.usage-head .memory-label {
+  margin: 0;
+}
+.usage-seg {
+  border-color: var(--rg-border);
+  background: transparent;
+}
+.usage-seg [role="radio"] {
+  color: var(--ws-ink-2);
+}
+.usage-seg [role="radio"] + [role="radio"] {
+  border-left-color: var(--rg-border);
+}
+.usage-seg [role="radio"][aria-checked="true"] {
+  background: var(--rg-nav-active);
+  color: var(--ws-ink);
+}
+#usageMetric {
+  gap: 8px;
+  margin: 12px 0 14px;
+}
+#usageMetric .usage-figure {
+  flex: 1 1 110px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--rg-border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ws-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+#usageMetric .usage-figure:hover {
+  background: var(--rg-nav-hover);
+}
+#usageMetric .usage-figure[aria-checked="true"] {
+  border-color: var(--rg-border-strong);
+  background: var(--rg-nav-active);
+}
+#usageMetric .usage-figure.is-static {
+  cursor: default;
+  border-style: dashed;
+}
+#usageMetric .usage-figure.is-static:hover {
+  background: transparent;
+}
+#usageMetric .usage-figure:focus-visible {
+  outline: 2px solid var(--ws-line-focus);
+  outline-offset: 2px;
+}
+#usageMetric .usage-number {
+  font-size: 20px;
+}
+.usage-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--ws-ink-3);
+}
+.usage-day {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--rg-nav-hover);
+  font-size: 13px;
+  color: var(--ws-ink-2);
+}
+.usage-day strong {
+  color: var(--ws-ink);
+  font-weight: 600;
 }
