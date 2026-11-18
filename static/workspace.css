@@ -3237,3 +3237,35 @@ a.profile-menu-item {
   color: var(--ws-ink);
   font-weight: 600;
 }
+
+/* ============================================================
+   The reply receipt (message.js renderReceipt)
+   ============================================================ */
+.msg-receipt {
+  /* After the thumbs, which already push to the right edge. */
+  margin-left: 6px;
+  padding-left: 10px;
+  border-left: 1px solid var(--rg-border);
+  align-self: center;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ws-ink-3);
+  white-space: nowrap;
+  cursor: default;
+  opacity: 0.85;
+}
+.msg:hover .msg-receipt {
+  opacity: 1;
+}
+/* A phone has no room for it beside the buttons: its own line below. */
+@media (max-width: 520px) {
+  .msg-actions:has(.msg-receipt) {
+    flex-wrap: wrap;
+  }
+  .msg-receipt {
+    flex-basis: 100%;
+    margin: 2px 0 0;
+    padding-left: 0;
+    border-left: 0;
+  }
+}

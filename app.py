@@ -60,6 +60,7 @@ import groq_api  # noqa: E402  the fast channel - see groq_api.py
 import imagesearch  # noqa: E402  real photos for generated sites
 import sitebuilder  # noqa: E402  plans and writes whole website projects
 import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
+import kelviq_billing  # noqa: E402  the payment provider, used first when set
 import pixverse  # noqa: E402  paid text-to-video - see pixverse.py
 import hfvideo  # noqa: E402  free-tier text-to-video - see hfvideo.py
 import tripo3d  # noqa: E402  text-to-3D generation - see tripo3d.py
@@ -3117,7 +3118,27 @@ def subscribe():
     user = USERS[uid]
 
     if plan == "pro":
-        # Paddle first when it's configured. It is a merchant of record,
+        # KELVIQ FIRST. It is the payment provider this site uses: a
+        # merchant of record, like Paddle, so VAT and sales tax are its
+        # problem. The account's own id is Kelviq's customer id, which
+        # is how the webhook finds the account again.
+        if kelviq_billing.configured():
+            base = request.host_url.rstrip("/")
+            url, err = kelviq_billing.create_checkout(
+                user_id=uid, email=user["email"],
+                # checkout=kelviq means "a checkout was in progress":
+                # the page asks the server whether the upgrade has
+                # landed, rather than announcing a payment it has not
+                # seen confirmed.
+                success_url=base + "/app?checkout=kelviq",
+                cancel_url=base + "/app?checkout=cancel")
+            if err:
+                # 400, not 5xx - see the Paddle branch below for why.
+                return jsonify({"error": "Could not start checkout. Try again "
+                                         "in a moment.", "detail": err}), 400
+            return jsonify({"checkout_url": url})
+
+        # Paddle when it's configured. It is a merchant of record,
         # so it can sell from countries Stripe has no account type for -
         # Morocco among them - which is the only reason to prefer it.
         # Where both work, Stripe is cheaper, so this order only matters
@@ -3195,6 +3216,9 @@ def subscribe():
                 "setup_url": "https://dashboard.stripe.com/apikeys",
             }), 503
 
+    if plan == "free" and _kelviq_subscription_live(user):
+        return _cancel_kelviq(user)
+
     if plan == "free" and _paddle_subscription_live(user):
         # A PAYING CUSTOMER LEAVING IS A CANCELLATION AT PADDLE, not a
         # local plan change. This used to set plan=free and stop: they
@@ -3214,6 +3238,33 @@ def _paddle_subscription_live(user: dict) -> bool:
                 and user.get("paddle_subscription_id")
                 and (user.get("subscription_status") or "")
                 in paddle_billing.ACTIVE_STATUSES)
+
+
+def _kelviq_subscription_live(user: dict) -> bool:
+    """A Kelviq subscription that is billing, or scheduled to stop."""
+    return bool(kelviq_billing.configured()
+                and user.get("kelviq_subscription_id")
+                and (user.get("subscription_status") or "")
+                in kelviq_billing.ACTIVE_STATUSES)
+
+
+def _cancel_kelviq(user: dict, immediately: bool = False):
+    """Cancel at Kelviq (at the end of the paid period) and apply it."""
+    state, err = kelviq_billing.cancel_subscription(
+        user["kelviq_subscription_id"], immediately=immediately)
+    if err:
+        return jsonify({"error": "Kelviq could not cancel the subscription "
+                                 "just now. Try again in a moment.",
+                        "detail": err}), 502
+    state["occurred_at"] = now_iso()
+    # The period end is what it already was; Kelviq's reply carries none.
+    state["current_period_end"] = user.get("current_period_end")
+    _apply_subscription_state(user, state, force=True, provider="kelviq")
+    return jsonify({"user": public_user(user),
+                    "credits": credits_view(user["credits"]),
+                    "cancel_at_period_end": bool(user.get("cancel_at_period_end")),
+                    "current_period_end": user.get("current_period_end"),
+                    "status": user.get("subscription_status")})
 
 
 def _cancel_paddle(user: dict, immediately: bool = False):
@@ -3242,6 +3293,8 @@ def billing_cancel():
     user = USERS.get(uid) if uid else None
     if not user:
         return jsonify({"error": "Sign in first."}), 401
+    if _kelviq_subscription_live(user):
+        return _cancel_kelviq(user)
     if _paddle_subscription_live(user):
         return _cancel_paddle(user)
     if user["plan"] == "pro":
@@ -3261,6 +3314,11 @@ def billing_resume():
     user = USERS.get(uid) if uid else None
     if not user:
         return jsonify({"error": "Sign in first."}), 401
+    if _kelviq_subscription_live(user) and user.get("cancel_at_period_end"):
+        # Kelviq's API has no "undo cancel"; its customer portal does.
+        return jsonify({"error": "To keep your subscription, open Manage "
+                                 "payment and resume it there.",
+                        "portal": True}), 400
     if not (_paddle_subscription_live(user) and user.get("cancel_at_period_end")):
         return jsonify({"error": "There is no cancellation to undo."}), 400
     state, err = paddle_billing.resume_subscription(user["paddle_subscription_id"])
@@ -3287,6 +3345,15 @@ def billing_portal():
     uid = session.get("user_id")
     if not uid or uid not in USERS:
         return jsonify({"error": "Sign in first."}), 401
+
+    # Kelviq's portal for a Kelviq customer - whose customer id is the
+    # account's own id.
+    if kelviq_billing.configured() and USERS[uid].get("kelviq_subscription_id"):
+        url, err = kelviq_billing.portal_session(uid)
+        if err:
+            return jsonify({"error": "Could not open the billing portal.",
+                            "detail": err}), 502
+        return jsonify({"portal_url": url})
 
     # Paddle's portal for a Paddle customer. This route knew only
     # Stripe's, so on the deployment that actually takes money the
@@ -3331,16 +3398,19 @@ def billing_subscription():
         "status": user.get("subscription_status"),
         "current_period_end": user.get("current_period_end"),
         "cancel_at_period_end": bool(user.get("cancel_at_period_end")),
-        "billing_live": billing_live() or paddle_billing.configured(),
+        "billing_live": (billing_live() or paddle_billing.configured()
+                         or kelviq_billing.configured()),
         # Which processor holds the card, so the panel can name it rather
         # than saying "your payment provider".
-        "processor": "Paddle" if paddle_billing.configured() else "Stripe",
+        "processor": ("Kelviq" if kelviq_billing.configured()
+                      else "Paddle" if paddle_billing.configured() else "Stripe"),
         # Paddle was missing here. This checked only for a Stripe customer
         # id, so on a Paddle deployment - which this one is - a paying
         # subscriber never saw the button that manages their own
         # subscription.
         "has_billing_account": bool(user.get("stripe_customer_id")
-                                    or user.get("paddle_customer_id")),
+                                    or user.get("paddle_customer_id")
+                                    or user.get("kelviq_subscription_id")),
         # The account itself. The panel is where someone goes to check
         # what they are being charged for, and "which account is this?"
         # is part of that question.
@@ -3420,6 +3490,60 @@ def billing_webhook():
             save_users()
 
     return jsonify({"received": True})
+
+
+@app.route("/api/billing/kelviq/webhook", methods=["POST"])
+def kelviq_webhook():
+    """Kelviq calls this when a subscription changes or an invoice is paid.
+
+    Public and unauthenticated, so the signature is the only thing that
+    separates Kelviq from anyone POSTing themselves a Pro plan. It fails
+    closed: no secret configured, nothing is trusted.
+    """
+    ok, reason = kelviq_billing.verify_webhook(request.get_data(), request.headers)
+    if not ok:
+        # 400, not 5xx: a delivery that fails verification will fail the
+        # same way every retry.
+        return jsonify({"error": f"Rejected: {reason}"}), 400
+
+    payload = request.get_json(force=True, silent=True) or {}
+    event_id = str(payload.get("id") or request.headers.get("webhook-id") or "")
+    if event_id and db.webhook_seen("kelviq", event_id, str(payload.get("type") or "")):
+        return jsonify({"received": True, "duplicate": True})
+
+    payment = kelviq_billing.parse_payment(payload)
+    if payment:
+        payer = USERS.get(payment["user_id"])
+        if payment["txn_id"]:
+            db.record_payment(
+                payment["txn_id"], payment["user_id"],
+                payment["email"] or (payer or {}).get("email", ""),
+                payment["currency"], payment["gross"], payment["fee"],
+                payment["earnings"], payment["created"])
+        # A paid invoice on a subscription is an active subscription,
+        # whether or not the subscription.* event arrives first.
+        if payer and payment["subscription_id"]:
+            _apply_subscription_state(payer, {
+                "subscription_id": payment["subscription_id"],
+                "status": "active", "active": True,
+                "cancel_at_period_end": bool(payer.get("cancel_at_period_end")),
+                "current_period_end": None,
+                "occurred_at": payment["occurred_at"],
+            }, provider="kelviq")
+        return jsonify({"received": True, "handled": True, "recorded": "payment"})
+
+    event = kelviq_billing.parse_event(payload)
+    if not event:
+        return jsonify({"received": True, "handled": False})
+    user = USERS.get(str(event.get("user_id") or ""))
+    if not user and event.get("subscription_id"):
+        user = next((u for u in USERS.values()
+                     if u.get("kelviq_subscription_id") == event["subscription_id"]),
+                    None)
+    if not user:
+        return jsonify({"received": True, "handled": False, "reason": "unknown user"})
+    applied = _apply_subscription_state(user, event, provider="kelviq")
+    return jsonify({"received": True, "handled": True, "applied": applied})
 
 
 @app.route("/api/billing/paddle/webhook", methods=["POST"])
@@ -3517,7 +3641,8 @@ def paddle_webhook():
 
 
 def _apply_subscription_state(user: dict, state: dict,
-                              force: bool = False) -> bool:
+                              force: bool = False,
+                              provider: str = "paddle") -> bool:
     """The one place a subscription's state reaches an account.
     -> True if applied, False if it was older than what is stored.
 
@@ -3546,10 +3671,16 @@ def _apply_subscription_state(user: dict, state: dict,
     elif user["plan"] != "free":
         _apply_plan(user, "free")
 
-    if state.get("subscription_id"):
-        user["paddle_subscription_id"] = state["subscription_id"]
-    if state.get("customer_id"):
-        user["paddle_customer_id"] = state["customer_id"]
+    if provider == "kelviq":
+        # Kelviq's customer id is the account's own id, so only the
+        # subscription needs remembering.
+        if state.get("subscription_id"):
+            user["kelviq_subscription_id"] = state["subscription_id"]
+    else:
+        if state.get("subscription_id"):
+            user["paddle_subscription_id"] = state["subscription_id"]
+        if state.get("customer_id"):
+            user["paddle_customer_id"] = state["customer_id"]
     user["subscription_status"] = state.get("status")
     user["cancel_at_period_end"] = bool(state.get("cancel_at_period_end"))
     if state.get("current_period_end"):
@@ -3953,8 +4084,10 @@ def _paddle_customer_id():
 def get_plans():
     return jsonify({
         "plans": PLANS,
-        "billing_live": billing_live() or paddle_billing.configured(),
-        "processor": "paddle" if paddle_billing.configured() else "stripe",
+        "billing_live": (billing_live() or paddle_billing.configured()
+                         or kelviq_billing.configured()),
+        "processor": ("kelviq" if kelviq_billing.configured()
+                      else "paddle" if paddle_billing.configured() else "stripe"),
         # Safe to publish: Paddle client tokens are designed to ship
         # in the page. They can start a checkout and nothing else -
         # the API key, which can read and refund, never leaves here.
@@ -8723,14 +8856,23 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                 # key on the reply starting with "[" - which a reply
                 # opening with a markdown link also does.
                 charged = 0
+                # The reply's receipt (tokens and credits, shown under it):
+                # the model's own count when the channel reports one,
+                # otherwise an estimate at ~4 characters a token, marked
+                # as such so the page can say "about".
+                reply_tokens = 0
+                tokens_estimated = False
                 if kind == "text":
+                    reply_tokens = int(usage.get("eval_count") or 0)
+                    if not reply_tokens and full_reply:
+                        reply_tokens = max(1, len(full_reply) // 4)
+                        tokens_estimated = True
                     # The prose, plus whatever the tools did on the way
                     # to it - each round of the loop and any image made.
                     cost = (usage_based_cost(usage.get("eval_count"), mode)
                             + tools_used.cost)
                     try:
-                        charged = spend_credits(
-                            cost, tokens=usage.get("eval_count") or 0)
+                        charged = spend_credits(cost, tokens=reply_tokens)
                     except Exception as e:              # noqa: BLE001
                         # Charging runs before the save below so the
                         # amount can be recorded on the turn. A failure
@@ -8747,6 +8889,8 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                         fallback=fell_back_to_cloud,
                         sources=web_results or None,
                         charged=charged or None,
+                        tokens=reply_tokens or None,
+                        tokens_estimated=tokens_estimated or None,
                         tool_displays=tools_used.displays or None))
                     thread["updated"] = now_iso()
                 save_thread(thread)

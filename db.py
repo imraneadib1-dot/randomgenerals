@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS users (
     -- nothing to manage.
     paddle_customer_id     TEXT,
     paddle_subscription_id TEXT,
+    kelviq_subscription_id TEXT,
     -- occurred_at of the last subscription event APPLIED. Paddle does
     -- not guarantee delivery order and redelivers on failure; an event
     -- older than this one is acknowledged and ignored, which is what
@@ -709,6 +710,7 @@ def _migrate_columns(conn):
         ("subscription_updated_at", "TEXT"),
         ("api_key_hash", "TEXT"),
         ("api_key_created", "TEXT"),
+        ("kelviq_subscription_id", "TEXT"),
     ):
         if col not in user_cols:
             conn.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
@@ -1075,7 +1077,7 @@ def load_users():
         "       u.cancel_at_period_end, u.name, u.birth_year, "
         "       u.email_verified, u.paddle_customer_id, "
         "       u.paddle_subscription_id, u.subscription_updated_at, "
-        "       u.api_key_hash, u.api_key_created, "
+        "       u.api_key_hash, u.api_key_created, u.kelviq_subscription_id, "
         "       c.balance, c.starting, c.plan AS credit_plan, c.last_refill "
         "FROM users u LEFT JOIN credits c ON c.owner_id = u.id"
     ).fetchall()
@@ -1100,6 +1102,7 @@ def load_users():
             "subscription_updated_at": r["subscription_updated_at"],
             "api_key_hash": r["api_key_hash"],
             "api_key_created": r["api_key_created"],
+            "kelviq_subscription_id": r["kelviq_subscription_id"],
             "credits": {
                 "balance": r["balance"],
                 "starting": r["starting"],
@@ -1160,9 +1163,10 @@ def save_users(users):
                 "subscription_status, current_period_end, "
                 "cancel_at_period_end, name, birth_year, email_verified, "
                 "paddle_customer_id, paddle_subscription_id, "
-                "subscription_updated_at, api_key_hash, api_key_created) "
+                "subscription_updated_at, api_key_hash, api_key_created, "
+                "kelviq_subscription_id) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                "?, ?)",
+                "?, ?, ?)",
                 (uid, u["email"], u.get("password_hash", ""),
                  u.get("google_id"), u["plan"], u["created"],
                  u.get("stripe_customer_id"), u.get("stripe_subscription_id"),
@@ -1172,7 +1176,8 @@ def save_users(users):
                  1 if u.get("email_verified") else 0,
                  u.get("paddle_customer_id"), u.get("paddle_subscription_id"),
                  u.get("subscription_updated_at"),
-                 u.get("api_key_hash"), u.get("api_key_created")),
+                 u.get("api_key_hash"), u.get("api_key_created"),
+                 u.get("kelviq_subscription_id")),
             )
         conn.commit()
 
@@ -1201,8 +1206,9 @@ def save_user(u):
             "subscription_status, current_period_end, "
             "cancel_at_period_end, name, birth_year, email_verified, "
             "paddle_customer_id, paddle_subscription_id, "
-            "subscription_updated_at, api_key_hash, api_key_created) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "subscription_updated_at, api_key_hash, api_key_created, "
+            "kelviq_subscription_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(id) DO UPDATE SET "
             "  email=excluded.email, password_hash=excluded.password_hash, "
             "  google_id=excluded.google_id, plan=excluded.plan, "
@@ -1218,7 +1224,8 @@ def save_user(u):
             "  paddle_subscription_id=excluded.paddle_subscription_id, "
             "  subscription_updated_at=excluded.subscription_updated_at, "
             "  api_key_hash=excluded.api_key_hash, "
-            "  api_key_created=excluded.api_key_created",
+            "  api_key_created=excluded.api_key_created, "
+            "  kelviq_subscription_id=excluded.kelviq_subscription_id",
             (u["id"], u["email"], u.get("password_hash", ""),
              u.get("google_id"), u["plan"], u["created"],
              u.get("stripe_customer_id"), u.get("stripe_subscription_id"),
@@ -1228,7 +1235,8 @@ def save_user(u):
              1 if u.get("email_verified") else 0,
              u.get("paddle_customer_id"), u.get("paddle_subscription_id"),
              u.get("subscription_updated_at"),
-             u.get("api_key_hash"), u.get("api_key_created")),
+             u.get("api_key_hash"), u.get("api_key_created"),
+             u.get("kelviq_subscription_id")),
         )
         conn.commit()
 

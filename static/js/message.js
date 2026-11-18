@@ -52,6 +52,33 @@ export function addMessage(role, text, provider, model) {
 // on the most recent one, since the backend only ever replays the
 // thread's last message - showing it elsewhere would just confuse which
 // reply is actually getting redone.
+/* THE RECEIPT. What a reply cost, under it: "412 tokens · 3 credits".
+   This app is paid for in credits, and the honest place to say what an
+   answer cost is beside the answer - not only as a total in Settings.
+   Quiet by design: small, muted, at the end of the action row, and only
+   for real answers. "about" when the channel did not report a count
+   and it was estimated from the length.
+   @param {HTMLElement} msg  the .msg element
+   @param {{tokens?: number, charged?: number, tokens_estimated?: boolean}} m */
+export function renderReceipt(msg, m) {
+  if (!msg || !m || !(m.tokens || m.charged)) return;
+  msg.querySelector(".msg-receipt")?.remove();
+  const parts = [];
+  if (m.tokens) {
+    parts.push(`${m.tokens_estimated ? "about " : ""}${Number(m.tokens).toLocaleString()} tokens`);
+  }
+  if (m.charged) parts.push(`${Number(m.charged).toLocaleString()} credit${m.charged === 1 ? "" : "s"}`);
+  const tag = document.createElement("span");
+  tag.className = "msg-receipt";
+  tag.textContent = parts.join(" · ");
+  tag.title = "What this reply used" +
+    (m.tokens_estimated ? " (tokens estimated from its length)" : "") +
+    ". Totals are in Settings › Usage.";
+  const row = msg.querySelector(".msg-actions");
+  if (row) row.appendChild(tag);
+  else msg.appendChild(tag);
+}
+
 export function addMessageActions(msg, bubble, { allowRegenerate }) {
   // Only one message can ever be "the last reply" - drop any stale
   // Regenerate button before (maybe) adding a fresh one.

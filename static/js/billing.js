@@ -143,7 +143,11 @@ export async function loadPlansMeta() {
       planProBtn.textContent = "Upgrade to Pro";
       planProBtn.removeAttribute("title");
       planFineprint.textContent =
-        data.processor === "paddle"
+        data.processor === "kelviq"
+          ? "Card details are entered in Kelviq's own checkout and never " +
+            "touch this server. Kelviq is the seller of record and handles " +
+            "VAT and sales tax. Cancel any time from this tab."
+          : data.processor === "paddle"
           ? "Card details are entered in Paddle's own checkout and never " +
             "touch this server. Paddle is the seller of record and handles " +
             "VAT. Cancel any time from the button above."
@@ -318,7 +322,7 @@ export function handleCheckoutReturn() {
     setError(planError, "");
     planNote.textContent = "Payment received — syncing your plan…";
     awaitUpgrade();
-  } else if (checkout === "paddle") {
+  } else if (checkout === "paddle" || checkout === "kelviq") {
     // A Paddle checkout was in progress and the browser came back by
     // navigation rather than the overlay. Whether it was paid is not
     // known yet - so ask, and say nothing until the server does.

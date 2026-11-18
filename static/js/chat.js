@@ -3,11 +3,11 @@ import { renderAttachChips } from "./attachments.js";
 import { loadCredits, renderCredits } from "./credits.js";
 import { chatForm, chatLog, messageInput, modelSelect, sendBtn, topbarModelChip } from "./dom.js";
 import { regenerateLast, sendImagePrompt } from "./image.js";
-import { explain, postJSON } from "./api.js";
+import { explain, getJSON, postJSON } from "./api.js";
 import { StreamRenderer } from "./markdown.js";
 import { renderSiteCard } from "./sites.js";
 import { toast } from "./toast.js";
-import { addMessage, addMessageActions, renderContent, renderMsgAttachments, renderSourceChips } from "./message.js";
+import { addMessage, addMessageActions, renderContent, renderMsgAttachments, renderReceipt, renderSourceChips } from "./message.js";
 import { loadThreadList } from "./sidebar.js";
 import { shouldAutoSearch } from "./voice.js";
 
@@ -141,6 +141,18 @@ export function replyKindOf(msgEl) {
    or nothing - an error and a refusal are not things to copy, save or
    regenerate. Shared by send, regenerate and the lost-thread retry so
    the three cannot disagree about it. */
+/** The receipt for a reply that just finished streaming. The charge is
+ *  settled on the server as the stream closes and saved on the turn, so
+ *  it is read back from there rather than guessed from the balance. */
+export async function attachReceipt(msgEl, threadId) {
+  if (!threadId || replyKindOf(msgEl) !== "text") return;
+  try {
+    const thread = await getJSON(`/api/threads/${threadId}`);
+    const last = [...(thread.messages || [])].reverse().find((m) => m.role === "assistant");
+    if (last) renderReceipt(msgEl, last);
+  } catch (_) { /* a receipt is a nicety; the reply is what matters */ }
+}
+
 export function finishReply(msgEl, bubble, fullText, { allowRegenerate }) {
   if (!fullText) {
     markReplyKind(msgEl, "error");
@@ -376,6 +388,7 @@ export async function sendChatMessage(text) {
 
     const fullText = await consumeStream(res, bubble);
     finishReply(msgEl, bubble, fullText, { allowRegenerate: true });
+    attachReceipt(msgEl, state.currentThreadId);
   } catch (err) {
     if (err.name === "AbortError") {
       if (!bubble.textContent) renderContent(bubble, "[Stopped]");

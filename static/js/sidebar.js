@@ -6,7 +6,7 @@ import { readPref, writePref } from "./appearance.js";
 import { showEmptyState } from "./bays.js";
 import { markReplyKind, renderToolDisplay, replyKindOf } from "./chat.js";
 import { appShell, chatLog, clearThreadsBtn, deleteBtn, emptyState, newChatBtn, sidebar, sidebarCollapseBtn, threadList, topbarTitle } from "./dom.js";
-import { addMessage, addMessageActions, renderContent, renderMsgAttachments, renderSourceChips } from "./message.js";
+import { addMessage, addMessageActions, renderContent, renderMsgAttachments, renderReceipt, renderSourceChips } from "./message.js";
 import { relativeTime } from "./strength.js";
 import { projectName, setCurrentProject } from "./projects.js";
 
@@ -319,6 +319,7 @@ export async function openThread(tid) {
         addMessageActions(bubble.parentElement, bubble, {
           allowRegenerate: i === lastAssistantIdx,
         });
+        renderReceipt(bubble.parentElement, m);
       }
     }
   });
