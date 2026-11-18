@@ -144,6 +144,12 @@ function mountRecents() {
    on the page beside it. */
 function mountDrawer() {
   document.getElementById("newChatBtn")?.addEventListener("click", () => sidebar.classList.remove("open"));
+  // Design is the Image mode, opened on a fresh page.
+  document.getElementById("navDesign")?.addEventListener("click", () => {
+    sidebar.classList.remove("open");
+    selectBay("image");
+    document.getElementById("messageInput")?.focus();
+  });
   document.addEventListener("pointerdown", (e) => {
     if (!sidebar.classList.contains("open")) return;
     const t = /** @type {Element} */ (e.target);

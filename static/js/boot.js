@@ -203,15 +203,13 @@ export function renderGreeting() {
     // Now it greets and gets out of the way. Anyone who wants to be
     // called something can say so, and the offer sits under the
     // greeting at the weight of an aside rather than a gate.
+    // The "add your name" aside under the greeting is gone: a name is
+    // set in Settings (the account's nickname), and the home screen is
+    // the greeting and the input, with nothing in small print under it.
     const h = document.createElement("h2");
     h.className = "greeting";
     h.textContent = greetingFor(new Date().getHours());
-    const ask = document.createElement("button");
-    ask.type = "button";
-    ask.className = "greeting-edit";
-    ask.textContent = "add your name";
-    ask.addEventListener("click", () => promptForName(host));
-    host.append(h, ask);
+    host.append(h);
     return;
   }
 
@@ -220,15 +218,8 @@ export function renderGreeting() {
   // textContent, never innerHTML - this string is whatever the user
   // typed, and it is re-rendered on every empty state.
   h.textContent = `${greetingFor(new Date().getHours())}, ${name}`;
-  const edit = document.createElement("button");
-  edit.type = "button";
-  edit.className = "greeting-edit";
-  edit.textContent = "not you?";
-  edit.addEventListener("click", () => {
-    writePref(NAME_KEY, "");
-    renderGreeting();
-  });
-  host.append(h, edit);
+  // "not you?" used to sit under the name; see above.
+  host.append(h);
 }
 
 /** Top-level statements this module's section used to run as the

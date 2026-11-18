@@ -29,19 +29,23 @@
    ============================================================ */
 
 :root {
-  --ws-canvas: #121214;
-  --ws-1: #18181b;            /* frame: sidebar, pane */
-  --ws-2: #1c1c1f;            /* pane toolbar */
+  /* MATTE AND NEUTRAL. The ground is #181818, the sidebar a flat
+     #111111 one step darker, and every raised surface #222222 with a
+     zinc-800 edge. No hue anywhere in the chrome: the only colour left
+     on the page is whatever the conversation itself contains. */
+  --ws-canvas: #181818;
+  --ws-1: #111111;            /* frame: sidebar, pane */
+  --ws-2: #1a1a1a;            /* pane toolbar */
   --ws-3: rgba(255, 255, 255, 0.05);   /* raised, inside glass */
   --ws-4: rgba(255, 255, 255, 0.11);   /* selected segment */
   --ws-line: rgba(255, 255, 255, 0.08);
   --ws-line-strong: rgba(255, 255, 255, 0.12);
   --ws-line-focus: rgba(255, 255, 255, 0.22);
   --ws-hover: rgba(255, 255, 255, 0.06);
-  --ws-ink: #fafafa;
-  --ws-ink-2: #a1a1aa;
-  --ws-ink-3: #71717a;
-  --ws-primary: #fafafa;
+  --ws-ink: #f4f4f5;          /* zinc-100 */
+  --ws-ink-2: #a1a1aa;        /* zinc-400 */
+  --ws-ink-3: #8b8b93;        /* between 400 and 500: 5.6:1 on #111 */
+  --ws-primary: #f4f4f5;
   --ws-on-primary: #09090b;
   --ws-disabled: rgba(255, 255, 255, 0.12);
   --ws-on-disabled: rgba(255, 255, 255, 0.4);
@@ -52,12 +56,12 @@
   --ws-glass-border-strong: rgba(255, 255, 255, 0.16);
   --ws-glass-hi: inset 0 1px 0 rgba(255, 255, 255, 0.1);
   --ws-blur: blur(24px) saturate(160%);
-  --ws-menu: rgba(31, 31, 35, 0.97);
-  --ws-menu-solid: #1f1f23;
+  --ws-menu: #222222;
+  --ws-menu-solid: #222222;
   --ws-float: 0 12px 40px rgba(0, 0, 0, 0.45);
   --ws-focus-glow:
-    0 0 0 4px rgba(129, 140, 248, 0.12),
-    0 14px 48px rgba(99, 102, 241, 0.22);
+    0 0 0 4px rgba(255, 255, 255, 0.05),
+    0 14px 48px rgba(0, 0, 0, 0.4);
 
   /* The glows behind .main, now off: the surfaces are solid. */
   --ws-glow-1: transparent;
@@ -66,18 +70,23 @@
 
   /* The raised surfaces of the sidebar-and-home layout: the input box,
      the artifact cards, the menus. Solid, not glass. */
-  --rg-surface: #1f1f23;
-  --rg-surface-hover: #26262b;
-  --rg-border: rgba(63, 63, 70, 0.6);          /* zinc-700 / 60 */
-  --rg-border-strong: rgba(82, 82, 91, 0.75);  /* zinc-600 / 75 */
-  --rg-nav-hover: rgba(255, 255, 255, 0.055);
-  --rg-nav-active: rgba(255, 255, 255, 0.085);
-  /* The crescent's pink: the brand, the New chat glyph, a search hit.
-     The -ink value is the one that is read as text (5.9:1 on #18181B). */
-  --rg-accent: #ff1f5a;
-  --rg-accent-ink: #ff7396;
-  --rg-accent-soft: rgba(255, 31, 90, 0.15);
-  --rg-mark: rgba(255, 31, 90, 0.24);
+  --rg-surface: #222222;
+  --rg-surface-hover: #2a2a2a;
+  --rg-border: #27272a;                        /* zinc-800 */
+  --rg-border-strong: #3f3f46;                 /* zinc-700 */
+  --rg-sidebar-border: rgba(39, 39, 42, 0.8);  /* zinc-800 / 80 */
+  --rg-nav-hover: rgba(255, 255, 255, 0.05);
+  --rg-nav-active: rgba(255, 255, 255, 0.08);
+  /* The mark: one warm grey, not the two-colour crescent. */
+  --rg-mark-ink: #e7e5e4;
+  /* The "accent" is no colour at all now - a raised neutral. The names
+     stay so every rule that reads them goes neutral with them. */
+  --rg-accent: #f4f4f5;
+  --rg-accent-ink: #f4f4f5;
+  --rg-accent-soft: rgba(255, 255, 255, 0.08);
+  --rg-mark: rgba(255, 255, 255, 0.16);
+  --rg-send: #3a3a3a;
+  --rg-send-hover: #4a4a4a;
 
   /* Code stays dark in both themes - a code block is a quoted
      artefact, and the highlighter's palette is drawn for a dark ground. */
@@ -90,8 +99,8 @@
   --ws-radius-pill: 26px;
 
   /* Channel dots (providers.js reads var(--c-<id>)). */
-  --c-groq: #a5b4fc;
-  --c-groq-soft: rgba(165, 180, 252, 0.16);
+  --c-groq: #a1a1aa;
+  --c-groq-soft: rgba(161, 161, 170, 0.14);
   --c-openrouter: #a1a1aa;
   --c-openrouter-soft: rgba(161, 161, 170, 0.14);
   --ws-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -124,8 +133,8 @@
   --ws-menu-solid: #ffffff;
   --ws-float: 0 12px 40px rgba(24, 24, 27, 0.1);
   --ws-focus-glow:
-    0 0 0 4px rgba(99, 102, 241, 0.1),
-    0 14px 48px rgba(99, 102, 241, 0.12);
+    0 0 0 4px rgba(0, 0, 0, 0.04),
+    0 14px 48px rgba(24, 24, 27, 0.1);
 
   --ws-glow-1: transparent;
   --ws-glow-2: transparent;
@@ -137,10 +146,14 @@
   --rg-border-strong: rgba(0, 0, 0, 0.18);
   --rg-nav-hover: rgba(0, 0, 0, 0.045);
   --rg-nav-active: rgba(0, 0, 0, 0.07);
-  --rg-accent: #e8114a;
-  --rg-accent-ink: #c40c3d;
-  --rg-accent-soft: rgba(232, 17, 74, 0.1);
-  --rg-mark: rgba(232, 17, 74, 0.16);
+  --rg-sidebar-border: rgba(0, 0, 0, 0.1);
+  --rg-mark-ink: #27272a;
+  --rg-accent: #18181b;
+  --rg-accent-ink: #18181b;
+  --rg-accent-soft: rgba(0, 0, 0, 0.06);
+  --rg-mark: rgba(0, 0, 0, 0.1);
+  --rg-send: #18181b;
+  --rg-send-hover: #3f3f46;
 }
 
 /* ---- style.css's tokens, re-pointed ------------------------------------ */
@@ -151,12 +164,12 @@
 }
 
 :root:not([data-theme="light"]) {
-  --sky-top: #121214;
-  --sky-mid: #121214;
-  --sky-bottom: #121214;
+  --sky-top: #181818;
+  --sky-mid: #181818;
+  --sky-bottom: #181818;
   --surface: rgba(255, 255, 255, 0.04);
   --surface-raised: rgba(255, 255, 255, 0.06);
-  --panel: #18181b;
+  --panel: #111111;
   --border: rgba(255, 255, 255, 0.1);
   --border-strong: rgba(255, 255, 255, 0.18);
   --edge-lit: inset 0 1px 0 rgba(255, 255, 255, 0.06);
@@ -168,12 +181,12 @@
   --glass-1: rgba(255, 255, 255, 0.04);
   --glass-2: rgba(255, 255, 255, 0.07);
   --hairline: rgba(255, 255, 255, 0.08);
-  --topbar-ground: rgba(24, 24, 27, 0.92);
+  --topbar-ground: #111111;
   --modal-ground: rgba(17, 17, 20, 0.96);
   --user-bubble: rgba(255, 255, 255, 0.06);
   --shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 24px 64px rgba(0, 0, 0, 0.6);
   --shadow-soft: 0 6px 20px rgba(0, 0, 0, 0.4);
-  --ground: 18 18 20;
+  --ground: 24 24 24;
   --credit-mid: #a1a1aa;
 
   /* One accent, and it is the ink. A colour picked in Settings >
@@ -260,7 +273,7 @@
 }
 
 ::selection {
-  background: rgba(129, 140, 248, 0.32);
+  background: rgba(255, 255, 255, 0.2);
   color: inherit;
 }
 
@@ -328,7 +341,7 @@ html.time-night body {
   background: var(--ws-1);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
-  border-right: 1px solid var(--rg-border);
+  border-right: 1px solid var(--rg-sidebar-border);
 }
 
 /* The workspace ground, and the light the glass sits in. */
@@ -426,12 +439,7 @@ html.time-night body {
 .empty-mark {
   width: clamp(34px, 3.4vw, 42px);
   margin: 0;
-  color: var(--ws-ink);
-  /* Tight, so it reads as light off the mark - a wide one at this
-     size was a dark-plum disc behind it. */
-  filter: drop-shadow(0 0 6px rgba(255, 31, 90, 0.45));
-}
-:root[data-theme="light"] .empty-mark {
+  color: var(--rg-mark-ink);
   filter: none;
 }
 .greeting {
@@ -646,14 +654,14 @@ html.time-night body {
     "plus  .     mic   send";
   align-items: center;
   column-gap: 6px;
-  row-gap: 2px;
-  padding: 12px 10px 10px;
+  row-gap: 4px;
+  padding: 14px 12px 12px;
   background: var(--rg-surface);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   border: 1px solid var(--rg-border);
-  border-radius: 20px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 16px 40px rgba(0, 0, 0, 0.32);
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
   transition:
     border-color 200ms var(--ws-ease),
     box-shadow 200ms var(--ws-ease);
@@ -664,7 +672,7 @@ html.time-night body {
 .composer-form:focus-within {
   background: var(--rg-surface);
   border-color: var(--rg-border-strong);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 16px 44px rgba(0, 0, 0, 0.38);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
   transform: none;
 }
 :root[data-theme="light"] .composer-form:focus-within {
@@ -708,15 +716,16 @@ html.time-night body {
   transform: rotate(45deg);
 }
 
-/* High contrast, and the only filled object on the page. A rounded
-   square now rather than a circle, to sit square in the box's corner. */
+/* A solid dark circle with a white arrow. It was a white disc - the
+   brightest thing on the page; on a matte page the send button is a
+   control like the others, one step lighter than the box. */
 .send-btn {
   width: 34px;
   height: 34px;
-  border-radius: 10px;
-  background: var(--ws-primary);
-  color: var(--ws-on-primary);
-  box-shadow: 0 2px 12px rgba(255, 255, 255, 0.08);
+  border-radius: 50%;
+  background: var(--rg-send);
+  color: #ffffff;
+  box-shadow: none;
   transition: all 200ms var(--ws-ease);
 }
 :root[data-theme="light"] .send-btn {
@@ -724,8 +733,9 @@ html.time-night body {
 }
 .send-btn:hover:not(:disabled) {
   filter: none;
-  transform: scale(1.06);
-  box-shadow: 0 4px 18px rgba(255, 255, 255, 0.14);
+  transform: scale(1.04);
+  background: var(--rg-send-hover);
+  box-shadow: none;
 }
 .send-btn:disabled {
   opacity: 1;
@@ -735,8 +745,8 @@ html.time-night body {
 }
 .send-btn.is-streaming,
 .send-btn.is-streaming:disabled {
-  background: var(--ws-primary);
-  color: var(--ws-on-primary);
+  background: var(--rg-send);
+  color: #ffffff;
   box-shadow: none;
   animation: none;
 }
@@ -1418,8 +1428,9 @@ html[data-motion="reduced"] .artifact-inner {
   font-size: 13px;
   font-weight: 600;
   color: #ffffff;
-  background: linear-gradient(135deg, #6366f1, #a855f7 60%, #22d3ee);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  /* Was an indigo-violet-cyan gradient: a flat grey disc now. */
+  background: #3f3f46;
+  box-shadow: none;
 }
 .profile-text {
   display: flex;
@@ -1529,10 +1540,7 @@ html[data-motion="reduced"] .artifact-inner {
   color: var(--ws-ink-2);
 }
 #profileUpgrade svg {
-  color: #a5b4fc;
-}
-:root[data-theme="light"] #profileUpgrade svg {
-  color: #6366f1;
+  color: var(--ws-ink-2);
 }
 .profile-menu-item:hover,
 .profile-menu-item:focus-visible,
@@ -1636,14 +1644,14 @@ html[data-motion="reduced"] .artifact-inner {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0;
-  color: #c7d2fe;
-  background: rgba(129, 140, 248, 0.16);
-  border: 1px solid rgba(129, 140, 248, 0.25);
+  color: var(--ws-ink-2);
+  background: var(--rg-nav-active);
+  border: 1px solid var(--rg-border);
 }
 :root[data-theme="light"] .model-pill-tag,
 :root[data-theme="light"] .model-option-pro {
-  color: #4338ca;
-  background: rgba(99, 102, 241, 0.1);
+  color: var(--ws-ink-2);
+  background: var(--rg-nav-active);
 }
 .model-pill-chevron {
   color: var(--ws-ink-3);
@@ -1836,7 +1844,6 @@ html[data-motion="reduced"] .artifact-inner {
   padding: 20px 16px;
   overflow-x: auto;
   background:
-    radial-gradient(60% 80% at 50% 0%, rgba(99, 102, 241, 0.08), transparent 70%),
     var(--ws-editor);
 }
 .mermaid-view svg {
@@ -1878,9 +1885,9 @@ html[data-motion="reduced"] .artifact-inner {
   width: 38px;
   height: 38px;
   border-radius: 11px;
-  color: #c7d2fe;
-  background: rgba(99, 102, 241, 0.16);
-  border: 1px solid rgba(129, 140, 248, 0.25);
+  color: var(--ws-ink-2);
+  background: var(--rg-nav-active);
+  border: 1px solid var(--rg-border);
 }
 :root[data-theme="light"] .site-card-icon {
   color: #4338ca;
@@ -1946,7 +1953,7 @@ html[data-motion="reduced"] .artifact-inner {
 }
 .site-slug:focus-within {
   border-color: var(--ws-glass-border-strong);
-  box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.14);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06);
 }
 .site-slug input {
   flex: 1;
@@ -2015,8 +2022,8 @@ html[data-motion="reduced"] .artifact-inner {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #4ade80;
-  box-shadow: 0 0 0 4px rgba(74, 222, 128, 0.15);
+  background: var(--ws-ink-2);
+  box-shadow: none;
 }
 .site-live-link {
   color: #a5b4fc;
@@ -2085,6 +2092,7 @@ a.profile-menu-item {
   flex: none;
   width: 24px;
   height: 24px;
+  color: var(--rg-mark-ink);
 }
 .sidebar-brand-name {
   font-size: 15.5px;
@@ -2167,25 +2175,30 @@ a.profile-menu-item {
   place-items: center;
   width: 22px;
   height: 22px;
-  color: var(--ws-ink-3);
+  color: var(--ws-ink-2);
   transition: color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
 .nav-item:hover .nav-icon {
   color: var(--ws-ink);
 }
-/* New chat leads, with the brand's colour in its glyph: the one place
-   in the sidebar the pink appears besides the mark itself. */
+/* New chat leads as a full-width block with a thin edge - the one
+   boxed item in the list. It had the brand's pink in its glyph; it is
+   neutral now, like everything else in the frame. */
 .sidebar-nav .nav-new {
+  height: 38px;
+  margin-bottom: 6px;
+  border: 1px solid var(--rg-border);
+  background: var(--rg-surface);
   color: var(--ws-ink);
-  margin-bottom: 2px;
+}
+.sidebar-nav .nav-new:hover {
+  background: var(--rg-surface-hover);
+  border-color: var(--rg-border-strong);
 }
 .nav-icon-new {
-  border-radius: 50%;
-  background: var(--rg-accent-soft);
-  color: var(--rg-accent-ink);
+  color: var(--ws-ink);
 }
 .nav-new:hover .nav-icon-new {
-  color: var(--rg-accent-ink);
   transform: rotate(90deg);
 }
 .nav-label {
@@ -2202,12 +2215,6 @@ a.profile-menu-item {
   font-size: 11px;
   font-weight: 500;
   color: var(--ws-ink-3);
-  opacity: 0;
-  transition: opacity var(--dur-fast) var(--ease);
-}
-.nav-item:hover .nav-kbd,
-.nav-item:focus-visible .nav-kbd {
-  opacity: 1;
 }
 .nav-projects {
   position: relative;
@@ -2381,6 +2388,10 @@ a.profile-menu-item {
 .app.sidebar-collapsed .sidebar-nav .nav-item {
   justify-content: center;
   padding: 0;
+}
+.app.sidebar-collapsed .sidebar-nav .nav-new {
+  border-color: transparent;
+  background: transparent;
 }
 .app.sidebar-collapsed .sidebar-nav .nav-label,
 .app.sidebar-collapsed .sidebar-nav .nav-kbd {
@@ -2760,14 +2771,12 @@ a.profile-menu-item {
   overflow: hidden;
   border-radius: 9px;
   border: 1px solid var(--rg-border);
-  background:
-    radial-gradient(120% 90% at 0% 0%, hsl(var(--thumb-hue) 55% 30% / 0.55), transparent 60%),
-    linear-gradient(160deg, hsl(var(--thumb-hue) 22% 13%), hsl(calc(var(--thumb-hue) + 40) 18% 9%));
+  /* Plain matte grey. Each card had its own hue (green, violet...),
+     which made the row read as three adverts. */
+  background: #1b1b1b;
 }
 :root[data-theme="light"] .artifact-thumb {
-  background:
-    radial-gradient(120% 90% at 0% 0%, hsl(var(--thumb-hue) 70% 85% / 0.9), transparent 60%),
-    linear-gradient(160deg, hsl(var(--thumb-hue) 40% 96%), hsl(calc(var(--thumb-hue) + 40) 30% 92%));
+  background: #f4f4f5;
 }
 .artifact-thumb-bar {
   display: flex;
@@ -2821,7 +2830,7 @@ a.profile-menu-item {
 .artifact-thumb-tiles i {
   height: 22px;
   border-radius: 4px;
-  background: hsl(var(--thumb-hue) 40% 60% / 0.16);
+  background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
 :root[data-theme="light"] .artifact-thumb-bar i,
@@ -2842,12 +2851,9 @@ a.profile-menu-item {
   border-radius: 999px;
   font-size: 10.5px;
   font-weight: 600;
-  color: #86efac;
-  background: rgba(22, 163, 74, 0.2);
-}
-:root[data-theme="light"] .artifact-thumb-live {
-  color: #15803d;
-  background: rgba(22, 163, 74, 0.12);
+  color: var(--ws-ink-2);
+  background: var(--rg-nav-active);
+  border: 1px solid var(--rg-border);
 }
 .artifact-card-foot {
   display: flex;
@@ -3094,4 +3100,42 @@ a.profile-menu-item {
   .nav-new:hover .nav-icon-new {
     transform: none;
   }
+}
+
+/* ============================================================
+   Neutral marks - the crescent in one colour, a quiet status light
+   ============================================================ */
+/* The crescent is two layers - a navy copy offset behind a pink one.
+   In one colour the offset copy would only thicken the shape, so it
+   goes, and the front layer takes the mark's grey. Covers the inline
+   copies (top bar, boot screen) and the one boot.js draws. */
+.brand-mark svg path[transform],
+.boot-mark svg path[transform],
+.empty-mark path[transform] {
+  display: none;
+}
+.brand-mark svg path,
+.boot-mark svg path,
+.empty-mark path {
+  fill: currentColor;
+}
+.brand-mark,
+.boot-mark {
+  color: var(--rg-mark-ink);
+}
+.boot-mark {
+  background: transparent;
+  box-shadow: none;
+}
+/* Online was a green dot with a glow and a pulse - the one neon thing
+   left in the corner. A grey dot beside the word says the same. */
+.status-dot.online {
+  background: var(--ws-ink-2);
+  box-shadow: none;
+  animation: none;
+}
+/* The credit bar filled green when healthy. Grey now; the amber and
+   red it turns when credits run low stay, because those are warnings. */
+.credit-bar-fill:not(.mid):not(.low) {
+  background: var(--ws-ink-2);
 }
