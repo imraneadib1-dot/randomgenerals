@@ -8,6 +8,7 @@ import { markReplyKind, renderToolDisplay, replyKindOf } from "./chat.js";
 import { appShell, chatLog, clearThreadsBtn, deleteBtn, emptyState, newChatBtn, sidebar, sidebarCollapseBtn, threadList, topbarTitle } from "./dom.js";
 import { addMessage, addMessageActions, renderContent, renderMsgAttachments, renderSourceChips } from "./message.js";
 import { relativeTime } from "./strength.js";
+import { projectName, setCurrentProject } from "./projects.js";
 
 /* ----------------------------------------------------------------
    Thread list — scoped to the active bay
@@ -88,6 +89,10 @@ export async function loadThreadList() {
           { kind: "error", id: "threads" });
     return;
   }
+  // Narrowed to one project from Projects in the sidebar (projects.js).
+  if (state.projectFilter) {
+    data.threads = data.threads.filter((t) => t.project_id === state.projectFilter);
+  }
   threadList.innerHTML = "";
   threadList.setAttribute("role", "listbox");
   threadList.setAttribute("aria-label", "Conversations");
@@ -154,8 +159,12 @@ export async function loadThreadList() {
   drawnIds = nextIds;
 
   if (data.threads.length === 0) {
-    threadList.innerHTML =
-      '<div class="thread-empty">No conversations yet</div>';
+    const empty = document.createElement("div");
+    empty.className = "thread-empty";
+    empty.textContent = state.projectFilter
+      ? `Nothing in ${projectName(state.projectFilter) || "this project"} here yet`
+      : "No conversations yet";
+    threadList.replaceChildren(empty);
   }
   // Nothing active yet and no first row focusable would strand the
   // keyboard; the first row takes the tab stop.
@@ -273,6 +282,7 @@ export async function openThread(tid) {
   }
 
   topbarTitle.textContent = thread.title;
+  setCurrentProject(thread.project_id || null);
   chatLog.innerHTML = "";
   chatLog.appendChild(emptyState);
   emptyState.style.display = "none";
@@ -336,6 +346,13 @@ export function applySidebarCollapsed(collapsed) {
 export function mountSidebar() {
   newChatBtn.addEventListener("click", () => {
     state.currentThreadId = null;
+    // Forget the open conversation for this bay too. Without this the
+    // loadThreadList() below found it remembered, with nothing open,
+    // and restored it - New chat bounced straight back to the chat
+    // being left.
+    rememberThread(state.currentBay, null);
+    // A new chat starts in the project being looked at, if any.
+    setCurrentProject(state.projectFilter);
     showEmptyState();
     loadThreadList();
   });

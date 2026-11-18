@@ -7,6 +7,7 @@ import { bootLabel, bootScreen, emptyState } from "./dom.js";
 import { loadProviders } from "./providers.js";
 import { patchSettingsDebounced } from "./settings.js";
 import { loadThreadList } from "./sidebar.js";
+import { loadProjects } from "./projects.js";
 import { BAY_ORDER } from "./shell.js";
 import { selectBay } from "./bays.js";
 
@@ -77,6 +78,7 @@ export async function boot() {
     await Promise.allSettled([
       loadProviders(),
       loadThreadList(),
+      loadProjects(),
       loadCredits(),
       loadAuthState(),
       loadPlansMeta(),

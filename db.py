@@ -555,8 +555,22 @@ CREATE TABLE IF NOT EXISTS threads (
     -- message by role/provider/etc - threads are always read and written
     -- whole - so normalizing would add joins with no matching access
     -- pattern to justify them.
-    messages_json TEXT NOT NULL DEFAULT '[]'
+    messages_json TEXT NOT NULL DEFAULT '[]',
+    -- The project this conversation is filed under, or NULL. Deleting a
+    -- project un-files its conversations rather than deleting them.
+    project_id TEXT
 );
+
+-- Projects: a name that conversations can be filed under, and nothing
+-- more. Owned like threads are - a user id or a guest id - so a guest's
+-- projects follow them into the account they sign up for.
+CREATE TABLE IF NOT EXISTS projects (
+    id       TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    name     TEXT NOT NULL,
+    created  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_id, created);
 
 -- Websites the builder made (sitebuilder.py). files_json is the working
 -- copy - every revision in the chat replaces it; published_json is the
@@ -729,6 +743,9 @@ def _migrate_columns(conn):
     if "owner_id" not in thread_cols:
         conn.execute("ALTER TABLE threads ADD COLUMN owner_id TEXT")
         conn.commit()
+    if "project_id" not in thread_cols:
+        conn.execute("ALTER TABLE threads ADD COLUMN project_id TEXT")
+        conn.commit()
 
 
 def _connect():
@@ -831,7 +848,8 @@ def load_threads():
     same shape app.py has always kept in memory as THREADS."""
     conn = _connect()
     rows = conn.execute(
-        "SELECT id, title, mode, updated, owner_id, messages_json FROM threads").fetchall()
+        "SELECT id, title, mode, updated, owner_id, messages_json, project_id "
+        "FROM threads").fetchall()
     return {
         r["id"]: {
             "title": r["title"],
@@ -839,13 +857,15 @@ def load_threads():
             "updated": r["updated"],
             "owner_id": r["owner_id"],
             "messages": json.loads(r["messages_json"]),
+            "project_id": r["project_id"],
         }
         for r in rows
     }
 
 
 def save_thread(tid: str, title: str, mode: str, updated: str,
-                owner_id: str | None, messages_json: str) -> None:
+                owner_id: str | None, messages_json: str,
+                project_id: str | None = None) -> None:
     """Write ONE thread, inserting or replacing its row.
 
     The message list arrives already serialised. app.py builds that
@@ -858,12 +878,13 @@ def save_thread(tid: str, title: str, mode: str, updated: str,
     with _lock:
         conn.execute(
             "INSERT INTO threads (id, title, mode, updated, owner_id, "
-            "messages_json) VALUES (?, ?, ?, ?, ?, ?) "
+            "messages_json, project_id) VALUES (?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(id) DO UPDATE SET title = excluded.title, "
             "mode = excluded.mode, updated = excluded.updated, "
             "owner_id = excluded.owner_id, "
-            "messages_json = excluded.messages_json",
-            (tid, title, mode, updated, owner_id, messages_json))
+            "messages_json = excluded.messages_json, "
+            "project_id = excluded.project_id",
+            (tid, title, mode, updated, owner_id, messages_json, project_id))
         conn.commit()
 
 
@@ -910,10 +931,10 @@ def save_threads(threads):
     with _lock:
         conn.execute("DELETE FROM threads")
         conn.executemany(
-            "INSERT INTO threads (id, title, mode, updated, owner_id, messages_json) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO threads (id, title, mode, updated, owner_id, messages_json, "
+            "project_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
             [(tid, t["title"], t.get("mode", "chat"), t["updated"],
-              t.get("owner_id"), json.dumps(t["messages"]))
+              t.get("owner_id"), json.dumps(t["messages"]), t.get("project_id"))
              for tid, t in threads.items()],
         )
         conn.commit()
@@ -1250,7 +1271,7 @@ def delete_user(user_id, email=None):
     conn = _connect()
     removed = 0
     with conn:
-        for table in ("threads", "credits", "memories",
+        for table in ("threads", "projects", "credits", "memories",
                       "custom_instructions", "connectors",
                       "user_settings", "sessions", "provider_keys",
                       "mfa_enrollment", "mfa_backup_codes",
@@ -2727,6 +2748,58 @@ def published_count(owner_id):
         "SELECT COUNT(*) AS n FROM sites WHERE owner_id = ? "
         "AND published_json IS NOT NULL", (owner_id,)).fetchone()
     return row["n"] if row else 0
+
+
+# ----------------------------------------------------------------------
+# Projects - names conversations are filed under (threads.project_id)
+# ----------------------------------------------------------------------
+def projects_for(owner_id):
+    rows = _connect().execute(
+        "SELECT id, name, created FROM projects WHERE owner_id = ? "
+        "ORDER BY created", (owner_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def project_get(project_id):
+    row = _connect().execute(
+        "SELECT id, owner_id, name, created FROM projects WHERE id = ?",
+        (project_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def project_create(project_id, owner_id, name, now):
+    conn = _connect()
+    with _lock:
+        conn.execute("INSERT INTO projects (id, owner_id, name, created) "
+                     "VALUES (?, ?, ?, ?)", (project_id, owner_id, name, now))
+        conn.commit()
+
+
+def project_rename(project_id, name):
+    conn = _connect()
+    with _lock:
+        conn.execute("UPDATE projects SET name = ? WHERE id = ?",
+                     (name, project_id))
+        conn.commit()
+
+
+def project_delete(project_id):
+    """Remove a project and un-file its conversations - they are kept."""
+    conn = _connect()
+    with _lock:
+        conn.execute("UPDATE threads SET project_id = NULL WHERE project_id = ?",
+                     (project_id,))
+        conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        conn.commit()
+
+
+def reassign_projects(from_owner, to_owner):
+    conn = _connect()
+    with _lock:
+        cur = conn.execute("UPDATE projects SET owner_id = ? WHERE owner_id = ?",
+                           (to_owner, from_owner))
+        conn.commit()
+        return cur.rowcount
 
 
 def reassign_sites(from_owner, to_owner):

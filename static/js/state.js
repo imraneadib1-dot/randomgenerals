@@ -31,4 +31,12 @@ export const state = {
   genKind: "video",
   mermaidReady: false,
   settingsSaveTimer: null,
+  // Projects (projects.js): the list, where the chat being written is
+  // filed, and which project Recents is narrowed to.
+  /** @type {{id: string, name: string, created: string, threads: number}[]} */
+  projects: [],
+  /** @type {string|null} */
+  currentProjectId: null,
+  /** @type {string|null} */
+  projectFilter: null,
 };

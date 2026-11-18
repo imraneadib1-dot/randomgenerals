@@ -85,6 +85,9 @@ function check(label, ok, detail) {
   await page.click('[data-bay="chat"]');
   check("switching bays raised nothing", errors.length === 0, errors.slice(-2).join(" | "));
 
+  // Settings is an item in the profile menu at the foot of the sidebar;
+  // the menu opens first.
+  await page.click("#profileBtn");
   await page.click("#settingsBtn");
   const modalOpen = await page.evaluate(() => {
     const b = document.getElementById("settingsBackdrop");

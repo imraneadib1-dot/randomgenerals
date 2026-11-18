@@ -22,7 +22,7 @@ export const BAY_META = {
     eyebrow: "randomgenerals --chat",
     title: "What's on your mind?",
     sub: "Ask anything. pip 1.0 keeps it conversational — no forced structure.",
-    placeholder: "Ask me anything…",
+    placeholder: "How can I help you today?",
     hints:
       "<div><span>Enter</span> to send · <span>Shift+Enter</span> for a new line</div>" +
       "<div><span>&lt;/&gt; ◎</span> switch bays above</div>",

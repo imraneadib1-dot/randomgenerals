@@ -3,7 +3,13 @@
 
    Loaded after style.css and layered over it.
 
-   1. THE CANVAS. Near-black (#09090B), not grey. A flat #212121
+   1. THE CANVAS. Near-black, not grey: #121214 for the conversation,
+      the sidebar one step lighter (#18181B), and the input and cards a
+      step above that (#1F1F23) with a zinc-700 hairline. It was #09090B
+      with three coloured glows behind the glass; the glows are gone -
+      on solid surfaces they only tinted the corners - and the ground
+      came up a touch so the three levels can be told apart.
+      Originally: near-black (#09090B), not grey. A flat #212121
       ground made every surface on it read as a slightly different
       shade of the same mud; on true dark, a translucent pane with a lit
       top edge actually reads as glass. Behind the conversation sit
@@ -23,9 +29,9 @@
    ============================================================ */
 
 :root {
-  --ws-canvas: #09090b;
-  --ws-1: #0d0d10;            /* frame: sidebar, pane */
-  --ws-2: #111114;            /* pane toolbar */
+  --ws-canvas: #121214;
+  --ws-1: #18181b;            /* frame: sidebar, pane */
+  --ws-2: #1c1c1f;            /* pane toolbar */
   --ws-3: rgba(255, 255, 255, 0.05);   /* raised, inside glass */
   --ws-4: rgba(255, 255, 255, 0.11);   /* selected segment */
   --ws-line: rgba(255, 255, 255, 0.08);
@@ -46,16 +52,32 @@
   --ws-glass-border-strong: rgba(255, 255, 255, 0.16);
   --ws-glass-hi: inset 0 1px 0 rgba(255, 255, 255, 0.1);
   --ws-blur: blur(24px) saturate(160%);
-  --ws-menu: rgba(24, 24, 27, 0.88);
-  --ws-menu-solid: #18181b;
+  --ws-menu: rgba(31, 31, 35, 0.97);
+  --ws-menu-solid: #1f1f23;
   --ws-float: 0 12px 40px rgba(0, 0, 0, 0.45);
   --ws-focus-glow:
     0 0 0 4px rgba(129, 140, 248, 0.12),
     0 14px 48px rgba(99, 102, 241, 0.22);
 
-  --ws-glow-1: rgba(99, 102, 241, 0.16);   /* indigo */
-  --ws-glow-2: rgba(168, 85, 247, 0.09);   /* violet */
-  --ws-glow-3: rgba(34, 211, 238, 0.06);   /* cyan */
+  /* The glows behind .main, now off: the surfaces are solid. */
+  --ws-glow-1: transparent;
+  --ws-glow-2: transparent;
+  --ws-glow-3: transparent;
+
+  /* The raised surfaces of the sidebar-and-home layout: the input box,
+     the artifact cards, the menus. Solid, not glass. */
+  --rg-surface: #1f1f23;
+  --rg-surface-hover: #26262b;
+  --rg-border: rgba(63, 63, 70, 0.6);          /* zinc-700 / 60 */
+  --rg-border-strong: rgba(82, 82, 91, 0.75);  /* zinc-600 / 75 */
+  --rg-nav-hover: rgba(255, 255, 255, 0.055);
+  --rg-nav-active: rgba(255, 255, 255, 0.085);
+  /* The crescent's pink: the brand, the New chat glyph, a search hit.
+     The -ink value is the one that is read as text (5.9:1 on #18181B). */
+  --rg-accent: #ff1f5a;
+  --rg-accent-ink: #ff7396;
+  --rg-accent-soft: rgba(255, 31, 90, 0.15);
+  --rg-mark: rgba(255, 31, 90, 0.24);
 
   /* Code stays dark in both themes - a code block is a quoted
      artefact, and the highlighter's palette is drawn for a dark ground. */
@@ -105,9 +127,20 @@
     0 0 0 4px rgba(99, 102, 241, 0.1),
     0 14px 48px rgba(99, 102, 241, 0.12);
 
-  --ws-glow-1: rgba(99, 102, 241, 0.1);
-  --ws-glow-2: rgba(168, 85, 247, 0.06);
-  --ws-glow-3: rgba(34, 211, 238, 0.06);
+  --ws-glow-1: transparent;
+  --ws-glow-2: transparent;
+  --ws-glow-3: transparent;
+
+  --rg-surface: #ffffff;
+  --rg-surface-hover: #f4f4f5;
+  --rg-border: rgba(0, 0, 0, 0.1);
+  --rg-border-strong: rgba(0, 0, 0, 0.18);
+  --rg-nav-hover: rgba(0, 0, 0, 0.045);
+  --rg-nav-active: rgba(0, 0, 0, 0.07);
+  --rg-accent: #e8114a;
+  --rg-accent-ink: #c40c3d;
+  --rg-accent-soft: rgba(232, 17, 74, 0.1);
+  --rg-mark: rgba(232, 17, 74, 0.16);
 }
 
 /* ---- style.css's tokens, re-pointed ------------------------------------ */
@@ -118,12 +151,12 @@
 }
 
 :root:not([data-theme="light"]) {
-  --sky-top: #09090b;
-  --sky-mid: #09090b;
-  --sky-bottom: #09090b;
+  --sky-top: #121214;
+  --sky-mid: #121214;
+  --sky-bottom: #121214;
   --surface: rgba(255, 255, 255, 0.04);
   --surface-raised: rgba(255, 255, 255, 0.06);
-  --panel: #0d0d10;
+  --panel: #18181b;
   --border: rgba(255, 255, 255, 0.1);
   --border-strong: rgba(255, 255, 255, 0.18);
   --edge-lit: inset 0 1px 0 rgba(255, 255, 255, 0.06);
@@ -135,12 +168,12 @@
   --glass-1: rgba(255, 255, 255, 0.04);
   --glass-2: rgba(255, 255, 255, 0.07);
   --hairline: rgba(255, 255, 255, 0.08);
-  --topbar-ground: rgba(9, 9, 11, 0.7);
+  --topbar-ground: rgba(24, 24, 27, 0.92);
   --modal-ground: rgba(17, 17, 20, 0.96);
   --user-bubble: rgba(255, 255, 255, 0.06);
   --shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 24px 64px rgba(0, 0, 0, 0.6);
   --shadow-soft: 0 6px 20px rgba(0, 0, 0, 0.4);
-  --ground: 9 9 11;
+  --ground: 18 18 20;
   --credit-mid: #a1a1aa;
 
   /* One accent, and it is the ink. A colour picked in Settings >
@@ -250,7 +283,15 @@ html.time-night body {
 }
 
 /* The top bar holds the brand and the account, nothing in the middle -
-   the modes moved under the input. */
+   the modes moved under the input. On a desktop it is gone altogether:
+   the brand heads the sidebar and the status light sits in the corner
+   of the conversation (.chat-toolbar). It stays on phones, where the
+   sidebar is a drawer and the bar is what holds the button that opens it. */
+@media (min-width: 721px) {
+  body > .topbar {
+    display: none;
+  }
+}
 .topbar {
   display: flex;
   justify-content: space-between;
@@ -282,10 +323,12 @@ html.time-night body {
 }
 
 .sidebar {
+  width: 272px;
+  padding: 10px 8px 10px;
   background: var(--ws-1);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
-  border-right: 1px solid var(--ws-line);
+  border-right: 1px solid var(--rg-border);
 }
 
 /* The workspace ground, and the light the glass sits in. */
@@ -354,24 +397,58 @@ html.time-night body {
 .empty-state {
   max-width: 640px;
 }
+/* THE MARK AND THE GREETING ON ONE LINE. The crescent stood alone
+   above the words at 44px, as a logo; beside them it reads as part of
+   the sentence, and the pair takes one line of the screen instead of
+   two. The glow is the crescent's own pink, faint. The "add your
+   name" aside wraps onto a line of its own underneath (the ::after
+   is the line break). */
+.empty-state {
+  max-width: 720px;
+}
+#greetingHost {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  column-gap: 14px;
+  row-gap: 2px;
+}
+#greetingHost::after {
+  content: "";
+  order: 2;
+  flex-basis: 100%;
+}
+#greetingHost > .greeting-edit,
+#greetingHost > .name-prompt {
+  order: 3;
+}
 .empty-mark {
-  width: 44px;
-  margin-bottom: 20px;
+  width: clamp(34px, 3.4vw, 42px);
+  margin: 0;
   color: var(--ws-ink);
+  /* Tight, so it reads as light off the mark - a wide one at this
+     size was a dark-plum disc behind it. */
+  filter: drop-shadow(0 0 6px rgba(255, 31, 90, 0.45));
+}
+:root[data-theme="light"] .empty-mark {
   filter: none;
 }
 .greeting {
-  font-size: clamp(1.75rem, 3.2vw, 2.25rem);
-  font-weight: 600;
+  font-size: clamp(1.9rem, 3.6vw, 2.6rem);
+  font-weight: 500;
   letter-spacing: -0.035em;
-  line-height: 1.1;
-  margin-bottom: 4px;
-  background: linear-gradient(180deg, var(--ws-ink) 35%, var(--ws-ink-2));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  line-height: 1.15;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ws-ink);
+  background: none;
+  -webkit-background-clip: border-box;
+  background-clip: border-box;
 }
 .greeting-edit {
+  margin-top: 4px;
   color: var(--ws-ink-3);
   font-size: 13px;
   letter-spacing: -0.005em;
@@ -544,8 +621,15 @@ html.time-night body {
 }
 
 /* ============================================================
-   The composer - a floating glass capsule
+   The composer - a box with the text on top and the tools beneath
    ============================================================ */
+/* WAS A ONE-LINE GLASS CAPSULE: +, the text, the mic and send in a
+   row, so a long message grew upward out of a pill and the tools sat
+   wherever the last line ended. Now the text has the full width on
+   top and the tools have a row of their own under it - + on the left,
+   the mic and send on the right - and the box is a solid surface, not
+   glass. A grid, so the markup (and every id the modules hold) is
+   unchanged: each control is placed into its cell by name. */
 .composer {
   padding: 6px 16px 8px;
 }
@@ -555,35 +639,51 @@ html.time-night body {
 .composer-form {
   position: relative;
   max-width: 768px;
-  align-items: flex-end;
-  gap: 4px;
-  padding: 8px;
-  background: var(--ws-glass);
-  -webkit-backdrop-filter: var(--ws-blur);
-  backdrop-filter: var(--ws-blur);
-  border: 1px solid var(--ws-glass-border);
-  border-radius: var(--ws-radius-pill);
-  box-shadow: var(--ws-glass-hi), var(--ws-float);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "input input input input"
+    "plus  .     mic   send";
+  align-items: center;
+  column-gap: 6px;
+  row-gap: 2px;
+  padding: 12px 10px 10px;
+  background: var(--rg-surface);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border: 1px solid var(--rg-border);
+  border-radius: 20px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 16px 40px rgba(0, 0, 0, 0.32);
   transition:
     border-color 200ms var(--ws-ease),
-    background-color 200ms var(--ws-ease),
     box-shadow 200ms var(--ws-ease);
 }
+:root[data-theme="light"] .composer-form {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 12px 32px rgba(24, 24, 27, 0.08);
+}
 .composer-form:focus-within {
-  background: var(--ws-glass-strong);
-  border-color: var(--ws-glass-border-strong);
-  box-shadow: var(--ws-glass-hi), var(--ws-focus-glow);
+  background: var(--rg-surface);
+  border-color: var(--rg-border-strong);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 16px 44px rgba(0, 0, 0, 0.38);
   transform: none;
 }
-.main.is-empty .composer-form {
-  padding: 10px;
+:root[data-theme="light"] .composer-form:focus-within {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 14px 36px rgba(24, 24, 27, 0.12);
 }
+.composer-form > .composer-input { grid-area: input; }
+.composer-form > .plus-wrap { grid-area: plus; }
+.composer-form > .mic-btn { grid-area: mic; }
+.composer-form > .send-btn { grid-area: send; }
 .composer-input {
   font-size: 15px;
-  line-height: 1.5;
-  padding: 8px 6px;
+  line-height: 1.55;
+  padding: 2px 8px 8px;
+  min-height: 34px;
   letter-spacing: -0.005em;
   color: var(--ws-ink);
+}
+.main.is-empty .composer-input {
+  min-height: 56px;
 }
 .composer-input::placeholder {
   color: var(--ws-ink-3);
@@ -608,10 +708,12 @@ html.time-night body {
   transform: rotate(45deg);
 }
 
-/* High contrast, and the only filled object on the page. */
+/* High contrast, and the only filled object on the page. A rounded
+   square now rather than a circle, to sit square in the box's corner. */
 .send-btn {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
   background: var(--ws-primary);
   color: var(--ws-on-primary);
   box-shadow: 0 2px 12px rgba(255, 255, 255, 0.08);
@@ -647,7 +749,7 @@ html.time-night body {
 .plus-wrap {
   position: relative;
   flex: none;
-  align-self: flex-end;
+  align-self: center;
 }
 .composer-menu {
   position: absolute;
@@ -1471,12 +1573,15 @@ html[data-motion="reduced"] .artifact-inner {
 .main {
   position: relative;
 }
+/* Only the connection light and Install now, in the top-right corner:
+   the model picker moved under the input (.composer-meta). */
 .chat-toolbar {
   position: absolute;
-  top: 10px;
-  left: 14px;
+  top: 12px;
+  right: 16px;
   z-index: 6;
   display: flex;
+  align-items: center;
   gap: 8px;
   pointer-events: none;
 }
@@ -1487,7 +1592,7 @@ html[data-motion="reduced"] .artifact-inner {
   display: none;
 }
 .main:not(.is-empty) .chat-log {
-  padding-top: 64px;
+  padding-top: 48px;
 }
 
 .model-picker {
@@ -1714,10 +1819,6 @@ html[data-motion="reduced"] .artifact-inner {
 }
 
 @media (max-width: 720px) {
-  .chat-toolbar {
-    top: 8px;
-    left: 8px;
-  }
   .model-pill {
     font-size: 14px;
   }
@@ -1950,4 +2051,1047 @@ html[data-motion="reduced"] .artifact-inner {
 
 a.profile-menu-item {
   text-decoration: none;
+}
+
+/* ============================================================
+   The sidebar - brand, navigation, Recents
+   ============================================================ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.sidebar-top {
+  gap: 8px;
+  padding: 2px 4px 12px 8px;
+}
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  color: var(--ws-ink);
+  text-decoration: none;
+  border-radius: 8px;
+}
+.sidebar-brand-mark {
+  flex: none;
+  width: 24px;
+  height: 24px;
+}
+.sidebar-brand-name {
+  font-size: 15.5px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-brand:focus-visible {
+  outline: 2px solid var(--ws-line-focus);
+  outline-offset: 3px;
+}
+.sidebar .sidebar-collapse {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  color: var(--ws-ink-3);
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.sidebar .sidebar-collapse:hover {
+  background: var(--rg-nav-hover);
+  border-color: transparent;
+  color: var(--ws-ink);
+}
+
+/* The navigation: one row height, one hover, icons in one column. */
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: none;
+}
+.sidebar-nav .nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px 0 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ws-ink-2);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: none;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+.sidebar-nav .nav-item:hover,
+.sidebar-nav .nav-item[aria-expanded="true"] {
+  background: var(--rg-nav-hover);
+  color: var(--ws-ink);
+}
+.sidebar-nav .nav-item.is-on {
+  background: var(--rg-nav-active);
+  color: var(--ws-ink);
+}
+.sidebar-nav .nav-item:active {
+  transform: scale(0.985);
+}
+.sidebar-nav .nav-item:focus-visible {
+  outline: 2px solid var(--ws-line-focus);
+  outline-offset: -2px;
+  border-radius: 10px;
+}
+.nav-icon {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: var(--ws-ink-3);
+  transition: color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.nav-item:hover .nav-icon {
+  color: var(--ws-ink);
+}
+/* New chat leads, with the brand's colour in its glyph: the one place
+   in the sidebar the pink appears besides the mark itself. */
+.sidebar-nav .nav-new {
+  color: var(--ws-ink);
+  margin-bottom: 2px;
+}
+.nav-icon-new {
+  border-radius: 50%;
+  background: var(--rg-accent-soft);
+  color: var(--rg-accent-ink);
+}
+.nav-new:hover .nav-icon-new {
+  color: var(--rg-accent-ink);
+  transform: rotate(90deg);
+}
+.nav-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nav-kbd {
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid var(--rg-border);
+  border-radius: 6px;
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ws-ink-3);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.nav-item:hover .nav-kbd,
+.nav-item:focus-visible .nav-kbd {
+  opacity: 1;
+}
+.nav-projects {
+  position: relative;
+}
+
+/* Recents: a quiet label that folds the list away. */
+.recents {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-top: 14px;
+}
+.recents-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 4px 8px 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--ws-ink-3);
+}
+.recents-head .thread-list-label {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: inherit;
+}
+.recents-head:hover {
+  color: var(--ws-ink-2);
+}
+.recents-chevron {
+  opacity: 0;
+  transition: transform var(--dur) var(--ease), opacity var(--dur-fast) var(--ease);
+}
+.recents-head:hover .recents-chevron,
+.recents-head:focus-visible .recents-chevron,
+.recents-head[aria-expanded="false"] .recents-chevron {
+  opacity: 1;
+}
+.recents-head[aria-expanded="false"] .recents-chevron {
+  transform: rotate(-90deg);
+}
+.recents-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.recents .thread-list {
+  padding-top: 0;
+  gap: 1px;
+  scrollbar-width: thin;
+}
+
+/* A row is the title, nothing else: the time and the rail made each
+   one two lines and a stripe, and the list is for finding a title. */
+.recents .thread-item {
+  padding: 7px 8px 7px 10px;
+  border: 0;
+  border-radius: 9px;
+  font-size: 13.5px;
+  color: var(--ws-ink-2);
+  box-shadow: none;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+.recents .thread-item:hover {
+  background: var(--rg-nav-hover);
+  color: var(--ws-ink);
+}
+.recents .thread-item.active {
+  background: var(--rg-nav-active);
+  color: var(--ws-ink);
+  box-shadow: none;
+}
+.recents .thread-item.active::before {
+  display: none;
+}
+.recents .thread-item:focus-visible {
+  outline: 2px solid var(--ws-line-focus);
+  outline-offset: -2px;
+}
+.recents .thread-title {
+  font-size: 13.5px;
+  letter-spacing: -0.005em;
+}
+.recents .thread-meta {
+  display: none;
+}
+.recents .thread-delete {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  padding: 0;
+  font-size: 11px;
+}
+.recents .thread-delete:hover {
+  background: var(--rg-nav-hover);
+}
+.recents .thread-empty {
+  padding: 6px 10px;
+  font-size: 12.5px;
+  color: var(--ws-ink-3);
+}
+
+.project-filter {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 4px 6px;
+  padding: 5px 4px 5px 9px;
+  border: 1px solid var(--rg-border);
+  border-radius: 9px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ws-ink-2);
+}
+.project-filter > svg {
+  flex: none;
+  color: var(--ws-ink-3);
+}
+.project-filter-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-filter-clear {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ws-ink-3);
+  cursor: pointer;
+}
+.project-filter-clear:hover {
+  background: var(--rg-nav-hover);
+  color: var(--ws-ink);
+}
+
+.sidebar .thread-clear {
+  margin: 8px 4px 0;
+  border-color: var(--rg-border);
+}
+
+/* COLLAPSED TO A RAIL: the navigation stays, as icons, so New chat
+   and Search are one click away with the sidebar shut. */
+.app.sidebar-collapsed .sidebar > .sidebar-nav {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  width: auto;
+  pointer-events: auto;
+}
+/* The rail's avatar stays at the foot: every flexible region above it
+   is collapsed to flex: none, so nothing else pushes it down. */
+.app.sidebar-collapsed .sidebar > .profile-wrap {
+  margin-top: auto;
+}
+.app.sidebar-collapsed .sidebar-nav .nav-item {
+  justify-content: center;
+  padding: 0;
+}
+.app.sidebar-collapsed .sidebar-nav .nav-label,
+.app.sidebar-collapsed .sidebar-nav .nav-kbd {
+  display: none;
+}
+.app.sidebar-collapsed .projects-panel {
+  position: fixed;
+  top: 120px;
+  left: 64px;
+  width: 260px;
+}
+
+/* ============================================================
+   Menus: Projects (sidebar) and Project (under the input)
+   ============================================================ */
+.projects-panel,
+.project-menu {
+  position: absolute;
+  z-index: 40;
+  min-width: 240px;
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: 14px;
+  background: var(--ws-menu);
+  -webkit-backdrop-filter: var(--ws-blur);
+  backdrop-filter: var(--ws-blur);
+  border: 1px solid var(--rg-border);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+  scrollbar-width: thin;
+  animation: wsPanelIn 160ms var(--ws-ease) both;
+}
+:root[data-theme="light"] .projects-panel,
+:root[data-theme="light"] .project-menu {
+  box-shadow: 0 18px 50px rgba(24, 24, 27, 0.14);
+}
+.projects-panel {
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+}
+.project-menu {
+  left: 0;
+  bottom: calc(100% + 8px);
+  width: 260px;
+  max-width: calc(100vw - 32px);
+  transform-origin: bottom left;
+}
+.project-menu.opens-down {
+  bottom: auto;
+  top: calc(100% + 8px);
+  transform-origin: top left;
+}
+.pmenu-label {
+  padding: 7px 10px 5px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--ws-ink-3);
+}
+.pmenu-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.pmenu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ws-ink);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.pmenu-item > svg {
+  flex: none;
+  color: var(--ws-ink-3);
+}
+.pmenu-item > svg + svg {
+  margin-left: auto;
+  color: var(--ws-ink);
+}
+.pmenu-item:hover,
+.pmenu-item:focus-visible {
+  outline: none;
+  background: var(--rg-nav-hover);
+}
+.pmenu-item.is-on {
+  background: var(--rg-nav-active);
+}
+.pmenu-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pmenu-count {
+  flex: none;
+  font-size: 12px;
+  color: var(--ws-ink-3);
+}
+.pmenu-trash {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ws-ink-3);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.pmenu-row:hover .pmenu-trash,
+.pmenu-trash:focus-visible {
+  opacity: 1;
+}
+.pmenu-trash:hover {
+  color: var(--danger);
+  background: var(--rg-nav-hover);
+}
+@media (hover: none) {
+  .pmenu-trash {
+    opacity: 1;
+  }
+}
+.pmenu-sep {
+  height: 1px;
+  margin: 5px 6px;
+  background: var(--rg-border);
+}
+.pmenu-empty {
+  margin: 0;
+  padding: 4px 10px 8px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ws-ink-3);
+}
+.pmenu-new {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+}
+.pmenu-new input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--rg-border-strong);
+  border-radius: 8px;
+  background: var(--ws-canvas);
+  color: var(--ws-ink);
+  font: inherit;
+  font-size: 13.5px;
+  outline: none;
+}
+.pmenu-new input:focus {
+  border-color: var(--ws-line-focus);
+}
+.pmenu-new-go {
+  flex: none;
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--ws-primary);
+  color: var(--ws-on-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pmenu-new-go:disabled {
+  opacity: 0.5;
+}
+
+/* ============================================================
+   Under the input: Project on the left, the model on the right
+   ============================================================ */
+.composer-meta {
+  max-width: 768px;
+  margin: 8px auto 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+}
+.project-picker,
+.composer-meta .model-picker {
+  position: relative;
+  min-width: 0;
+}
+.meta-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ws-ink-3);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.meta-btn:hover,
+.meta-btn[aria-expanded="true"] {
+  background: var(--rg-nav-hover);
+  color: var(--ws-ink);
+}
+.meta-btn.has-value {
+  color: var(--ws-ink-2);
+}
+.meta-btn-label {
+  min-width: 0;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.meta-chevron {
+  flex: none;
+  opacity: 0.8;
+  transition: transform var(--dur) var(--ease);
+}
+.meta-btn[aria-expanded="true"] .meta-chevron {
+  transform: rotate(180deg);
+}
+.meta-btn:focus-visible,
+.composer-meta .model-pill:focus-visible {
+  outline: 2px solid var(--ws-line-focus);
+  outline-offset: 1px;
+}
+
+/* The model pill, at the size of its neighbour. It was the 15px
+   heading of the page in the top-left corner; down here it is a
+   setting, so it reads like one. */
+.composer-meta .model-pill {
+  height: 30px;
+  gap: 6px;
+  padding: 0 8px 0 10px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  color: var(--ws-ink-2);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+}
+.composer-meta .model-pill:hover,
+.composer-meta .model-pill[aria-expanded="true"] {
+  background: var(--rg-nav-hover);
+  border-color: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  color: var(--ws-ink);
+}
+.composer-meta .model-pill-name {
+  max-width: 240px;
+}
+.composer-meta .model-pill-tag {
+  padding: 1px 7px;
+  font-size: 11px;
+}
+/* The panel opens up, toward the room above the input - and flips
+   down when the input sits too high for that (chrome.js). */
+.composer-meta .model-panel {
+  top: auto;
+  bottom: calc(100% + 8px);
+  left: auto;
+  right: 0;
+  max-height: min(60vh, 480px);
+  transform-origin: bottom right;
+}
+.composer-meta .model-panel.opens-down {
+  bottom: auto;
+  top: calc(100% + 8px);
+  transform-origin: top right;
+}
+
+/* ============================================================
+   Recent artifacts - the home screen only
+   ============================================================ */
+.home-artifacts {
+  display: none;
+}
+.main.is-empty .home-artifacts {
+  display: block;
+  flex: none;
+  width: 100%;
+  max-width: 800px;
+  margin: 20px auto 0;
+  padding: 0 16px;
+  animation: emptyIn 0.5s var(--ws-ease) 80ms both;
+}
+.home-artifacts-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 2px 10px;
+}
+.home-artifacts-head h2 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  color: var(--ws-ink-2);
+}
+.home-artifacts-all {
+  font-size: 13px;
+  color: var(--ws-ink-3);
+  text-decoration: none;
+  border-radius: 6px;
+  transition: color var(--dur-fast) var(--ease);
+}
+.home-artifacts-all:hover {
+  color: var(--ws-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.home-artifacts-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.artifact-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--rg-border);
+  border-radius: 14px;
+  background: var(--rg-surface);
+  color: var(--ws-ink);
+  text-decoration: none;
+  transition:
+    transform var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
+}
+.artifact-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--rg-border-strong);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.3);
+}
+:root[data-theme="light"] .artifact-card:hover {
+  box-shadow: 0 12px 28px rgba(24, 24, 27, 0.1);
+}
+.artifact-card:active {
+  transform: translateY(0) scale(0.99);
+}
+.artifact-card:focus-visible {
+  outline: 2px solid var(--ws-line-focus);
+  outline-offset: 2px;
+}
+
+/* The thumbnail: a little window drawn in the site's own hue. */
+.artifact-thumb {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  margin: 6px 6px 0;
+  overflow: hidden;
+  border-radius: 9px;
+  border: 1px solid var(--rg-border);
+  background:
+    radial-gradient(120% 90% at 0% 0%, hsl(var(--thumb-hue) 55% 30% / 0.55), transparent 60%),
+    linear-gradient(160deg, hsl(var(--thumb-hue) 22% 13%), hsl(calc(var(--thumb-hue) + 40) 18% 9%));
+}
+:root[data-theme="light"] .artifact-thumb {
+  background:
+    radial-gradient(120% 90% at 0% 0%, hsl(var(--thumb-hue) 70% 85% / 0.9), transparent 60%),
+    linear-gradient(160deg, hsl(var(--thumb-hue) 40% 96%), hsl(calc(var(--thumb-hue) + 40) 30% 92%));
+}
+.artifact-thumb-bar {
+  display: flex;
+  gap: 4px;
+  padding: 7px 8px;
+}
+.artifact-thumb-bar i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+}
+.artifact-thumb-page {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 12px 0;
+  transition: transform var(--dur-slow) var(--ease);
+}
+.artifact-card:hover .artifact-thumb-page {
+  transform: translateY(-3px);
+}
+.artifact-thumb-hero {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: rgba(255, 255, 255, 0.85);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.artifact-thumb-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.artifact-thumb-lines i {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.14);
+}
+.artifact-thumb-lines i:last-child {
+  width: 62%;
+}
+.artifact-thumb-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+  margin-top: 2px;
+}
+.artifact-thumb-tiles i {
+  height: 22px;
+  border-radius: 4px;
+  background: hsl(var(--thumb-hue) 40% 60% / 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+:root[data-theme="light"] .artifact-thumb-bar i,
+:root[data-theme="light"] .artifact-thumb-lines i {
+  background: rgba(0, 0, 0, 0.12);
+}
+:root[data-theme="light"] .artifact-thumb-hero {
+  color: rgba(0, 0, 0, 0.75);
+}
+:root[data-theme="light"] .artifact-thumb-tiles i {
+  border-color: rgba(0, 0, 0, 0.06);
+}
+.artifact-thumb-live {
+  position: absolute;
+  top: 6px;
+  right: 7px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #86efac;
+  background: rgba(22, 163, 74, 0.2);
+}
+:root[data-theme="light"] .artifact-thumb-live {
+  color: #15803d;
+  background: rgba(22, 163, 74, 0.12);
+}
+.artifact-card-foot {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 12px 11px;
+}
+.artifact-card-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.artifact-card-time {
+  flex: none;
+  font-size: 12px;
+  color: var(--ws-ink-3);
+}
+/* On a phone the three cards scroll sideways rather than shrinking to
+   slivers. The scroll is inside the grid, so the page itself still
+   never scrolls sideways. */
+@media (max-width: 600px) {
+  .home-artifacts-grid {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(200px, 72%);
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+    padding-bottom: 4px;
+  }
+  .home-artifacts-grid::-webkit-scrollbar {
+    display: none;
+  }
+  .artifact-card {
+    scroll-snap-align: start;
+  }
+}
+
+/* ============================================================
+   Search (search.js) - a <dialog>
+   ============================================================ */
+.search-dialog {
+  width: min(640px, calc(100vw - 32px));
+  max-height: min(70vh, 560px);
+  margin: 12vh auto auto;
+  padding: 0;
+  border: 1px solid var(--rg-border);
+  border-radius: 16px;
+  background: var(--ws-menu-solid);
+  color: var(--ws-ink);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+:root[data-theme="light"] .search-dialog {
+  box-shadow: 0 30px 80px rgba(24, 24, 27, 0.2);
+}
+.search-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  animation: wsPanelIn 160ms var(--ws-ease) both;
+}
+.search-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+:root[data-theme="light"] .search-dialog::backdrop {
+  background: rgba(24, 24, 27, 0.25);
+}
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--rg-border);
+}
+.search-label {
+  display: inline-grid;
+  place-items: center;
+  color: var(--ws-ink-3);
+}
+.search-input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ws-ink);
+  font: inherit;
+  font-size: 15.5px;
+  letter-spacing: -0.01em;
+}
+.search-input::placeholder {
+  color: var(--ws-ink-3);
+}
+.search-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.search-esc {
+  flex: none;
+  padding: 2px 7px;
+  border: 1px solid var(--rg-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ws-ink-3);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.search-esc:hover {
+  color: var(--ws-ink);
+}
+.search-results {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+  scrollbar-width: thin;
+}
+.search-section {
+  padding: 8px 10px 4px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--ws-ink-3);
+}
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.search-row[aria-selected="true"] {
+  background: var(--rg-nav-active);
+}
+.search-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.search-row-title,
+.search-row-snippet {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-row-title {
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+}
+.search-row-snippet {
+  font-size: 12.5px;
+  color: var(--ws-ink-3);
+}
+.search-row mark {
+  background: var(--rg-mark);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+.search-row-meta {
+  flex: none;
+  max-width: 40%;
+  font-size: 12px;
+  color: var(--ws-ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-empty {
+  margin: 0;
+  padding: 28px 16px;
+  text-align: center;
+  font-size: 13.5px;
+  color: var(--ws-ink-3);
+}
+
+/* ============================================================
+   Phones
+   ============================================================ */
+@media (max-width: 720px) {
+  /* The bar is back on a phone, and has room for the name now that
+     the modes and the account left it. */
+  .topbar-brand .brand-name {
+    display: inline;
+    font-size: 15px;
+  }
+  .topbar .version-tag {
+    display: none;
+  }
+  /* home.js moves the status light and Install back into the bar at
+     this width, so the corner of the conversation is empty. */
+  .chat-toolbar {
+    display: none;
+  }
+  .main:not(.is-empty) .chat-log {
+    padding-top: 20px;
+  }
+  .sidebar {
+    background: var(--ws-1);
+  }
+  .composer-meta .model-pill-name {
+    max-width: 150px;
+  }
+  .meta-btn-label {
+    max-width: 120px;
+  }
+  .search-dialog {
+    margin-top: 8vh;
+  }
+  .search-row-meta {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-nav .nav-item,
+  .nav-icon,
+  .artifact-card,
+  .artifact-thumb-page,
+  .recents-chevron,
+  .meta-chevron,
+  .projects-panel,
+  .project-menu,
+  .search-dialog[open],
+  .main.is-empty .home-artifacts {
+    transition: none;
+    animation: none;
+  }
+  .artifact-card:hover,
+  .artifact-card:hover .artifact-thumb-page,
+  .nav-new:hover .nav-icon-new {
+    transform: none;
+  }
 }

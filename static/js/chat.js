@@ -20,7 +20,10 @@ export async function ensureThread() {
   // fetch awaited by the submit handler: a 429 or a dropped connection
   // here was an unhandled rejection, the message text was already
   // cleared, and nothing on screen said why it never sent.
-  const data = await postJSON("/api/threads", { mode: state.currentBay });
+  // Filed in the project chosen under the input, if one was.
+  const data = await postJSON("/api/threads", {
+    mode: state.currentBay, project_id: state.currentProjectId || null,
+  });
   state.currentThreadId = data.id;
   return state.currentThreadId;
 }

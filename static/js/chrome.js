@@ -97,6 +97,15 @@ function mountPlusMenu() {
   });
 }
 
+/** Flip a menu that normally opens upward to open downward when there
+ *  is not enough room above its button and more below.
+ *  @param {HTMLElement} anchor @param {HTMLElement} panel */
+export function opensDown(anchor, panel) {
+  const r = anchor.getBoundingClientRect();
+  const below = window.innerHeight - r.bottom;
+  panel.classList.toggle("opens-down", r.top < 340 && below > r.top);
+}
+
 /* A popover that closes on Escape, on an outside click, and on Tab out.
    Shared by the profile menu and the model panel.
    @param {HTMLElement} btn @param {HTMLElement} panel
@@ -302,6 +311,10 @@ function mountModelPicker() {
 
   const setOpen = popover(btn, panel, {
     onOpen: () => {
+      // It lives under the input and opens upward - unless the input is
+      // high on the screen (the home screen on a short window), where
+      // there is more room below.
+      opensDown(btn, panel);
       renderList();
       /** @type {HTMLElement|null} */ (list.querySelector('[aria-selected="true"]') || panel.querySelector("button:not([disabled])"))?.focus();
     },

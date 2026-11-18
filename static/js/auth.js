@@ -5,6 +5,8 @@ import { freeButtonLabel } from "./billing.js";
 import { loadCredits, renderCredits } from "./credits.js";
 import { accountAvatar, accountEmail, accountPlanBadge, authSignedIn, authSignedOut, forgotSwitch, googleSignInBtn, localAuthAge, localAuthEmail, localAuthError, localAuthForm, localAuthName, localAuthPassword, localAuthSubmit, localAuthSwitch, logoutBtn, planError, planFreeBtn, planNote, planProBtn, resetForm, settingsBtnLabel } from "./dom.js";
 import { loadThreadList } from "./sidebar.js";
+import { loadProjects, setCurrentProject, setProjectFilter } from "./projects.js";
+import { loadHomeArtifacts } from "./home.js";
 import { toast } from "./toast.js";
 
 /* ---- Sign-in: Google only ---- */
@@ -288,7 +290,10 @@ export function mountAuth() {
       loadCredits();
       // Threads move to the new account server-side on signup/login, so
       // the sidebar has to re-read them rather than keep the guest list.
+      // Projects and sites move with them.
       loadThreadList();
+      loadProjects();
+      loadHomeArtifacts(true);
     } catch (err) {
       setError(localAuthError, "Could not reach the server.");
     } finally {
@@ -302,8 +307,12 @@ export function mountAuth() {
     refreshAuthUI();
     loadCredits();
     state.currentThreadId = null;
+    setProjectFilter(null);
+    setCurrentProject(null);
     showEmptyState();
     loadThreadList();
+    loadProjects();
+    loadHomeArtifacts(true);
   });
 
 }

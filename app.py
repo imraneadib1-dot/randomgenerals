@@ -1329,7 +1329,7 @@ def save_thread(thread: dict) -> None:
             return
         row = (tid, thread["title"], thread.get("mode", "chat"),
                thread["updated"], thread.get("owner_id"),
-               json.dumps(thread["messages"]))
+               json.dumps(thread["messages"]), thread.get("project_id"))
     db.save_thread(*row)
 
 
@@ -2619,6 +2619,9 @@ def _migrate_guest_threads(uid):
     if moved:
         db.reassign_threads(guest_id, uid)
         db.reassign_sites(guest_id, uid)
+    # Projects are moved whether or not any conversation was: a guest
+    # can make a project before writing anything in it.
+    db.reassign_projects(guest_id, uid)
 
 
 # WHERE ACCOUNTS AND BILLING ACTUALLY LIVE.
@@ -5986,12 +5989,50 @@ def get_threads():
     if mode in VALID_MODES:
         items = [(tid, t)
                  for tid, t in items if t.get("mode", DEFAULT_MODE) == mode]
+    # ?q= is the sidebar's Search: titles and message text, every bay.
+    # The threads are already in memory, so a substring scan over one
+    # owner's conversations is cheaper than any index would be to keep.
+    query = (request.args.get("q") or "").strip().lower()[:200]
+    snippets = {}
+    if query:
+        hits = []
+        for tid, t in items:
+            if query in (t.get("title") or "").lower():
+                hits.append((tid, t))
+                continue
+            for m in t.get("messages", []):
+                text = m.get("content") if m.get("type") != "image" else ""
+                if not isinstance(text, str):
+                    continue
+                at = text.lower().find(query)
+                if at >= 0:
+                    start = max(0, at - 40)
+                    snippets[tid] = (("…" if start else "")
+                                     + " ".join(text[start:at + len(query) + 80].split()))
+                    hits.append((tid, t))
+                    break
+        items = hits
     summary = [
         {"id": tid, "title": t["title"], "updated": t["updated"],
-         "mode": t.get("mode", DEFAULT_MODE)}
+         "mode": t.get("mode", DEFAULT_MODE),
+         "project_id": t.get("project_id"),
+         **({"snippet": snippets[tid]} if tid in snippets else {})}
         for tid, t in sorted(items, key=lambda x: x[1]["updated"], reverse=True)
     ]
+    if query:
+        summary = summary[:50]
     return jsonify({"threads": summary})
+
+
+def _own_project_id(value):
+    """A project id from a request, if it names one of this owner's
+    projects. -> (project_id or None, error or None)."""
+    if value in (None, ""):
+        return None, None
+    project = db.project_get(str(value))
+    if not project or project["owner_id"] != current_owner_id():
+        return None, "No such project."
+    return project["id"], None
 
 
 @app.route("/api/threads", methods=["POST"])
@@ -5999,6 +6040,9 @@ def create_thread():
     payload = request.get_json(force=True, silent=True) or {}
     mode = payload.get("mode") if payload.get(
         "mode") in VALID_MODES else DEFAULT_MODE
+    project_id, err = _own_project_id(payload.get("project_id"))
+    if err:
+        return jsonify({"error": err}), 404
     tid = str(uuid.uuid4())
     thread = {
         "id": tid,
@@ -6007,6 +6051,7 @@ def create_thread():
         "updated": now_iso(),
         "mode": mode,
         "owner_id": current_owner_id(),
+        "project_id": project_id,
     }
     with DATA_LOCK:
         THREADS[tid] = thread
@@ -6027,19 +6072,112 @@ def get_thread(tid):
 
 @app.route("/api/threads/<tid>", methods=["PATCH"])
 def rename_thread(tid):
-    """A title of the person's choosing. Titles were the first forty
-    characters of the first message and could never be changed."""
+    """A title of the person's choosing, and/or the project the
+    conversation is filed under ({"project_id": null} un-files it).
+    Titles were the first forty characters of the first message and
+    could never be changed."""
     thread = THREADS.get(tid)
     if not thread or thread.get("owner_id") != current_owner_id():
         return jsonify({"error": "Not found"}), 404
     payload = request.get_json(force=True, silent=True) or {}
-    title = str(payload.get("title") or "").strip()
-    if not title or len(title) > 80:
-        return jsonify({"error": "A title is 1 to 80 characters."}), 400
+    changes = {}
+    if "project_id" in payload:
+        project_id, err = _own_project_id(payload.get("project_id"))
+        if err:
+            return jsonify({"error": err}), 404
+        changes["project_id"] = project_id
+    if "title" in payload or not changes:
+        title = str(payload.get("title") or "").strip()
+        if not title or len(title) > 80:
+            return jsonify({"error": "A title is 1 to 80 characters."}), 400
+        changes["title"] = title
     with DATA_LOCK:
-        thread["title"] = title
+        thread.update(changes)
     save_thread(thread)
-    return jsonify({"ok": True, "title": title})
+    return jsonify({"ok": True, "title": thread["title"],
+                    "project_id": thread.get("project_id")})
+
+
+# ----------------------------------------------------------------------
+# Projects - names to file conversations under. The sidebar filters by
+# them and the composer's Project menu files the open conversation.
+# ----------------------------------------------------------------------
+MAX_PROJECTS = 100
+
+
+def _project_view(p, counts):
+    return {"id": p["id"], "name": p["name"], "created": p["created"],
+            "threads": counts.get(p["id"], 0)}
+
+
+@app.route("/api/projects", methods=["GET"])
+def list_projects():
+    owner = current_owner_id()
+    counts = {}
+    for t in list(THREADS.values()):
+        if t.get("owner_id") == owner and t.get("project_id"):
+            counts[t["project_id"]] = counts.get(t["project_id"], 0) + 1
+    return jsonify({"projects": [_project_view(p, counts)
+                                 for p in db.projects_for(owner)]})
+
+
+def _project_name(payload):
+    name = " ".join(str(payload.get("name") or "").split())
+    if not name or len(name) > 60:
+        return None
+    return name
+
+
+@app.route("/api/projects", methods=["POST"])
+def create_project():
+    payload = request.get_json(force=True, silent=True) or {}
+    name = _project_name(payload)
+    if not name:
+        return jsonify({"error": "A project name is 1 to 60 characters."}), 400
+    owner = current_owner_id()
+    existing = db.projects_for(owner)
+    if len(existing) >= MAX_PROJECTS:
+        return jsonify({"error": "That is the most projects one account can have."}), 400
+    same = next((p for p in existing if p["name"].lower() == name.lower()), None)
+    if same:
+        # Creating "Biology" twice files into the one that exists.
+        return jsonify(_project_view(same, {}))
+    pid = str(uuid.uuid4())
+    db.project_create(pid, owner, name, now_iso())
+    return jsonify(_project_view(db.project_get(pid), {})), 201
+
+
+def _own_project(project_id):
+    project = db.project_get(project_id)
+    if not project or project["owner_id"] != current_owner_id():
+        return None
+    return project
+
+
+@app.route("/api/projects/<project_id>", methods=["PATCH"])
+def rename_project(project_id):
+    project = _own_project(project_id)
+    if not project:
+        return jsonify({"error": "Not found"}), 404
+    name = _project_name(request.get_json(force=True, silent=True) or {})
+    if not name:
+        return jsonify({"error": "A project name is 1 to 60 characters."}), 400
+    db.project_rename(project_id, name)
+    return jsonify({"ok": True, "name": name})
+
+
+@app.route("/api/projects/<project_id>", methods=["DELETE"])
+def delete_project(project_id):
+    """The project goes; its conversations stay, un-filed."""
+    project = _own_project(project_id)
+    if not project:
+        return jsonify({"error": "Not found"}), 404
+    with DATA_LOCK:
+        for t in THREADS.values():
+            if t.get("project_id") == project_id:
+                t["project_id"] = None
+    db.project_delete(project_id)
+    return jsonify({"ok": True})
 
 
 @app.route("/api/threads/<tid>", methods=["DELETE"])
@@ -9001,7 +9139,14 @@ def _own_site(site_id):
 
 
 def _site_view(site) -> dict:
+    # The conversation that built it, while that still exists and is the
+    # same owner's - the home screen's artifact cards open it.
+    thread = THREADS.get(site.get("thread_id") or "")
+    if thread and thread.get("owner_id") != site.get("owner_id"):
+        thread = None
     return {
+        "thread_id": site.get("thread_id") if thread else None,
+        "thread_mode": thread.get("mode", DEFAULT_MODE) if thread else None,
         "id": site["id"], "name": site["name"], "version": site["version"],
         "slug": site["slug"], "suggested_slug": site["plan"].get("slug") or "",
         "url": site_url(site["slug"]) if site["slug"] else None,
