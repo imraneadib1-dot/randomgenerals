@@ -32,6 +32,7 @@ import time
 
 import requests
 
+import attachments
 import pip_api
 from providers import RateLimited, Unreachable
 
@@ -74,8 +75,41 @@ def models():
     return [model_id()] if configured() else []
 
 
+# Gemma 3 and 4 take images. GEMMA_VISION=0 turns it off without a
+# code change, should Google's endpoint stop accepting them for a model.
+MAX_IMAGES = 4
+
+
 def vision_models():
-    return []
+    if not configured() or os.environ.get("GEMMA_VISION", "1").strip() == "0":
+        return []
+    name = model_id().lower()
+    return [model_id()] if ("gemma-3" in name or "gemma-4" in name) else []
+
+
+def _with_images(messages, images):
+    """The pictures onto the last user turn, OpenAI-style data URLs -
+    the shape Google's OpenAI-compatible endpoint takes."""
+    if not images:
+        return messages
+    keep, extra = list(images[:MAX_IMAGES]), max(0, len(images) - MAX_IMAGES)
+    out = list(messages)
+    for i in range(len(out) - 1, -1, -1):
+        if out[i].get("role") != "user":
+            continue
+        text = out[i].get("content")
+        text = text if isinstance(text, str) else ""
+        if extra:
+            text += ("\n\n[%d more image(s) were attached than this model "
+                     "takes in one message. Say so rather than guessing at "
+                     "them.]" % extra)
+        parts = [{"type": "text", "text": text}] if text else []
+        for b64 in keep:
+            parts.append({"type": "image_url",
+                          "image_url": {"url": attachments.data_url(b64)}})
+        out[i] = {"role": "user", "content": parts}
+        break
+    return out
 
 
 def ready():
@@ -126,9 +160,11 @@ def _refuses_system(r):
     return "instruction" in text or "system" in text
 
 
-def _body(model, history, options, stream, tools=None):
+def _body(model, history, options, stream, tools=None, images=None):
     opts = options or {}
-    body = {"model": model or model_id(), "messages": _messages(history), "stream": stream}
+    body = {"model": model or model_id(),
+            "messages": _with_images(_messages(history), images),
+            "stream": stream}
     if tools:
         body["tools"] = tools
         body["tool_choice"] = "auto"
@@ -195,7 +231,8 @@ def stream_chat(model, history, options=None, images=None, usage=None):
     try:
         for _attempt in (0, 1):
             r = requests.post(API_ROOT + "/chat/completions", headers=_headers(), timeout=TIMEOUT,
-                              stream=True, json=_body(model, history, options, True))
+                              stream=True, json=_body(model, history, options, True,
+                                                      images=images))
             if _refuses_system(r):
                 r.close()
                 _state["no_system"] = True

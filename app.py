@@ -5266,6 +5266,9 @@ BAY_ROUTES = {
         ("pip", "pip-1.0"),
         ("groq", "qwen3.8-27b"),
         ("groq", "qwen3.6-27b"),
+        # Gemma 4 on Google AI Studio sees too - the second route, so a
+        # picture is not stuck behind Groq's shared per-minute budget.
+        ("google", "gemma"),
         ("openrouter", "gemma-4-31b-it:free"),
         ("openrouter", "minimax-m3:free"),
         ("ollama", "gemma3:4b"),
@@ -5368,6 +5371,13 @@ def _vision_route():
                           if pattern in m.lower()), None)
             if match:
                 return "groq", match
+        elif provider_id == "google":
+            if not google_api.ready():
+                continue
+            match = next((m for m in google_api.vision_models()
+                          if pattern in m.lower()), None)
+            if match:
+                return "google", match
         elif provider_id == "openrouter":
             if not (openrouter_api.configured()
                     and openrouter_api.budget_ok()):
@@ -6363,6 +6373,8 @@ def is_vision_model(model):
         return True
     if name in {m.lower() for m in groq_api.VISION_MODELS}:
         return True
+    if name in {m.lower() for m in google_api.vision_models()}:
+        return True
     # pip 1.0 can see when the engine says its build can.
     if name in {m.lower() for m in pip_api.vision_models()}:
         return True
@@ -6828,7 +6840,7 @@ def _sanitize_attachments(raw):
     return out
 
 
-def _attachment_context_block(files, vision_available):
+def _attachment_context_block(files, vision_available, capped_at=None):
     text_files = [f for f in files if f["kind"] == "text" and f["text"]]
     image_files = [f for f in files if f["kind"] == "image"]
     bad_files = [f for f in files if f["kind"] == "unsupported"]
@@ -6839,7 +6851,16 @@ def _attachment_context_block(files, vision_available):
         for f in text_files:
             parts.append(f"--- {f['filename']} ---\n{f['text']}")
         blocks.append("\n".join(parts))
-    if image_files and not vision_available:
+    if image_files and not vision_available and capped_at is not None:
+        names = ", ".join(f["filename"] for f in image_files)
+        blocks.append(
+            f"The user attached {len(image_files)} image(s) ({names}), but "
+            f"they have used today's {capped_at} free image reads, so the "
+            "images were not shown to you. Tell them plainly: image reading "
+            "resets tomorrow, and Pro has no daily limit. Do not guess at "
+            "what the images contain."
+        )
+    elif image_files and not vision_available:
         names = ", ".join(f["filename"] for f in image_files)
         blocks.append(
             f"The user also attached {len(image_files)} image(s) ({names}), "
@@ -8302,6 +8323,15 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
 
     plan_now = features.normalize_plan(current_account()[0].get("plan"))
     may_see = features.enabled(plan_now, "vision")
+    # The Free plan's daily image allowance. Over it, the images are
+    # named and not looked at, and the reply says why (see
+    # _attachment_context_block) rather than pretending to be blind.
+    image_count = sum(1 for f in files if f["kind"] == "image")
+    image_cap = features.get(plan_now, "vision_images_per_day")
+    images_capped = False
+    if may_see and image_count and image_cap is not None:
+        if db.images_today(current_owner_id()) + image_count > image_cap:
+            may_see, images_capped = False, True
     if (may_see and any(f["kind"] == "image" for f in files)
             and not is_vision_model(model)):
         seer_provider, seer_model = _vision_route()
@@ -8319,7 +8349,8 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # (gpt-oss-120b on Groq stays the fast default). A picture keeps the
     # vision route below; Gemma cooling down after a rate limit falls
     # through to Groq.
-    gemma = (_gemma_model() if provider == "google" and not (wants_sight or deepseek)
+    gemma = (_gemma_model() if provider == "google" and not deepseek
+             and (not wants_sight or google_api.vision_models())
              else None)
     if deepseek:
         provider, model = "openrouter", deepseek
@@ -8333,11 +8364,18 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
         else:
             provider = "groq"
             model = _groq_model_for(mode) or groq_api.PREFERRED[0]
-    vision_available = may_see and is_vision_model(model)
+    # Only asked when there is a picture: is_vision_model() reads the
+    # providers' catalogues, and with vision on for Free that would
+    # otherwise run on every message anyone sends.
+    vision_available = bool(image_count and may_see and is_vision_model(model))
     images_b64 = [
         b64 for f in files if f["kind"] == "image" and vision_available
         for b64 in [attachments.encode_image_base64(f["url"])] if b64
     ]
+    if images_b64:
+        # Counted toward the daily allowance when they are sent, not
+        # when attached: a picture no model looked at costs nothing.
+        db.note_usage(current_owner_id(), 0, messages=0, images=len(images_b64))
 
     system_prompt = CODING_SYSTEM_PROMPT if mode == "code" else CHAT_SYSTEM_PROMPT
     # What was actually asked, before anything is attached to it - the
@@ -8391,7 +8429,8 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
             _web_context_block(web_results)
     if files:
         system_prompt = system_prompt + "\n\n" + _attachment_context_block(
-            files, vision_available)
+            files, vision_available,
+            capped_at=image_cap if images_capped else None)
     site_job = _site_job_for(thread, asked, bool(files and any(
         f.get("kind") == "image" for f in files)), strength)
     if site_job is not None:

@@ -645,9 +645,10 @@ check("a Pro model on a free key is refused", r.status_code, 403)
 r = client.post("/v1/chat/completions", json={"messages": []})
 check("no key, no answer", r.status_code, 401)
 
-print("\n== seeing an image is a Pro feature ==")
-# features.py has said FREE: vision False since the tiers were written;
-# nothing read it, so every image went to a vision model for everyone.
+print("\n== Free reads images up to a daily cap; Pro has none ==")
+# Free was locked out of vision entirely, and with every account on Free
+# nobody could have a picture read. It is a cap now (features.py
+# vision_images_per_day), the way memories and connected apps are.
 appmod._vision_route = lambda: ("ollama", "gemma3:4b")
 use(fake_streamer(["I see"]))
 tid = new_thread()
@@ -656,10 +657,22 @@ client.post("/api/chat", json={
     "thread_id": tid, "provider": "ollama", "model": "fake-model",
     "message": "what is in this?",
     "attachments": [{"filename": "pic.png", "kind": "image", "url": "/x.png"}]})
-check("a free account's image does not switch the model",
+check("a free account's image goes to a model that can see",
+      CALLS[-1]["model"], "gemma3:4b")
+
+_real_images_today = appmod.db.images_today
+appmod.db.images_today = lambda owner: 10
+tid = new_thread()
+CALLS.clear()
+client.post("/api/chat", json={
+    "thread_id": tid, "provider": "ollama", "model": "fake-model",
+    "message": "what is in this?",
+    "attachments": [{"filename": "pic.png", "kind": "image", "url": "/x.png"}]})
+appmod.db.images_today = _real_images_today
+check("past the daily cap the model is not switched",
       CALLS[-1]["model"], "fake-model")
-check("and the model is told it cannot see it",
-      "can't see images" in CALLS[-1]["history"][0]["content"], True)
+check("and is told the free reads are used up",
+      "free image reads" in CALLS[-1]["history"][0]["content"], True)
 check("so no image bytes are sent", "images" in CALLS[-1]["kw"], False)
 
 pro_uid = appmod._create_user("seer@example.com", password_hash="x")

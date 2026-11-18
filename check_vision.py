@@ -42,6 +42,10 @@ def check(label, got, want):
 a.ollama_reachable = lambda: True
 a.ollama_provider = lambda: {"models": ["gemma3:4b", "gemma3:1b"]}
 a.openrouter_api.configured = lambda: False
+# Gemma on Google AI Studio is a vision route too (after Groq). Off here,
+# like OpenRouter, so a real GEMINI_API_KEY in this machine's .env cannot
+# make the local-guard checks below pass or fail for the wrong reason.
+a.google_api.configured = lambda: False
 # Off until its own section below. With a real key in the environment
 # pip 1.0 is the first vision route, and a running engine would make
 # every local-guard check here pass for the wrong reason.
@@ -228,9 +232,11 @@ try:
             check("[pro] and is handed the image", streams and len(streams[0]["images"]), 1)
             check("[pro] the model is not told it cannot see", "can't see images" in streams[0]["system"], False)
         else:
-            check("[free] the chat model answers", streams and streams[0]["model"], "pip-1.0")
-            check("[free] with no image", streams and streams[0]["images"], [])
-            check("[free] and is told not to guess", "can't see images" in streams[0]["system"], True)
+            # Free reads images too now, within its daily cap
+            # (features.py vision_images_per_day).
+            check("[free] the seeing model answers", streams and streams[0]["model"], "pip-1.0")
+            check("[free] and is handed the image", streams and len(streams[0]["images"]), 1)
+            check("[free] the model is not told it cannot see", "can't see images" in streams[0]["system"], False)
 finally:
     try:
         os.remove(png_path)

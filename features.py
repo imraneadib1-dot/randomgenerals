@@ -59,7 +59,13 @@ FEATURES = {
         "max_context_tokens": 8192,
         # --- models ---
         "premium_models": False,
-        "vision": False,            # can attach images, model can't see them
+        # IMAGES ARE READ ON FREE, UP TO A DAILY CAP. This was a lock
+        # ("vision": False) - and with every account on Free and Pro not
+        # yet purchasable, nobody on the site could have a picture read
+        # at all. It follows memories and connected apps now: a cap, not
+        # a lock. Pro has no cap.
+        "vision": True,
+        "vision_images_per_day": 10,
         # --- capabilities ---
         "deep_mode": True,          # moved to free deliberately
         # THE CALCULATOR IS NOT A PAID FEATURE
@@ -139,6 +145,7 @@ FEATURES = {
         "max_context_tokens": 16384,
         "premium_models": True,
         "vision": True,
+        "vision_images_per_day": None,      # no cap
         "deep_mode": True,
         "builtin_tools": True,
         "image_generation": True,
@@ -274,6 +281,7 @@ def public_flags(plan):
         "code_execution": f["code_execution"],
         "premium_models": f["premium_models"],
         "vision": f["vision"],
+        "vision_images_per_day": f.get("vision_images_per_day"),
         "max_memories": f["max_memories"],
         "max_upload_mb": f["max_upload_mb"],
         "terminal_unrestricted": f["terminal_unrestricted"],

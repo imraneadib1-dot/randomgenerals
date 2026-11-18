@@ -138,6 +138,9 @@ CREATE TABLE IF NOT EXISTS usage_log (
     -- Tokens the model generated for this owner that day (eval_count),
     -- for Settings > Usage.
     tokens   INTEGER NOT NULL DEFAULT 0,
+    -- Images a model was shown for this owner that day, for the Free
+    -- plan's daily cap (features.py vision_images_per_day).
+    images   INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (owner_id, day)
 );
 
@@ -755,6 +758,10 @@ def _migrate_columns(conn):
     usage_cols = {row["name"] for row in conn.execute("PRAGMA table_info(usage_log)")}
     if usage_cols and "tokens" not in usage_cols:
         conn.execute("ALTER TABLE usage_log ADD COLUMN tokens "
+                     "INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
+    if usage_cols and "images" not in usage_cols:
+        conn.execute("ALTER TABLE usage_log ADD COLUMN images "
                      "INTEGER NOT NULL DEFAULT 0")
         conn.commit()
 
@@ -1411,7 +1418,20 @@ SETTINGS_DEFAULTS = {
 }
 
 
-def note_usage(owner_id, credits, messages=1, tokens=0):
+def images_today(owner_id):
+    """Images shown to a model for this owner today (UTC). Never raises."""
+    import datetime as _dt
+    day = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+    try:
+        row = _connect().execute(
+            "SELECT images FROM usage_log WHERE owner_id = ? AND day = ?",
+            (owner_id, day)).fetchone()
+        return int(row["images"]) if row else 0
+    except Exception:                          # noqa: BLE001
+        return 0
+
+
+def note_usage(owner_id, credits, messages=1, tokens=0, images=0):
     """Add to today's counters. Never raises.
 
     Wrapped because this runs on the reply path: a usage counter that
@@ -1423,13 +1443,15 @@ def note_usage(owner_id, credits, messages=1, tokens=0):
         conn = _connect()
         with conn:
             conn.execute(
-                "INSERT INTO usage_log (owner_id, day, messages, credits, tokens) "
-                "VALUES (?, ?, ?, ?, ?) "
+                "INSERT INTO usage_log (owner_id, day, messages, credits, tokens, images) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(owner_id, day) DO UPDATE SET "
                 "  messages = messages + excluded.messages, "
                 "  credits  = credits  + excluded.credits, "
-                "  tokens   = tokens   + excluded.tokens",
-                (owner_id, day, messages, int(credits), max(0, int(tokens or 0))))
+                "  tokens   = tokens   + excluded.tokens, "
+                "  images   = images   + excluded.images",
+                (owner_id, day, messages, int(credits), max(0, int(tokens or 0)),
+                 max(0, int(images or 0))))
     except Exception:                          # noqa: BLE001
         pass
 
