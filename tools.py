@@ -25,6 +25,7 @@ skims once.
 """
 import json
 
+import browser
 import codeexec
 import imagegen
 import imagesearch
@@ -157,6 +158,28 @@ GENERATE_IMAGE = {
 ALL_SPECS = [WEB_SEARCH, RUN_PYTHON, GENERATE_IMAGE]
 
 
+OPEN_PAGE = {
+    "type": "function",
+    "function": {
+        "name": "open_page",
+        "description": (
+            "Open a web page in the workspace browser and read it. Use this "
+            "when the user gives a link, asks what a page or site says, or "
+            "after web_search when a result needs reading in full rather "
+            "than from its snippet. The page also appears in the user's "
+            "browser pane, so you can refer to it as on screen."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string",
+                        "description": "The full address, e.g. https://example.com/page"},
+            },
+            "required": ["url"],
+        },
+    },
+}
+
+
 def available_specs(allow_images=True, allow_code=True, allow_web=True):
     """The tool list to advertise for this request.
 
@@ -168,6 +191,7 @@ def available_specs(allow_images=True, allow_code=True, allow_web=True):
     specs = []
     if allow_web:
         specs.append(WEB_SEARCH)
+        specs.append(OPEN_PAGE)
         specs.append(FIND_IMAGES)
     if allow_code:
         specs.append(RUN_PYTHON)
@@ -282,8 +306,26 @@ def _do_generate_image(args):
     }
 
 
+def _do_open_page(args):
+    url = (args.get("url") or "").strip()
+    if not url:
+        return {"text": "No url given.", "display": None}
+    try:
+        page = browser.open_page(url)
+    except browser.BrowseError as e:
+        return {"text": "Could not open %s: %s" % (url, e), "display": None}
+    head = "%s\n%s\n\n" % (page["title"], page["url"] or url)
+    return {
+        "text": _truncate(head + (page["text"] or "(no readable text)"), 9000),
+        # The pane opens on the same page, so the reader sees what the
+        # model read (static/js/browser.js).
+        "display": {"kind": "page", "url": page["url"] or url, "title": page["title"]},
+    }
+
+
 HANDLERS = {
     "web_search": _do_web_search,
+    "open_page": _do_open_page,
     "find_images": _do_find_images,
     "run_python": _do_run_python,
     "generate_image": _do_generate_image,

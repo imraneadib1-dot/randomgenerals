@@ -3485,3 +3485,257 @@ a.profile-menu-item {
     grid-template-columns: 1fr;
   }
 }
+
+/* ==================================================================
+   THE WORKSPACE BROWSER (browser.js). The pane has two modes, set on
+   it as data-mode: "artifact" (code / preview) and "browser". Each
+   control says which mode it belongs to; the other mode's are not
+   shown. Done with display rather than [hidden], which the artifact
+   code already toggles for its own reasons.
+   ================================================================== */
+.artifact-pane:not([data-mode="browser"]) .browser-only,
+.artifact-pane[data-mode="browser"] .artifact-only,
+.artifact-pane[data-mode="browser"] #artifactViews,
+.artifact-pane[data-mode="browser"] #artifactVersions,
+.artifact-pane[data-mode="browser"] #artifactCopy,
+.artifact-pane[data-mode="browser"] #artifactDownload,
+.artifact-pane[data-mode="browser"] #artifactPopout,
+.artifact-pane[data-mode="browser"] #artifactCodeView,
+.artifact-pane[data-mode="browser"] #artifactPreviewView {
+  display: none !important;
+}
+
+.browser-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--ws-2);
+  border-bottom: 1px solid var(--ws-line);
+  flex-shrink: 0;
+}
+.browser-bar .ws-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.browser-address {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  margin-left: 4px;
+  padding: 0 12px;
+  border: 1px solid var(--ws-line);
+  border-radius: 999px;
+  background: var(--ws-3);
+  color: var(--ws-ink);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.browser-address::placeholder { color: var(--ws-ink-3); }
+.browser-address:focus {
+  border-color: var(--ws-line-focus);
+  background: var(--ws-hover);
+}
+#browserOriginal:disabled { opacity: 0.4; cursor: default; }
+
+.browser-view {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  background: var(--ws-2);
+  scrollbar-width: thin;
+}
+.browser-status:empty { display: none; }
+.browser-status {
+  margin: 0;
+  padding: 10px 24px;
+  font-size: 13px;
+  color: var(--ws-ink-2);
+  border-bottom: 1px solid var(--ws-line);
+}
+.rg-reader.is-loading { opacity: 0.45; transition: opacity 0.2s; }
+
+/* The reading view: one calm column, the app's own type. */
+.rg-reader {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 28px 64px;
+  color: var(--ws-ink);
+  font-size: 15px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.rg-reader > :first-child { margin-top: 0; }
+.rg-reader h1, .rg-reader h2, .rg-reader h3,
+.rg-reader h4, .rg-reader h5, .rg-reader h6 {
+  margin: 1.6em 0 0.5em;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--ws-ink);
+}
+.rg-reader h1 { font-size: 1.7em; }
+.rg-reader h2 { font-size: 1.35em; }
+.rg-reader h3 { font-size: 1.15em; }
+.rg-reader h4, .rg-reader h5, .rg-reader h6 { font-size: 1em; }
+.rg-reader p, .rg-reader ul, .rg-reader ol,
+.rg-reader blockquote, .rg-reader pre, .rg-reader table, .rg-reader figure {
+  margin: 0 0 1em;
+}
+.rg-reader ul, .rg-reader ol { padding-left: 1.4em; }
+.rg-reader li { margin: 0.25em 0; }
+.rg-reader a {
+  color: var(--ws-ink);
+  text-decoration: underline;
+  text-decoration-color: var(--ws-line-focus);
+  text-underline-offset: 2px;
+}
+.rg-reader a:hover { text-decoration-color: currentColor; }
+.rg-reader img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1em auto;
+  border-radius: 8px;
+}
+.rg-reader blockquote {
+  padding-left: 14px;
+  border-left: 3px solid var(--ws-line-strong);
+  color: var(--ws-ink-2);
+}
+.rg-reader pre {
+  padding: 12px 14px;
+  overflow-x: auto;
+  border-radius: 8px;
+  background: var(--ws-3);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.rg-reader code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+.rg-reader table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+/* Row lines only: many sites still lay out with tables, and a full grid
+   turned those into spreadsheets. */
+.rg-reader th, .rg-reader td {
+  padding: 6px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--ws-line);
+  text-align: left;
+  vertical-align: top;
+}
+.rg-reader hr { border: 0; border-top: 1px solid var(--ws-line); margin: 2em 0; }
+.rg-reader figcaption, .rg-reader small { color: var(--ws-ink-3); font-size: 0.85em; }
+.rg-reader mark { background: var(--ws-4); color: inherit; padding: 0 2px; border-radius: 3px; }
+
+/* Address-bar searches. */
+.rg-reader .rg-results { list-style: none; padding: 0; }
+.rg-reader .rg-results li {
+  margin: 0 0 18px;
+}
+.rg-reader .rg-results a {
+  font-size: 16px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.rg-reader .rg-results a:hover { text-decoration: underline; }
+.rg-reader .rg-results .rg-result-url {
+  display: block;
+  font-size: 12px;
+  color: var(--ws-ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rg-reader .rg-results p { margin: 4px 0 0; color: var(--ws-ink-2); font-size: 14px; }
+
+.browser-start {
+  margin-top: 12vh;
+  text-align: center;
+  color: var(--ws-ink-2);
+  font-size: 14px;
+}
+.browser-start-title {
+  margin-bottom: 6px !important;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ws-ink);
+}
+.browser-start p { max-width: 380px; margin: 0 auto; }
+
+/* "Asking about <page>" above the input. */
+.page-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 768px;
+  margin: 0 auto 6px;
+  padding: 5px 6px 5px 10px;
+  width: fit-content;
+  border: 1px solid var(--ws-line);
+  border-radius: 999px;
+  background: var(--ws-3);
+  color: var(--ws-ink-2);
+  font-size: 12.5px;
+}
+.page-chip[hidden] { display: none; }
+.page-chip-label { flex: none; }
+.page-chip-title {
+  min-width: 0;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ws-ink);
+  font-weight: 500;
+}
+.page-chip-clear {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--ws-ink-3);
+  cursor: pointer;
+}
+.page-chip-clear:hover { background: var(--ws-hover); color: var(--ws-ink); }
+
+/* "Opened <page>" under a reply. */
+.page-opened-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.page-opened {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  max-width: 100%;
+  padding: 5px 11px;
+  border: 1px solid var(--ws-line);
+  border-radius: 999px;
+  background: var(--ws-3);
+  color: var(--ws-ink-2);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.page-opened strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: var(--ws-ink);
+}
+.page-opened:hover { background: var(--ws-hover); border-color: var(--ws-line-strong); }

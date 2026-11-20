@@ -10,6 +10,7 @@ import { toast } from "./toast.js";
 import { addMessage, addMessageActions, renderContent, renderMsgAttachments, renderReceipt, renderSourceChips } from "./message.js";
 import { loadThreadList } from "./sidebar.js";
 import { shouldAutoSearch } from "./voice.js";
+import { currentPageUrl, openBrowser } from "./browser.js";
 
 /* ----------------------------------------------------------------
    Creating a thread in the current bay
@@ -34,6 +35,7 @@ export const TOOL_LABELS = {
   web_search: ["Searching the web", "Searched the web"],
   run_python: ["Running code", "Ran code"],
   generate_image: ["Creating an image", "Created an image"],
+  open_page: ["Opening a page", "Read a page"],
 };
 
 export function toolStatusStrip(msgEl) {
@@ -68,6 +70,10 @@ export function handleToolEvent(msgEl, evt) {
 
   if (evt.status !== "done" || !evt.display) return;
   renderToolDisplay(msgEl, evt.display);
+  // The page the AI just read opens beside the chat, live.
+  if (evt.display.kind === "page" && evt.display.url) {
+    openBrowser(evt.display.url, { fromAI: true });
+  }
 }
 
 /* What a tool produced, drawn under the reply: the sources a search
@@ -89,6 +95,28 @@ export function renderToolDisplay(msgEl, d) {
     msgEl.appendChild(img);
   } else if (d.kind === "site") {
     renderSiteCard(msgEl, d);
+  } else if (d.kind === "page" && d.url) {
+    let row = msgEl.querySelector(".page-opened-row");
+    if (!row) {
+      row = document.createElement("div");
+      row.className = "page-opened-row";
+      msgEl.appendChild(row);
+    }
+    if (row.querySelector(`[data-url="${CSS.escape(d.url)}"]`)) return;
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "page-opened";
+    chip.dataset.url = d.url;
+    chip.title = d.url;
+    const label = document.createElement("span");
+    label.textContent = "Opened ";
+    const name = document.createElement("strong");
+    let host = "";
+    try { host = new URL(d.url).hostname.replace(/^www\./, ""); } catch (_) { /* keep blank */ }
+    name.textContent = d.title || host || d.url;
+    chip.append(label, name);
+    chip.addEventListener("click", () => openBrowser(d.url));
+    row.appendChild(chip);
   } else if (d.kind === "code") {
     const box = document.createElement("div");
     box.className = "tool-code";
@@ -332,6 +360,7 @@ export async function sendChatMessage(text) {
         message: text,
         web_results: webResults,
         attachments: files,
+        page_url: currentPageUrl(),
         strength: state.currentStrength,
       }),
       signal: controller.signal,
@@ -370,6 +399,7 @@ export async function sendChatMessage(text) {
             message: text,
             web_results: webResults,
             attachments: files,
+            page_url: currentPageUrl(),
             strength: state.currentStrength,
           }),
           signal: controller.signal,

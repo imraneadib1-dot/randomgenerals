@@ -62,6 +62,7 @@ import sitebuilder  # noqa: E402  plans and writes whole website projects
 import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
 import kelviq_billing  # noqa: E402  the payment provider, used first when set
 import anthropic_api  # noqa: E402  pip 2, the Pro model
+import browser  # noqa: E402  the workspace browser (pages read on the server)
 import pixverse  # noqa: E402  paid text-to-video - see pixverse.py
 import hfvideo  # noqa: E402  free-tier text-to-video - see hfvideo.py
 import tripo3d  # noqa: E402  text-to-3D generation - see tripo3d.py
@@ -6824,6 +6825,27 @@ def _sanitize_web_results(raw):
     return out
 
 
+def _page_context_block(thread):
+    """The page the person has open in the workspace browser, for the
+    message they just sent about it. Read through the same cache the
+    pane used, so it is the page on their screen."""
+    last = next((m for m in reversed(thread.get("messages") or [])
+                 if m.get("role") == "user"), None)
+    url = ((last or {}).get("page") or {}).get("url")
+    if not url:
+        return ""
+    try:
+        page = browser.open_page(url)
+    except browser.BrowseError as e:
+        return ("The user has %s open in their workspace browser, but it "
+                "could not be read (%s). Say so if they ask about it." % (url, e))
+    return ("The user has this page open in their workspace browser and is "
+            "probably asking about it. Answer from it when relevant, and say "
+            "so when it does not cover the question.\n"
+            "Title: %s\nURL: %s\n--- page text ---\n%s\n--- end of page ---"
+            % (page["title"], page["url"], page["text"][:browser.MAX_TEXT_CHARS]))
+
+
 def _web_context_block(results):
     lines = [
         "Web search results for the user's question below. Use them if "
@@ -8501,6 +8523,9 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     if web_results:
         system_prompt = system_prompt + "\n\n" + \
             _web_context_block(web_results)
+    page_block = _page_context_block(thread)
+    if page_block:
+        system_prompt = system_prompt + "\n\n" + page_block
     if files:
         system_prompt = system_prompt + "\n\n" + _attachment_context_block(
             files, vision_available,
@@ -9915,6 +9940,23 @@ def reply_feedback():
     return jsonify({"ok": True, "vote": vote})
 
 
+# The workspace browser's page loads. Rate-limited on its own: each one is
+# an outbound fetch this server makes on someone's behalf.
+LIMIT_BROWSE = Limiter(rate=40, per=60, burst=10)
+
+
+@app.route("/api/browse", methods=["GET"])
+@limited("browse", LIMIT_BROWSE, key=_limit_key_account)
+def browse():
+    """A page (or an address-bar search) for the workspace browser, as
+    the reader view built in browser.py."""
+    try:
+        page = browser.open_page(request.args.get("url") or "")
+    except browser.BrowseError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({k: page[k] for k in ("kind", "url", "title", "site", "html")})
+
+
 @app.route("/api/chat", methods=["POST"])
 @limited("chat", LIMIT_CHAT, key=_limit_key_account)
 def chat():
@@ -9925,6 +9967,12 @@ def chat():
     user_message = (payload.get("message") or "").strip()
     web_results = _sanitize_web_results(payload.get("web_results"))
     files = _sanitize_attachments(payload.get("attachments"))
+    # The page open in the workspace browser, if the person kept it
+    # attached (static/js/browser.js). Saved on their turn, so a
+    # regenerate reads the same page.
+    page_url = str(payload.get("page_url") or "").strip()[:2000]
+    if not re.match(r"^https?://", page_url):
+        page_url = ""
     strength = payload.get("strength") or DEFAULT_STRENGTH
     if strength not in STRENGTH_LEVELS:
         strength = DEFAULT_STRENGTH
@@ -9970,6 +10018,8 @@ def chat():
     }
     if files:
         user_msg["attachments"] = files
+    if page_url:
+        user_msg["page"] = {"url": page_url}
 
     # Content filter FIRST - before the turn is stored, before it can be
     # captured as a memory. moderation.py's docstring always said the

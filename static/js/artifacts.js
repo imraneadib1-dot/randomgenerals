@@ -223,6 +223,9 @@ function current() {
 }
 
 function render() {
+  // The pane is showing the browser (browser.js): the chat's redraws
+  // are not for it.
+  if (pane.dataset.mode === "browser") return;
   const cur = current();
   if (!cur) { closePane(); return; }
   const { a, v } = cur;
@@ -419,7 +422,22 @@ export function openArtifact(key, index, mode) {
   }
   const wasOpen = isOpen();
   if (!wasOpen) openPane();
+  pane.dataset.mode = "artifact";
+  drawnSig = "";
   render();
+  if (!wasOpen && !isWide()) closeBtn.focus();
+}
+
+/** The pane in browser mode, for browser.js. */
+export function showBrowserPane() {
+  const wasOpen = isOpen();
+  if (!wasOpen) openPane();
+  pane.dataset.mode = "browser";
+  chatLog.querySelectorAll(".code-block.is-in-pane")
+    .forEach((el) => el.classList.remove("is-in-pane"));
+  // A previewed page stops running while the browser has the pane.
+  previewView.innerHTML = "";
+  drawnSig = "";
   if (!wasOpen && !isWide()) closeBtn.focus();
 }
 
@@ -657,6 +675,9 @@ export function mountArtifacts() {
   // showing may no longer exist.
   new MutationObserver(() => {
     if (!isOpen()) return;
+    // The browser does not belong to a message: it stays open across
+    // a new chat (the first message replaces the welcome screen).
+    if (pane.dataset.mode === "browser") return;
     // A message was added: nothing the pane shows went away.
     const cur = current();
     if (cur && cur.v.block.isConnected) return;

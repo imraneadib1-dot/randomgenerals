@@ -565,6 +565,16 @@
         </main>
 
         <footer class="composer">
+          <!-- The page open in the workspace browser goes with the next
+               message (browser.js); the x leaves it out. -->
+          <div class="page-chip" id="pageChip" hidden>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+            <span class="page-chip-label">Asking about</span>
+            <span class="page-chip-title" id="pageChipTitle"></span>
+            <button type="button" class="page-chip-clear" id="pageChipClear" aria-label="Don't send this page" title="Don't send this page">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            </button>
+          </div>
           <div class="attach-chips" id="attachChips"></div>
           <!-- Code / Chat bays: text composer -->
           <form id="chatForm" class="composer-form">
@@ -614,6 +624,13 @@
                   <span class="composer-menu-text">
                     <span>Upload a folder</span>
                     <small>Every readable file inside</small>
+                  </span>
+                </button>
+                <button type="button" class="composer-menu-item" id="openBrowserBtn" role="menuitem">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+                  <span class="composer-menu-text">
+                    <span>Open the browser</span>
+                    <small>Browse beside the chat, ask about a page</small>
                   </span>
                 </button>
                 <a class="composer-menu-item" id="customizeLink" role="menuitem" href="/customize?tab=connectors">
@@ -874,7 +891,8 @@
         <div class="artifact-inner">
           <header class="artifact-bar">
             <div class="artifact-id">
-              <span class="artifact-icon" aria-hidden="true">
+              <span class="artifact-icon browser-only" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></span>
+              <span class="artifact-icon artifact-only" aria-hidden="true">
                 <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
                   <path d="M5.5 4.5L2 8l3.5 3.5M10.5 4.5L14 8l-3.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
@@ -882,6 +900,11 @@
               <span class="artifact-title" id="artifactTitle">Untitled</span>
               <span class="artifact-lang" id="artifactLang"></span>
             </div>
+
+            <button type="button" class="ws-btn browser-only" id="browserOriginal" title="Open the real page in a new tab" disabled>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M9.5 2.5h4v4M13.5 2.5L8 8M6.5 3.5h-3a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span>Open original</span>
+            </button>
 
             <div class="artifact-views" id="artifactViews" role="tablist" aria-label="View">
               <button type="button" role="tab" data-view="code" aria-selected="true">Code</button>
@@ -915,7 +938,22 @@
             </div>
           </header>
 
-          <div class="artifact-tabs" id="artifactTabs" role="tablist" aria-label="Files in this chat" hidden></div>
+          <form class="browser-bar browser-only" id="browserBar" role="search" autocomplete="off">
+            <button type="button" class="ws-icon-btn" id="browserBack" aria-label="Back" title="Back" disabled>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M10 3.5L5.5 8l4.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button type="button" class="ws-icon-btn" id="browserForward" aria-label="Forward" title="Forward" disabled>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3.5L10.5 8 6 12.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button type="button" class="ws-icon-btn" id="browserReload" aria-label="Reload" title="Reload">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <input type="text" class="browser-address" id="browserAddress" name="address"
+                   placeholder="Search or type an address" aria-label="Address or search"
+                   spellcheck="false" autocapitalize="off" enterkeyhint="go" />
+          </form>
+
+          <div class="artifact-tabs artifact-only" id="artifactTabs" role="tablist" aria-label="Files in this chat" hidden></div>
 
           <div class="artifact-body">
             <div class="artifact-code" id="artifactCodeView">
@@ -923,6 +961,10 @@
               <pre class="artifact-source"><code id="artifactCode"></code></pre>
             </div>
             <div class="artifact-preview" id="artifactPreviewView" hidden></div>
+            <div class="browser-view browser-only" id="artifactBrowserView">
+              <p class="browser-status" id="browserStatus" role="status" aria-live="polite"></p>
+              <article class="rg-reader" id="browserPage"></article>
+            </div>
           </div>
         </div>
       </aside>
