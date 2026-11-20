@@ -10025,6 +10025,70 @@ def live_browser_frame():
     return resp
 
 
+_SEARCH_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>%(title)s</title><style>
+*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+color:#1f1f1f;background:#fff}header{position:sticky;top:0;background:#fff;border-bottom:1px solid #ececec;
+padding:14px 20px;display:flex;gap:14px;align-items:center}.brand{font-weight:700;letter-spacing:-.02em;
+white-space:nowrap}form{flex:1;max-width:620px;display:flex}input{flex:1;font:inherit;padding:9px 16px;
+border:1px solid #dcdcdc;border-radius:999px;outline:none}input:focus{border-color:#999}
+main{max-width:680px;padding:12px 20px 48px}.r{padding:14px 0}.u{font-size:12.5px;color:#4d5156;
+overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.t{display:block;font-size:18px;color:#1a0dab;
+text-decoration:none;margin:2px 0}.t:hover{text-decoration:underline}.s{color:#474747;font-size:14px}
+.none{color:#666;padding:24px 0}</style></head><body>
+<header><span class="brand">RandomGenerals</span><form action="/browser/search" method="get">
+<input name="q" value="%(q)s" placeholder="Search the web" autocomplete="off"></form></header>
+<main>%(body)s</main></body></html>"""
+
+
+# Every live browser's searches arrive from this server's own address,
+# so this limit is shared by everyone browsing: generous.
+LIMIT_BROWSER_SEARCH = Limiter(rate=120, per=60, burst=30)
+
+
+@app.route("/browser/search", methods=["GET"])
+@limited("browser-search", LIMIT_BROWSER_SEARCH, key=_limit_key_ip)
+def browser_search_page():
+    """The results page the live browser opens for a typed search.
+
+    Search engines refuse a browser running in a data centre (Bing shows
+    an empty page, DuckDuckGo an error), so searches go through the same
+    search the AI uses, and each result opens as the real site."""
+    import html as _html
+    q = (request.args.get("q") or "").strip()[:300]
+    items = []
+    if q:
+        try:
+            results = websearch.search(q, max_results=10) or []
+        except Exception:                              # noqa: BLE001
+            results = []
+        for r in results:
+            url = browser._safe_link("https://example.invalid/", r.get("url") or "")
+            if not url:
+                continue
+            items.append(
+                '<div class="r"><div class="u">%s</div><a class="t" href="%s">%s</a>'
+                '<div class="s">%s</div></div>' % (
+                    _html.escape(url), _html.escape(url, quote=True),
+                    _html.escape(r.get("title") or url), _html.escape(r.get("snippet") or "")))
+    body = "".join(items) if items else (
+        '<p class="none">%s</p>' % ("No results for that search." if q else "Type a search above."))
+    page = _SEARCH_PAGE % {"title": _html.escape((q + " - Search") if q else "Search"),
+                           "q": _html.escape(q, quote=True), "body": body}
+    resp = Response(page, mimetype="text/html")
+    resp.headers["Cache-Control"] = "no-store"
+    resp.headers["X-Robots-Tag"] = "noindex"
+    return resp
+
+
+# Searches typed in the live browser open the page above, on the public
+# address the browser can reach (a local dev server keeps the default).
+if PUBLIC_SITE_URL.startswith("https://"):
+    livebrowser.SEARCH_URL = PUBLIC_SITE_URL + "/browser/search?q=%s"
+
+
 @app.route("/api/browser/close", methods=["POST"])
 def live_browser_close():
     livebrowser.close(current_owner_id())
