@@ -3749,11 +3749,12 @@ a.profile-menu-item {
 .attach-chips,
 .composer-meta,
 .page-chip {
-  max-width: 680px;
+  max-width: 580px;
 }
 .composer-form {
-  padding: 10px 10px 8px;
-  border-radius: 14px;
+  padding: 8px 8px 6px;
+  border-radius: 12px;
+  row-gap: 2px;
   border-color: rgba(255, 255, 255, 0.14);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.04),
@@ -3775,12 +3776,26 @@ a.profile-menu-item {
   box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.04), 0 6px 18px rgba(24, 24, 27, 0.1);
 }
 .composer-input {
-  font-size: 15px;
-  padding: 2px 6px 4px;
-  min-height: 28px;
+  font-size: 14.5px;
+  padding: 2px 6px 2px;
+  min-height: 24px;
 }
 .main.is-empty .composer-input {
-  min-height: 40px;
+  min-height: 28px;
+}
+.composer-form .attach-btn,
+.composer-form .mic-btn {
+  width: 30px;
+  height: 30px;
+}
+.composer-form .send-btn {
+  width: 30px;
+  height: 30px;
+}
+.composer-form .send-btn svg,
+.composer-form .attach-btn svg {
+  width: 16px;
+  height: 16px;
 }
 .composer-meta {
   margin-top: 6px;
