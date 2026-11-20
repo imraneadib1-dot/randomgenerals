@@ -524,9 +524,13 @@ check("max_tokens becomes the ceiling", opts.get("num_predict"), 100)
 client.patch("/api/settings", json={"max_tokens": 32000})
 CALLS.clear()
 send(tid, "again")
-strength_cap = appmod.STRENGTH_LEVELS["quick"]["options"]["num_predict"]
-check("but never above what the strength allows",
-      CALLS[-1]["kw"]["options"]["num_predict"], strength_cap)
+# The ceiling in chat is the PLAN's answer limit now (3,500 Free, 8,000
+# Pro), as it always was in the code bay - the Pro card promises longer
+# replies, and before this chat was capped at the strength's 2,600
+# whatever the plan.
+plan_cap = appmod.features.limits_for("free")["num_predict"]
+check("but never above what the plan allows",
+      CALLS[-1]["kw"]["options"]["num_predict"], plan_cap)
 
 client.patch("/api/settings", json={"tools_enabled": False,
                                     "temperature": None, "top_p": None,

@@ -43,6 +43,7 @@ FREE_MODELS = {
 # gating on it would let a Pro model through under a different name.
 PRO_MODEL_TAGS = {
     "gemma3:4b",         # multimodal, and the better of the two
+    "claude-haiku-5-5",  # pip 2 (anthropic_api.py) - the Pro model
 }
 PRO_MODELS = {
     "qwen2.5",           # kept: an install that still has it

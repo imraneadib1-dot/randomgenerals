@@ -61,6 +61,7 @@ import imagesearch  # noqa: E402  real photos for generated sites
 import sitebuilder  # noqa: E402  plans and writes whole website projects
 import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
 import kelviq_billing  # noqa: E402  the payment provider, used first when set
+import anthropic_api  # noqa: E402  pip 2, the Pro model
 import pixverse  # noqa: E402  paid text-to-video - see pixverse.py
 import hfvideo  # noqa: E402  free-tier text-to-video - see hfvideo.py
 import tripo3d  # noqa: E402  text-to-3D generation - see tripo3d.py
@@ -1180,12 +1181,17 @@ def plan_perks():
         ("%d MB file uploads" % free["max_upload_mb"], True),
     ]
     multiple = PLANS["pro"]["cap"] // max(1, PLANS["free"]["cap"])
-    pro_list = [
+    pro_list = []
+    # pip 2 leads the card only where it can actually answer.
+    if anthropic_api.configured():
+        pro_list.append(("<strong>pip 2</strong> - our most capable model, "
+                         "for sharper answers, writing and code", True))
+    pro_list += [
         ("<strong>%s</strong> - %dx the Free allowance"
          % (credits("pro"), multiple), True),
         ("<strong>Unlimited image reading</strong>", True),
         ("Priority on the fast model when the site is busy", True),
-        ("Longer answers - up to {:,} tokens, against {:,}".format(
+        ("Longer replies in one go - up to {:,} tokens, against {:,}".format(
             pro["max_output_tokens_code"], free["max_output_tokens_code"]),
          True),
         ("Twice the context ({:,} tokens) for long files and long chats"
@@ -5190,6 +5196,9 @@ def get_credits():
 # model actually wrote before believing a score.)
 BAY_ROUTES = {
     "code": [
+        # pip 2 first, for Pro - _recommended_routes skips it for Free,
+        # where model_allowed() says no.
+        ("anthropic", "claude-haiku"),
         # pip 1.0 first. Underneath it DeepSeek, asked for by name: V3
         # for the bay, and Deep mode swaps in R1
         # (openrouter_api.DEEP_MODEL) at _stream_reply. Both are paid
@@ -5214,6 +5223,7 @@ BAY_ROUTES = {
         ("ollama", "gpt-oss"),          # Ollama Cloud
     ],
     "chat": [
+        ("anthropic", "claude-haiku"),      # pip 2, Pro accounts
         # ORDER IS THE DEFAULT. _recommended_routes walks this list and
         # lands a visitor on the first entry that is live, so whatever is
         # first here is what the chat bay actually runs: pip 1.0,
@@ -5580,7 +5590,7 @@ def _failover_chain(provider: str, mode: str) -> list[tuple[str, str]]:
     it. Checking budget here would only refuse a channel a second
     before it refused itself.
     """
-    if provider in ("openrouter", "google") and _groq_only():
+    if provider in ("openrouter", "google", "anthropic") and _groq_only():
         # DeepSeek or Gemma refused (no credit, a rate limit, an outage,
         # an empty reply): Groq's main model takes it, then Groq's others.
         main = _groq_model_for(mode) or ""
@@ -5915,6 +5925,20 @@ def list_providers():
                 "note": ("Gemma 4 31B by Google - more polished writing and "
                          "design, but slower. Turbo answers if it is busy."),
             })
+    # pip 2, first in the list. Locked (a Pro tag) for Free accounts;
+    # unavailable for the rest of the UTC day once the spending ceiling
+    # is reached, when Turbo answers instead.
+    if anthropic_api.configured():
+        pm = anthropic_api.models()
+        providers.insert(0, {
+            "id": "anthropic",
+            "label": anthropic_api.DISPLAY_NAME,
+            "available": anthropic_api.ready(),
+            "models": pm,
+            "model_info": [describe_model(m, plan) for m in pm],
+            "note": ("pip 2 - our most capable model: sharper answers, "
+                     "better writing and code, and it reads images. Pro."),
+        })
     live = [p for p in providers if p["available"]]
     if live:
         providers = live
@@ -5942,6 +5966,10 @@ def list_providers():
 MODEL_DISPLAY_NAMES = {
     # the main model (Google AI Studio)
     "gemma-4-31b-it": ("Gemma 4", "Google's open model - chat, code and websites"),
+    # pip 2 - the Pro model (anthropic_api.py)
+    anthropic_api.DEFAULT_MODEL: (
+        anthropic_api.DISPLAY_NAME,
+        "Our most capable model - sharper answers, reads images. Pro"),
     # local
     "gemma3:1b": ("Swift", "Fastest replies - the default here"),
     "gemma3:4b": ("Sight", "Sees attached images, thinks a little harder"),
@@ -6362,6 +6390,8 @@ def is_vision_model(model):
         return True
     if name in {m.lower() for m in google_api.vision_models()}:
         return True
+    if name in {m.lower() for m in anthropic_api.vision_models()}:
+        return True
     # pip 1.0 can see when the engine says its build can.
     if name in {m.lower() for m in pip_api.vision_models()}:
         return True
@@ -6527,6 +6557,40 @@ def _assistant_message(content: str, provider: str, model: str,
     return msg
 
 
+def _fit_to_plan_context(history: list[dict], plan) -> list[dict]:
+    """The conversation, cut to the plan's context window (8,192 tokens
+    on Free, 16,384 on Pro), newest turns kept.
+
+    THE PRO CARD'S "TWICE THE CONTEXT" HAD NOTHING BEHIND IT. The window
+    (features.py max_context_tokens) reached only a local model's num_ctx;
+    the hosted models every reply actually comes from were sent the
+    whole thread on either plan. It is applied here, to every channel.
+
+    Estimated at four characters a token. The system prompt is kept
+    whole, and the conversation always gets at least half the window, so
+    a long system prompt (the website playbook, many memories) cannot
+    crowd the conversation out. The latest message is always kept.
+    """
+    budget = int(features.get(plan, "max_context_tokens") or 8192)
+
+    def size(m):
+        content = m.get("content")
+        text = content if isinstance(content, str) else json.dumps(content or "")
+        return len(text) // 4 + 4
+
+    system = [m for m in history if m.get("role") == "system"]
+    rest = [m for m in history if m.get("role") != "system"]
+    room = max(budget - sum(size(m) for m in system), budget // 2)
+    kept, used = [], 0
+    for m in reversed(rest):
+        s = size(m)
+        if kept and used + s > room:
+            break
+        kept.append(m)
+        used += s
+    return system + kept[::-1]
+
+
 def _model_history(thread: dict) -> list[dict]:
     """The turns the model is allowed to see, oldest first.
 
@@ -6580,6 +6644,7 @@ PROVIDER_STREAMERS = {
     "openrouter": openrouter_api.stream_chat,
     "groq": groq_api.stream_chat,
     "google": google_api.stream_chat,
+    "anthropic": anthropic_api.stream_chat,
 }
 
 # The non-streamed turn each hosted provider uses inside the tool loop.
@@ -6590,6 +6655,7 @@ PROVIDER_TURNS = {
     "openrouter": openrouter_api.chat_once,
     "groq": groq_api.chat_once,
     "google": google_api.chat_once,
+    "anthropic": anthropic_api.chat_once,
 }
 
 # Per account, and per PLAN - free connects one, Pro connects eight.
@@ -7828,11 +7894,16 @@ def _run_tool_loop(model: str, history: list[dict], specs: list[dict],
         # Counted only when the turn actually called something: a first
         # turn that simply answers is the reply, and is charged as one.
         result.rounds += 1
-        result.convo.append({
+        turn_msg = {
             "role": "assistant",
             "content": msg.get("content") or "",
             "tool_calls": calls,
-        })
+        }
+        # pip 2 replays its own blocks next turn, thinking included
+        # (anthropic_api.py); every other channel ignores the key.
+        if msg.get("_anthropic_content"):
+            turn_msg["_anthropic_content"] = msg["_anthropic_content"]
+        result.convo.append(turn_msg)
         for call in calls:
             fn = (call.get("function") or {})
             name = fn.get("name") or ""
@@ -7957,6 +8028,13 @@ def _generation_options(mode: str, strength: str, plan: str,
     # paid for in everybody's waiting time.
     options["reasoning_effort"] = pip_api.effort_for(mode, strength)
     limits = features.limits_for(plan)
+    if mode != "code":
+        # THE PLAN'S ANSWER CEILING APPLIES IN CHAT TOO. It used to reach
+        # the code bay only, so the Pro card's "longer answers" was true
+        # in one bay and not the other: chat stopped at the strength's
+        # 2,600 tokens whatever the plan. (Past the ceiling a reply still
+        # continues automatically - see _auto_continue.)
+        options["num_predict"] = limits["num_predict"]
     if mode == "code":
         # Quick's and Deep's ceilings are both prose-sized - real code
         # needs a much bigger generation budget, which is what was
@@ -8331,7 +8409,14 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # DeepSeek answers every text message while it has credit (see
     # _deepseek_model_for). It cannot see, so a message with a picture
     # keeps the vision route below.
-    deepseek = None if wants_sight else _deepseek_model_for(mode, strength)
+    # pip 2, for a Pro account that has it selected - the Pro default.
+    # A Free account cannot reach here with it (model_allowed in the
+    # route); past the day's spending ceiling the channel is not ready
+    # and Groq answers, through the branches below.
+    pip2 = (provider == "anthropic" and plan_now == features.PRO
+            and anthropic_api.ready())
+    deepseek = (None if (wants_sight or pip2)
+                else _deepseek_model_for(mode, strength))
     # Gemma 4 31B answers when the person PICKED it in the model picker
     # (gpt-oss-120b on Groq stays the fast default). A picture keeps the
     # vision route below; Gemma cooling down after a rate limit falls
@@ -8339,7 +8424,9 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     gemma = (_gemma_model() if provider == "google" and not deepseek
              and (not wants_sight or google_api.vision_models())
              else None)
-    if deepseek:
+    if pip2:
+        provider, model = "anthropic", anthropic_api.model_id()
+    elif deepseek:
         provider, model = "openrouter", deepseek
     elif gemma:
         provider, model = "google", gemma
@@ -8458,6 +8545,7 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
     # instead of failing.
     fell_back_to_cloud = False
     plan = features.normalize_plan(current_account()[0].get("plan"))
+    history = _fit_to_plan_context(history, plan)
 
     # DeepSeek is first in the code bay but it is the only route here
     # that needs a paid key, so a request naming it on a server without
@@ -9861,8 +9949,8 @@ def chat():
     # request body and a hand-crafted POST could name any of them.
     if not features.model_allowed(account_credits.get("plan"), model):
         return jsonify({
-            "error": f"{model} is a Pro model. Upgrade in Settings, or "
-            "pick one of the free models.",
+            "error": f"{describe_model(model)['name']} is a Pro model. "
+            "Upgrade in Settings, or pick one of the free models.",
             "upgrade_required": True,
         }), 402
     apply_refill(account_credits)

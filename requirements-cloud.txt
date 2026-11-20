@@ -10,6 +10,8 @@
 Flask==3.0.3
 python-dotenv==1.0.1
 requests==2.32.3
+# pip 2, the Pro model (anthropic_api.py)
+anthropic==0.122.0
 stripe==11.1.1
 pypdf==6.16.1
 python-docx==1.2.0
