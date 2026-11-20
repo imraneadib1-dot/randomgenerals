@@ -18,7 +18,7 @@ CONFIGURATION
     KELVIQ_API_KEY          server key (Authorization: Bearer ...)
     KELVIQ_PLAN_PRO         the plan identifier for Pro in Kelviq
     KELVIQ_WEBHOOK_SECRET   signing secret of the webhook endpoint
-    KELVIQ_ENV              "sandbox" (default) or "production"
+    KELVIQ_ENV              "production" (default) or "sandbox"
     KELVIQ_CHARGE_PERIOD    "MONTHLY" (default), "YEARLY", ...
     KELVIQ_API_BASE         optional override of the API base URL
 
@@ -56,8 +56,10 @@ def charge_period():
 
 
 def environment():
-    return ("production" if _env("KELVIQ_ENV").lower()
-            in ("production", "prod", "live") else "sandbox")
+    """Production unless sandbox is asked for by name: this site goes
+    straight to live payments, with no sandbox stage."""
+    return ("sandbox" if _env("KELVIQ_ENV").lower()
+            in ("sandbox", "test") else "production")
 
 
 def api_base():

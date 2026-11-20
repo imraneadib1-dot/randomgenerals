@@ -968,7 +968,7 @@ DEFAULT_MODE = "code"
 #
 # Two plans:
 #   free - 1000 credits, auto-refills to full every 2 hours
-#   pro  - $1.99/mo (mock checkout, no real payment processor wired up),
+#   pro  - $3.99/mo (mock checkout, no real payment processor wired up),
 #          3000 credits, auto-refills every 30 minutes
 # Guests (not signed in) get the free plan's allowance too, tracked in the
 # shared credits.json so the app still works without an account.
@@ -1101,7 +1101,7 @@ PLANS = {
     },
     "pro": {
         "label": "Pro",
-        "price": "$1.99/mo",
+        "price": "$3.99/mo",
         "cap": 25000,
         # Hourly, not two-hourly. Halving the wait is the part people
         # feel: a free session that runs dry is out for up to two hours,

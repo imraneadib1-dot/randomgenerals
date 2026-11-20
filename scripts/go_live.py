@@ -4,7 +4,7 @@
 
 Test mode and live mode are entirely separate worlds in Stripe: products,
 prices, customers, subscriptions and webhooks created in one do not exist
-in the other. So going live is not "flip a switch" - the $1.99 product
+in the other. So going live is not "flip a switch" - the $3.99 product
 and the webhook endpoint have to be created again, against live keys.
 This script does that, idempotently, and writes the resulting values to
 .env so nothing has to be copied by hand.
@@ -21,7 +21,7 @@ import sys
 import stripe
 
 PRODUCT_NAME = "Pro"
-PRICE_CENTS = 199
+PRICE_CENTS = 399
 CURRENCY = "usd"
 INTERVAL = "month"
 WEBHOOK_EVENTS = [
@@ -55,9 +55,9 @@ def write_env(updates):
 
 
 def ensure_product_and_price():
-    """Find or create the live $1.99/mo Pro product. Reuses an existing
+    """Find or create the live $3.99/mo Pro product. Reuses an existing
     matching price rather than creating duplicates - Stripe happily lets
-    you attach many prices to one product, and a stray second $1.99
+    you attach many prices to one product, and a stray second $3.99
     price is a confusing thing to debug later."""
     products = stripe.Product.list(active=True, limit=100).data
     product = next((p for p in products if p.name == PRODUCT_NAME), None)
