@@ -3269,3 +3269,219 @@ a.profile-menu-item {
     border-left: 0;
   }
 }
+
+/* ============================================================
+   Settings > Plan & billing - the plan cards
+   ============================================================ */
+/* WAS a stacked pair of tinted boxes, each a name, a price and a list
+   of small bullets, with what Free lacks struck through. Now the shape
+   people already know from pricing pages: two cards side by side, each
+   reading top to bottom as name, who it is for, price, the button, and
+   then what is included - Pro saying only what it adds. Neutral like
+   the rest of the app; Pro is told apart by a stronger edge, not a
+   colour. */
+.plan-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  flex-direction: row;
+}
+.plan-card {
+  display: flex;
+  flex-direction: column;
+  padding: 18px 18px 16px;
+  border: 1px solid var(--rg-border);
+  border-radius: 14px;
+  background: var(--rg-surface);
+}
+.plan-card-pro {
+  border-color: var(--rg-border-strong);
+  background: var(--rg-surface);
+  box-shadow: 0 0 0 1px var(--rg-border-strong) inset;
+}
+.plan-card-head {
+  margin-bottom: 14px;
+}
+.plan-name-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 24px;
+}
+.plan-name {
+  font-family: var(--font-body);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ws-ink);
+}
+.plan-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ws-ink-2);
+  background: var(--rg-nav-active);
+  border: 1px solid var(--rg-border);
+  white-space: nowrap;
+}
+/* "Current plan" only on the card you are on; "Best for students" only
+   while you are not on Pro. */
+.plan-badge-current {
+  display: none;
+}
+.plan-cards[data-current="free"] #planCardFree .plan-badge-current,
+.plan-cards[data-current="pro"] #planCardPro .plan-badge-current {
+  display: inline-block;
+}
+.plan-cards[data-current="pro"] .plan-badge-pick {
+  display: none;
+}
+.plan-tagline {
+  margin: 6px 0 14px;
+  /* Two lines reserved, so the prices and buttons of the two cards sit
+     level however the taglines wrap. */
+  min-height: 2.9em;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ws-ink-2);
+}
+@media (max-width: 720px) {
+  .plan-tagline {
+    min-height: 0;
+  }
+}
+.plan-price {
+  font-family: var(--font-body);
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: var(--ws-ink);
+}
+.plan-price small {
+  margin-left: 2px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--ws-ink-2);
+}
+.plan-billing {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--ws-ink-3);
+}
+.plan-btn {
+  height: 38px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid var(--rg-border-strong);
+  background: transparent;
+  color: var(--ws-ink);
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  font-weight: 600;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.plan-btn:hover:not(:disabled) {
+  background: var(--rg-nav-hover);
+  border-color: var(--rg-border-strong);
+}
+.plan-btn:disabled {
+  opacity: 1;
+  color: var(--ws-ink-3);
+  border-color: var(--rg-border);
+}
+.plan-btn-primary,
+.plan-btn-primary:hover:not(:disabled) {
+  background: var(--ws-primary);
+  border-color: var(--ws-primary);
+  color: var(--ws-on-primary);
+  filter: none;
+}
+.plan-btn-primary:hover:not(:disabled) {
+  opacity: 0.9;
+}
+.plan-btn-primary:disabled {
+  background: var(--rg-nav-active);
+  border-color: var(--rg-border);
+  color: var(--ws-ink-3);
+}
+.plan-btn:focus-visible {
+  outline: 2px solid var(--ws-line-focus);
+  outline-offset: 2px;
+}
+.plan-includes {
+  margin: 18px 0 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rg-border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ws-ink-2);
+}
+.plan-features {
+  gap: 9px;
+  margin: 0;
+}
+.plan-features li {
+  padding-left: 24px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ws-ink);
+}
+.plan-features li strong {
+  font-weight: 600;
+}
+/* A check, drawn: two borders of a small rotated box. */
+.plan-features li::before {
+  top: 4px;
+  left: 3px;
+  width: 5px;
+  height: 10px;
+  border-radius: 0;
+  background: none;
+  border: solid var(--ws-ink-2);
+  border-width: 0 1.8px 1.8px 0;
+  transform: rotate(45deg);
+}
+.plan-note {
+  margin: 14px 0 4px;
+  font-size: 12.5px;
+  color: var(--ws-ink-2);
+}
+.plan-fineprint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ws-ink-3);
+}
+
+/* The subscription summary above the cards, as one quiet panel. */
+.sub-dashboard {
+  border: 1px solid var(--rg-border);
+  border-radius: 14px;
+  background: var(--rg-surface);
+  padding: 6px 18px 14px;
+}
+.sub-row {
+  padding: 9px 0;
+  border-bottom: 1px solid var(--rg-border);
+  font-size: 13px;
+}
+.sub-row:last-of-type {
+  border-bottom: 0;
+}
+.sub-label {
+  color: var(--ws-ink-2);
+}
+.sub-value {
+  color: var(--ws-ink);
+  font-weight: 500;
+}
+
+/* One column where two would be too narrow to read. */
+@media (max-width: 720px) {
+  .plan-cards {
+    grid-template-columns: 1fr;
+  }
+}

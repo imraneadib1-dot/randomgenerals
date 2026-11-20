@@ -1096,8 +1096,9 @@ PLANS = {
         # "the video bay" since that bay became a diagram bay, and a
         # plan description is the last place anyone thinks to update.
         "blurb": "2,000 credits, refilling every 2 hours. Chat and "
-                 "coding models, image generation, diagrams, the "
-                 "sandboxed code runner, and web search.",
+                 "coding models, up to 10 images read a day, image "
+                 "generation, diagrams, the sandboxed code runner, "
+                 "and web search.",
     },
     "pro": {
         "label": "Pro",
@@ -1114,12 +1115,10 @@ PLANS = {
         # which no funded backend can produce.
         "blurb": "25,000 credits, refilling every hour - 12x the free "
                  "allowance, twice as often. Priority on the fast "
-                 "channel when the site is busy, so your replies stay "
-                 "quick while free sessions fall back to the local "
-                 "model. Plus tools the model can use on its own, "
-                 "image understanding, unlimited memory, long-form "
-                 "code, a larger context window, 100MB uploads and "
-                 "every image shape.",
+                 "model when the site is busy, unlimited image "
+                 "reading, unlimited memory, longer answers, twice "
+                 "the context window, 100MB uploads and every image "
+                 "shape.",
     },
 }
 STARTING_CREDITS = PLANS["free"]["cap"]
@@ -1159,48 +1158,42 @@ def plan_perks():
         return "{:,} credits, refilling {}".format(
             PLANS[plan]["cap"], _every(PLANS[plan]["refill_seconds"]))
 
+    def apps(f):
+        return "%d connected app%s, %d one-click apps and %d skills" % (
+            f["max_connectors"], "" if f["max_connectors"] == 1 else "s",
+            f["max_apps"], f["max_skills"])
+
+    # REWRITTEN FROM THE LIVE LIMITS, AGAIN. The last version sold "pip
+    # 1.0, our own model, on our own hardware" (this server answers with
+    # hosted models), struck image reading off the free card (Free reads
+    # ten a day now) and struck "connecting your own apps" off it too
+    # (Free connects one). The Pro card is "everything in Free, plus" -
+    # each line a real difference, no crossed-out list on Free.
     free_list = [
+        ("Chat, homework help, writing and coding", True),
         (credits("free"), True),
-        # Name the model. "Chat and coding models" told nobody what they
-        # were actually getting.
-        ("<strong>pip 1.0</strong> - our own model, fine-tuned here and "
-         "run on our own hardware", True),
-        ("An 8,192-token context window, and replies up to %s tokens"
-         % "{:,}".format(free["max_output_tokens_code"]), True),
-        ("Image generation, diagrams, the code runner, web search "
-         "and voice", True),
-        ("Runs Python and searches the web on its own, so arithmetic "
-         "and current facts are checked rather than recalled", True),
-        ("<strong>Connect your own app</strong> - paste a link and it "
-         "can use whatever is behind it (%d at a time)"
-         % free["max_connectors"], True),
-        ("Remembers up to %d things" % free["max_memories"], True),
-        ("%dMB uploads" % free["max_upload_mb"], True),
+        ("Reads up to %d images a day" % free["vision_images_per_day"], True),
+        ("Image generation, diagrams, a code runner, web search and voice",
+         True),
+        ("Remembers up to %d things about you" % free["max_memories"], True),
+        (apps(free), True),
+        ("%d MB file uploads" % free["max_upload_mb"], True),
     ]
+    multiple = PLANS["pro"]["cap"] // max(1, PLANS["free"]["cap"])
     pro_list = [
-        (credits("pro"), True),
-        ("<strong>Image understanding</strong> - it sees what you attach",
+        ("<strong>%s</strong> - %dx the Free allowance"
+         % (credits("pro"), multiple), True),
+        ("<strong>Unlimited image reading</strong>", True),
+        ("Priority on the fast model when the site is busy", True),
+        ("Longer answers - up to {:,} tokens, against {:,}".format(
+            pro["max_output_tokens_code"], free["max_output_tokens_code"]),
          True),
-        ("<strong>%d connected apps at once</strong>, against %d - a "
-         "whole toolkit available in the same conversation rather than "
-         "one app at a time" % (pro["max_connectors"],
-                                free["max_connectors"]), True),
-        ("Unlimited memory - no %d-item cap" % free["max_memories"], True),
-        ("Code replies up to {:,} tokens, against {:,}".format(
-            pro["max_output_tokens_code"],
-            free["max_output_tokens_code"]), True),
-        ("{:,}-token context window, twice the free one - a long file "
-         "plus its error output stops being truncated".format(
-             pro["max_context_tokens"]), True),
-        # Said plainly, because the alternative is implying a smarter
-        # model that does not exist. Chat runs on the same pip 1.0
-        # either way; what Pro buys is room, sight and tools.
-        ("<em>The chat model is the same pip 1.0 on both plans - "
-         "Pro buys room, sight and tools, not a smarter model.</em>",
-         True),
-        ("%dMB uploads and %d image shapes, not %d" % (
-            pro["max_upload_mb"], len(pro["image_sizes"]),
-            len(free["image_sizes"])), True),
+        ("Twice the context ({:,} tokens) for long files and long chats"
+         .format(pro["max_context_tokens"]), True),
+        ("Unlimited memory", True),
+        (apps(pro), True),
+        ("%d MB uploads and all %d image shapes" % (
+            pro["max_upload_mb"], len(pro["image_sizes"])), True),
     ]
 
     # The video bay has no funded backend on this deployment, so neither
@@ -1211,12 +1204,6 @@ def plan_perks():
             pro["video_clips"], pro["video_max_seconds"],
             pro["video_max_quality"]), True))
 
-    # Shown struck through on the free card: what upgrading buys.
-    free_list += [
-        ("Image understanding", False),
-        ("Priority when the site is busy", False),
-        ("Connecting your own apps", False),
-    ]
     return {"free": free_list, "pro": pro_list}
 
 DATA_LOCK = threading.Lock()

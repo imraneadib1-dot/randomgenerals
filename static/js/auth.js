@@ -64,7 +64,11 @@ export function refreshAuthUI() {
     planFreeBtn.disabled = state.currentUser.plan !== "pro";
     planFreeBtn.textContent = freeButtonLabel();
     planProBtn.hidden = state.currentUser.plan === "pro";
+    // Which card wears the "Current plan" badge (CSS reads this).
+    document.getElementById("planCards")?.setAttribute(
+      "data-current", state.currentUser.plan === "pro" ? "pro" : "free");
   } else {
+    document.getElementById("planCards")?.setAttribute("data-current", "free");
     planNote.textContent = "Sign in to manage your plan.";
     planFreeBtn.disabled = true;
     planFreeBtn.textContent = "Current plan";

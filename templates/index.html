@@ -1598,36 +1598,44 @@
             </button>
           </div>
 
-          <div class="plan-cards">
+          <!-- THE PLANS. Name, who it is for, price, the button, then what
+               is included - the order a person decides in. Pro lists only
+               what it adds ("everything in Free, plus"); the lists come
+               from plan_perks() in app.py, computed from the real limits.
+               data-current (auth.js) marks the plan you are on. -->
+          <div class="plan-cards" id="planCards" data-current="free">
             <div class="plan-card" id="planCardFree">
-              <div class="plan-card-top">
-                <span class="plan-name">Free</span>
-                <span class="plan-price">$0</span>
+              <div class="plan-card-head">
+                <div class="plan-name-row">
+                  <span class="plan-name">Free</span>
+                  <span class="plan-badge plan-badge-current">Current plan</span>
+                </div>
+                <p class="plan-tagline">For trying it out and everyday questions</p>
+                <div class="plan-price">$0<small>/month</small></div>
+                <p class="plan-billing">Free forever, no card needed</p>
               </div>
-              <ul class="plan-features">
-                {% for text, on in plan_perks["free"] %}
-                <li{% if not on %} class="plan-feature-off"{% endif %}>
-                  {{ text|safe }}
-                </li>
-                {% endfor %}
-              </ul>
               <button type="button" class="plan-btn" id="planFreeBtn" disabled>
                 Current plan
               </button>
+              <p class="plan-includes">Includes</p>
+              <ul class="plan-features">
+                {% for text, on in plan_perks["free"] %}
+                <li{% if not on %} class="plan-feature-off"{% endif %}>{{ text|safe }}</li>
+                {% endfor %}
+              </ul>
             </div>
 
             <div class="plan-card plan-card-pro" id="planCardPro">
-              <div class="plan-card-top">
-                <span class="plan-name">Pro</span>
-                <span class="plan-price">{{ plans["pro"]["price"].split("/")[0] }}<small>/{{ plans["pro"]["price"].split("/")[1] if "/" in plans["pro"]["price"] else "mo" }}</small></span>
+              <div class="plan-card-head">
+                <div class="plan-name-row">
+                  <span class="plan-name">Pro</span>
+                  <span class="plan-badge plan-badge-current">Current plan</span>
+                  <span class="plan-badge plan-badge-pick">Best for students</span>
+                </div>
+                <p class="plan-tagline">For students who use it every day</p>
+                <div class="plan-price">{{ plans["pro"]["price"].split("/")[0] }}<small>/month</small></div>
+                <p class="plan-billing">Billed monthly. Cancel anytime.</p>
               </div>
-              <ul class="plan-features">
-                {% for text, on in plan_perks["pro"] %}
-                <li{% if not on %} class="plan-feature-off"{% endif %}>
-                  {{ text|safe }}
-                </li>
-                {% endfor %}
-              </ul>
               <button
                 type="button"
                 class="plan-btn plan-btn-primary"
@@ -1635,6 +1643,12 @@
               >
                 Upgrade to Pro
               </button>
+              <p class="plan-includes">Everything in Free, plus</p>
+              <ul class="plan-features">
+                {% for text, on in plan_perks["pro"] %}
+                <li{% if not on %} class="plan-feature-off"{% endif %}>{{ text|safe }}</li>
+                {% endfor %}
+              </ul>
             </div>
           </div>
           <p class="plan-note" id="planNote">Sign in to manage your plan.</p>
