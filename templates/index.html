@@ -238,15 +238,6 @@
           </div>
         </div>
 
-        <!-- Clearing your history belonged in Settings > Data and
-             nowhere else, which is three clicks away from the list of
-             the very things you want gone. It stays in Settings too;
-             this is just where people actually look. Hidden by
-             script.js whenever there is nothing to clear. -->
-        <button type="button" class="thread-clear" id="clearThreads" hidden>
-          Clear all conversations
-        </button>
-
         <!-- The credit meter lived here; it is in Settings > Usage now,
              beside the token counts it is spent on. -->
         <div class="sidebar-bottom" id="sidebarBottom" hidden></div>
@@ -339,6 +330,10 @@
              The model picker that sat here moved under the input, beside
              the Project menu - both are about the message being written. -->
         <div class="chat-toolbar" id="chatToolbar">
+          <!-- The globe: search the web in the workspace browser. -->
+          <button type="button" class="globe-btn" id="globeBtn" aria-label="Search the web" title="Search the web">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+          </button>
           <span class="status-pill" id="statusPill">
             <span class="status-dot" id="statusDot"></span>
             <span id="statusText">connecting…</span>
@@ -856,17 +851,6 @@
             </button>
           </div>
         </nav>
-
-        <!-- RECENT ARTIFACTS, on the home screen only (.main.is-empty).
-             The sites the builder made, newest first - home.js fills it
-             from /api/sites and leaves it hidden when there are none. -->
-        <section class="home-artifacts" id="homeArtifacts" aria-labelledby="homeArtifactsTitle" hidden>
-          <header class="home-artifacts-head">
-            <h2 id="homeArtifactsTitle">Recent artifacts</h2>
-            <a href="/sites" class="home-artifacts-all">View all</a>
-          </header>
-          <div class="home-artifacts-grid" id="homeArtifactsGrid"></div>
-        </section>
       </div>
 
       <!-- THE WORKSPACE PANE. Code, pages and documents a reply produces

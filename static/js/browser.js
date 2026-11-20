@@ -131,7 +131,7 @@ async function load(input, push) {
 }
 
 /** Open the browser, optionally on an address or search.
- *  @param {string} [input] @param {{fromAI?: boolean}} [opts] */
+ *  @param {string} [input] @param {{fromAI?: boolean, focus?: boolean}} [opts] */
 export function openBrowser(input, opts = {}) {
   // The AI opening a page does not take over a phone screen; the chip
   // under its reply opens it on demand.
@@ -144,6 +144,10 @@ export function openBrowser(input, opts = {}) {
   } else if (!page) {
     startPage();
     els().address?.focus();
+  } else if (opts.focus) {
+    const a = els().address;
+    a?.focus();
+    a?.select();
   }
 }
 
@@ -186,6 +190,8 @@ export function mountBrowser() {
   });
 
   $("openBrowserBtn")?.addEventListener("click", () => openBrowser());
+  // The globe at the top: straight to the address bar, ready to search.
+  $("globeBtn")?.addEventListener("click", () => openBrowser(undefined, { focus: true }));
 
   // The tag above the input follows the pane: closing it, or switching
   // the pane to a code file, stops sending the page.

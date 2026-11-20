@@ -170,12 +170,17 @@ function mountStatusPlacement() {
   const corner = document.getElementById("chatToolbar");
   const pill = document.getElementById("statusPill");
   const install = document.getElementById("installBtn");
+  const globe = document.getElementById("globeBtn");
   if (!bar || !corner || !pill || !install) return;
   const slot = document.createElement("div");
   slot.className = "topbar-right";
   bar.appendChild(slot);
   const mq = window.matchMedia("(max-width: 720px)");
-  const place = () => (mq.matches ? slot : corner).append(pill, install);
+  const place = () => {
+    const to = mq.matches ? slot : corner;
+    if (globe) to.append(globe);
+    to.append(pill, install);
+  };
   mq.addEventListener("change", place);
   place();
 }

@@ -3739,3 +3739,94 @@ a.profile-menu-item {
   color: var(--ws-ink);
 }
 .page-opened:hover { background: var(--ws-hover); border-color: var(--ws-line-strong); }
+
+/* ==================================================================
+   A SMALLER, CRISPER INPUT. Narrower column (680px, from 768), less
+   empty height on the home screen, and an edge you can actually see:
+   the zinc-800 border all but vanished on the #181818 canvas.
+   ================================================================== */
+.composer-form,
+.attach-chips,
+.composer-meta,
+.page-chip {
+  max-width: 680px;
+}
+.composer-form {
+  padding: 10px 10px 8px;
+  border-radius: 14px;
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 4px 16px rgba(0, 0, 0, 0.35);
+}
+.composer-form:focus-within {
+  border-color: rgba(255, 255, 255, 0.26);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 0 0 3px rgba(255, 255, 255, 0.04),
+    0 4px 16px rgba(0, 0, 0, 0.4);
+}
+:root[data-theme="light"] .composer-form {
+  border-color: rgba(0, 0, 0, 0.16);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 6px 18px rgba(24, 24, 27, 0.07);
+}
+:root[data-theme="light"] .composer-form:focus-within {
+  border-color: rgba(0, 0, 0, 0.3);
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.04), 0 6px 18px rgba(24, 24, 27, 0.1);
+}
+.composer-input {
+  font-size: 15px;
+  padding: 2px 6px 4px;
+  min-height: 28px;
+}
+.main.is-empty .composer-input {
+  min-height: 40px;
+}
+.composer-meta {
+  margin-top: 6px;
+}
+
+/* The globe at the top right: opens the workspace browser to search. */
+.globe-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--ws-line);
+  border-radius: 999px;
+  background: var(--ws-3);
+  color: var(--ws-ink-2);
+  cursor: pointer;
+  transition: background var(--dur-fast, 0.12s) ease, color var(--dur-fast, 0.12s) ease;
+}
+.globe-btn:hover {
+  background: var(--ws-hover);
+  border-color: var(--ws-line-strong);
+  color: var(--ws-ink);
+}
+.globe-btn:focus-visible {
+  outline: 2px solid var(--ws-line-focus);
+  outline-offset: 2px;
+}
+
+/* RECENTS SCROLL. The list is a flex column, and flex items shrink by
+   default - so forty conversations were crushed to fit the space,
+   overlapping, instead of scrolling. Rows keep their height; the list
+   scrolls, with a thin bar that shows on hover. */
+.recents .thread-list {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  padding-right: 2px;
+}
+.recents .thread-list:hover {
+  scrollbar-color: var(--ws-line-strong) transparent;
+}
+.recents .thread-list > * {
+  flex-shrink: 0;
+}
+.recents .thread-list::-webkit-scrollbar { width: 6px; }
+.recents .thread-list::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+.recents .thread-list:hover::-webkit-scrollbar-thumb { background: var(--ws-line-strong); }
