@@ -3845,3 +3845,57 @@ a.profile-menu-item {
 .recents .thread-list::-webkit-scrollbar { width: 6px; }
 .recents .thread-list::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
 .recents .thread-list:hover::-webkit-scrollbar-thumb { background: var(--ws-line-strong); }
+
+/* ==================================================================
+   THE SLIM INPUT. One line: the text and Send, nothing else, in a
+   rounded box. The tools - +, the mic, Project - are a row underneath,
+   with the model on the right. Overrides the two-row grid above.
+   ================================================================== */
+.composer-form {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "input send";
+  align-items: center;
+  column-gap: 8px;
+  padding: 7px 7px 7px 16px;
+  border-radius: 14px;
+}
+.composer-input,
+.main.is-empty .composer-input {
+  min-height: 26px;
+  padding: 3px 0;
+  font-size: 15px;
+  line-height: 1.45;
+}
+.composer-form .send-btn {
+  align-self: end;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+}
+.composer-meta {
+  margin-top: 6px;
+  padding: 0 4px;
+}
+.meta-left {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.meta-left .attach-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--ws-ink-2);
+}
+.meta-left .attach-btn:hover {
+  color: var(--ws-ink);
+  background: var(--ws-hover);
+}
+.meta-left .project-picker {
+  margin-left: 4px;
+}
+/* The + menu now opens from under the input: lift it above the box. */
+.meta-left .composer-menu {
+  bottom: calc(100% + 60px);
+}
