@@ -185,8 +185,12 @@ def verify_webhook(raw_body, headers, now=None):
     """Kelviq's scheme: HMAC-SHA256 over "{webhook-id}.{webhook-timestamp}.
     {raw body}" with the endpoint's signing secret, hex, sent as
     "v1,<hex>" in webhook-signature. -> (ok, reason). Fails closed."""
-    secret = webhook_secret()
-    if not secret:
+    # Several secrets may be configured, separated by commas or spaces:
+    # one per webhook endpoint pointing here (two endpoints to the same
+    # URL each sign with their own), and an old and a new one while a
+    # secret is being rotated. A delivery signed with any of them passes.
+    secrets = [s for s in webhook_secret().replace(",", " ").split() if s]
+    if not secrets:
         return False, "no webhook secret configured"
     wid = headers.get("webhook-id", "")
     ts = headers.get("webhook-timestamp", "")
@@ -200,13 +204,13 @@ def verify_webhook(raw_body, headers, now=None):
     if abs((now or time.time()) - sent_at) > TOLERANCE_SECONDS:
         return False, "timestamp outside tolerance"
     body = raw_body.decode("utf-8") if isinstance(raw_body, bytes) else str(raw_body)
-    expected = hmac.new(secret.encode(), ("%s.%s.%s" % (wid, ts, body)).encode(),
-                        hashlib.sha256).hexdigest()
+    signed = ("%s.%s.%s" % (wid, ts, body)).encode()
+    expected = [hmac.new(s.encode(), signed, hashlib.sha256).hexdigest() for s in secrets]
     # The header may carry several space-separated signatures (a secret
-    # being rotated); any one matching is enough.
+    # being rotated); any one matching any configured secret is enough.
     for part in sig_header.split():
         version, _, value = part.partition(",")
-        if version == "v1" and hmac.compare_digest(value.strip(), expected):
+        if version == "v1" and any(hmac.compare_digest(value.strip(), e) for e in expected):
             return True, ""
     return False, "signature mismatch"
 
