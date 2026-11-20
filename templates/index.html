@@ -718,6 +718,10 @@
               <div class="project-menu" id="projectMenu" role="menu" aria-label="Project" hidden></div>
             </div>
             </div>
+            <div class="composer-hint" id="composerHint">
+              <span class="hint-dot"></span>
+              <span id="composerHintText">pick a channel to get started</span>
+            </div>
             <div class="model-picker">
               <button
                 type="button"
@@ -816,10 +820,6 @@
             </div>
           </div>
 
-          <div class="composer-hint" id="composerHint">
-            <span class="hint-dot"></span>
-            <span id="composerHintText">pick a channel to get started</span>
-          </div>
         </footer>
 
         <!-- THE MODES, UNDER THE INPUT. They were four small tabs in the
@@ -951,6 +951,11 @@
             <div class="artifact-preview" id="artifactPreviewView" hidden></div>
             <div class="browser-view browser-only" id="artifactBrowserView">
               <p class="browser-status" id="browserStatus" role="status" aria-live="polite"></p>
+              <!-- The live page: a real Chromium tab on the server, shown
+                   as frames. Clicks, wheel and keys go back to it. -->
+              <div class="browser-live" id="browserLive" tabindex="0" aria-label="Web page" hidden>
+                <img id="browserFrame" alt="" draggable="false" />
+              </div>
               <article class="rg-reader" id="browserPage"></article>
             </div>
           </div>

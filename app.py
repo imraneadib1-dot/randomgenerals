@@ -63,6 +63,7 @@ import paddle_billing  # noqa: E402  subscriptions where Stripe can't reach
 import kelviq_billing  # noqa: E402  the payment provider, used first when set
 import anthropic_api  # noqa: E402  pip 2, the Pro model
 import browser  # noqa: E402  the workspace browser (pages read on the server)
+import livebrowser  # noqa: E402  the live workspace browser (real Chromium)
 import pixverse  # noqa: E402  paid text-to-video - see pixverse.py
 import hfvideo  # noqa: E402  free-tier text-to-video - see hfvideo.py
 import tripo3d  # noqa: E402  text-to-3D generation - see tripo3d.py
@@ -6834,11 +6835,19 @@ def _page_context_block(thread):
     url = ((last or {}).get("page") or {}).get("url")
     if not url:
         return ""
-    try:
-        page = browser.open_page(url)
-    except browser.BrowseError as e:
-        return ("The user has %s open in their workspace browser, but it "
-                "could not be read (%s). Say so if they ask about it." % (url, e))
+    # The live tab first: it is exactly what is on their screen,
+    # scrolled, clicked and logged-in state included.
+    page = None
+    owner = thread.get("owner_id")
+    live = livebrowser.text(owner) if owner else None
+    if live and live.get("url") and live["url"].rstrip("/") == url.rstrip("/"):
+        page = live
+    if page is None:
+        try:
+            page = browser.open_page(url)
+        except browser.BrowseError as e:
+            return ("The user has %s open in their workspace browser, but it "
+                    "could not be read (%s). Say so if they ask about it." % (url, e))
     return ("The user has this page open in their workspace browser and is "
             "probably asking about it. Answer from it when relevant, and say "
             "so when it does not cover the question.\n"
@@ -9955,6 +9964,71 @@ def browse():
     except browser.BrowseError as e:
         return jsonify({"error": str(e)}), 400
     return jsonify({k: page[k] for k in ("kind", "url", "title", "site", "html")})
+
+
+# THE LIVE BROWSER (livebrowser.py): a real Chromium tab per person,
+# streamed to the pane as JPEG frames. Frames are polled about once a
+# second while the pane is open, hence their own, looser limit.
+LIMIT_LIVE_FRAME = Limiter(rate=240, per=60, burst=30)
+LIMIT_LIVE_ACT = Limiter(rate=150, per=60, burst=30)
+
+
+@app.route("/api/browser/status", methods=["GET"])
+def live_browser_status():
+    return jsonify({"live": livebrowser.available()})
+
+
+@app.route("/api/browser/go", methods=["POST"])
+@limited("browse", LIMIT_BROWSE, key=_limit_key_account)
+def live_browser_go():
+    if not livebrowser.available():
+        return jsonify({"error": "The live browser is not running here.", "live": False}), 503
+    p = request.get_json(silent=True) or {}
+    try:
+        state = livebrowser.go(current_owner_id(), str(p.get("url") or "")[:2000],
+                               p.get("w"), p.get("h"))
+    except livebrowser.LiveError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(state)
+
+
+@app.route("/api/browser/act", methods=["POST"])
+@limited("browser-act", LIMIT_LIVE_ACT, key=_limit_key_account)
+def live_browser_act():
+    if not livebrowser.available():
+        return jsonify({"error": "The live browser is not running here.", "live": False}), 503
+    p = request.get_json(silent=True) or {}
+    action = {k: p.get(k) for k in ("type", "x", "y", "dx", "dy", "text", "key")}
+    try:
+        state = livebrowser.act(current_owner_id(), action, p.get("w"), p.get("h"))
+    except livebrowser.LiveError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(state)
+
+
+@app.route("/api/browser/frame", methods=["GET"])
+@limited("browser-frame", LIMIT_LIVE_FRAME, key=_limit_key_account)
+def live_browser_frame():
+    if not livebrowser.available():
+        return ("", 204)
+    try:
+        img, state = livebrowser.frame(current_owner_id())
+    except livebrowser.LiveError as e:
+        return jsonify({"error": str(e)}), 400
+    if img is None:
+        return ("", 204)
+    resp = Response(img, mimetype="image/jpeg")
+    resp.headers["Cache-Control"] = "no-store"
+    resp.headers["X-Page-Url"] = urllib.parse.quote(state.get("url") or "", safe=":/?&=#%")
+    resp.headers["X-Page-Title"] = urllib.parse.quote(state.get("title") or "")
+    resp.headers["X-Page-Size"] = "%dx%d" % (state.get("w") or 0, state.get("h") or 0)
+    return resp
+
+
+@app.route("/api/browser/close", methods=["POST"])
+def live_browser_close():
+    livebrowser.close(current_owner_id())
+    return jsonify({"ok": True})
 
 
 @app.route("/api/chat", methods=["POST"])

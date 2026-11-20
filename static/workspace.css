@@ -3899,3 +3899,114 @@ a.profile-menu-item {
 .meta-left .composer-menu {
   bottom: calc(100% + 60px);
 }
+
+/* ==================================================================
+   HOME vs CONVERSATION.
+   Home: a big input to start from, the modes under it.
+   In a conversation: the slim input; the status line sits small in the
+   middle of the tools row; the modes move to the top-left corner as a
+   compact switch, out of the way of the conversation.
+   ================================================================== */
+.composer-meta .composer-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: center;
+  margin: 0;
+  padding: 0 8px;
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: center;
+}
+.composer-meta .composer-hint .hint-dot { display: none; }
+@media (max-width: 720px) {
+  .composer-meta .composer-hint { display: none; }
+}
+
+/* The big input on the home screen. */
+.main.is-empty .composer-form,
+.main.is-empty .composer-meta,
+.main.is-empty .attach-chips,
+.main.is-empty .page-chip {
+  max-width: 720px;
+}
+.main.is-empty .composer-form {
+  padding: 16px 12px 12px 20px;
+  border-radius: 18px;
+}
+.main.is-empty .composer-input {
+  min-height: 84px;
+  font-size: 16px;
+  line-height: 1.5;
+  padding-top: 2px;
+}
+.main.is-empty .composer-form .send-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+}
+
+/* The modes, in a conversation: a compact switch, top left. */
+.main:not(.is-empty) .mode-dock {
+  position: absolute;
+  top: 10px;
+  left: 16px;
+  z-index: 6;
+  padding: 0;
+}
+.main:not(.is-empty) .mode-dock .bay-switch {
+  flex-wrap: nowrap;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  border: 1px solid var(--ws-line);
+  background: var(--ws-2);
+}
+.main:not(.is-empty) .mode-dock .bay-btn {
+  padding: 4px 10px 4px 8px;
+  gap: 5px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  font-size: 12.5px;
+}
+.main:not(.is-empty) .mode-dock .bay-btn[aria-selected="true"] {
+  background: var(--ws-4);
+}
+.main:not(.is-empty) .chat-log {
+  padding-top: 56px;
+}
+@media (max-width: 720px) {
+  .main:not(.is-empty) .mode-dock { top: 8px; left: 50%; transform: translateX(-50%); }
+  .main:not(.is-empty) .mode-dock .bay-btn { padding: 4px 8px; }
+}
+
+/* The live page: a frame the size of the pane, drawn 1:1. */
+.browser-live {
+  position: relative;
+  outline: none;
+  background: #fff;
+  min-height: 100%;
+  cursor: default;
+}
+.browser-live[hidden] { display: none; }
+.browser-live img {
+  display: block;
+  width: 100%;
+  height: auto;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.browser-live.is-loading img { opacity: 0.55; transition: opacity 0.2s; }
+.browser-live:focus-visible { box-shadow: inset 0 0 0 2px var(--ws-line-focus); }
+.artifact-pane[data-mode="browser"] .browser-view { overflow: hidden; }
+.artifact-pane[data-mode="browser"] .browser-view:has(.rg-reader:not([hidden])) { overflow: auto; }
+/* The studios (video, diagram) scroll their own panel: leave room for
+   the mode switch above their heading. */
+.main.is-studio .video-bay {
+  padding-top: 52px;
+}

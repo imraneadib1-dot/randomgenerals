@@ -44,3 +44,4 @@ numpy==2.5.1
 # provider is serving the model. Optional: without HF_TOKEN set,
 # hfvideo.configured() is False and the bay simply says so.
 huggingface_hub>=0.34
+playwright==1.65.2   # the live workspace browser (livebrowser.py); then: python -m playwright install --with-deps chromium

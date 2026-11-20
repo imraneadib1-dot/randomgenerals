@@ -24,3 +24,4 @@ numpy==2.5.1
 # adapter in the engine (pip_server.py). The real run also wants a CUDA
 # build of torch and bitsandbytes; see finetune/train_pip.py.
 peft==0.21.3
+playwright==1.65.2   # the live workspace browser (livebrowser.py); then: python -m playwright install --with-deps chromium
