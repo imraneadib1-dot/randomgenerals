@@ -4177,3 +4177,6 @@ a.profile-menu-item {
   background: transparent; box-shadow: none; font-size: 12.5px;
 }
 .main:not(.is-empty) .mode-dock .mode-3d-btn:hover { background: var(--ws-hover); }
+
+/* The Blender button is shown only where the server can make .blend files. */
+.m3d-open[hidden], .m3d-download[hidden] { display: none; }

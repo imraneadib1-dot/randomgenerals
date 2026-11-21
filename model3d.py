@@ -76,6 +76,19 @@ TEXTURE_SIZE = int(os.environ.get("MODEL3D_TEXTURE", "2048") or 2048)
 SPACE = os.environ.get("TRELLIS_SPACE", "microsoft/TRELLIS.2")
 FAL_ENDPOINT = "fal-ai/trellis-2"
 FAL_PRICES = {"512": 0.25, "1024": 0.30, "1536": 0.35}
+# fal.ai is paid per model. When it is in the chain (usually after the
+# free Space, as overflow), it stops for the day at this much spend.
+FAL_DAILY_USD = float(os.environ.get("FAL_DAILY_USD", "2") or 2)
+
+# What people see. The engine underneath is TRELLIS.2; the product
+# calls it relo 1.0, the way the Pro chat model is "pip 2".
+DISPLAY_NAME = "relo 1.0"
+GENERATOR = "relo 1.0 - RandomGenerals"
+
+# When a free GPU says its daily quota is spent, the provider RESTS:
+# it is skipped (and the studio says so) until this long has passed,
+# instead of every request waiting on a refusal.
+REST_SECONDS = int(os.environ.get("MODEL3D_REST_SECONDS", "1800") or 1800)
 
 # The sampler settings, as the Space and fal both default them.
 SAMPLER = {
@@ -180,6 +193,31 @@ def check_glb(path):
     }
 
 
+def _brand_glb(path):
+    """Stamp the file as relo 1.0's: the generator field (trimesh, from
+    the exporter) and the mesh and material names Blender shows. Only the
+    JSON chunk changes; the binary chunk is copied as it is."""
+    with open(path, "rb") as fh:
+        data = fh.read()
+    json_len = struct.unpack("<I", data[12:16])[0]
+    doc = json.loads(data[20:20 + json_len].decode("utf-8"))
+    rest_bytes = data[20 + json_len:]
+    doc.setdefault("asset", {})["generator"] = GENERATOR
+    for i, mesh in enumerate(doc.get("meshes") or []):
+        mesh["name"] = "relo_model" if i == 0 else "relo_model_%d" % i
+    for i, mat in enumerate(doc.get("materials") or []):
+        mat["name"] = "relo_material" if i == 0 else "relo_material_%d" % i
+    for node in doc.get("nodes") or []:
+        if "mesh" in node:
+            node["name"] = "relo_model"
+    js = json.dumps(doc, separators=(",", ":")).encode("utf-8")
+    js += b" " * (-len(js) % 4)
+    total = 12 + 8 + len(js) + len(rest_bytes)
+    with open(path, "wb") as fh:
+        fh.write(b"glTF" + struct.pack("<II", 2, total)
+                 + struct.pack("<II", len(js), 0x4E4F534A) + js + rest_bytes)
+
+
 # ------------------------------------------------------------ providers
 class GradioTrellis:
     """TRELLIS.2's own web demo, driven over its Gradio API. The same
@@ -208,7 +246,7 @@ class GradioTrellis:
             def left():
                 remaining = deadline - _now()
                 if remaining <= 5:
-                    raise Model3DError("It took too long - the 3D service may be busy. Try again.")
+                    raise Model3DError("It took too long - %s may be busy. Try again." % DISPLAY_NAME)
                 return remaining
 
             def call(*args, api_name):
@@ -217,15 +255,15 @@ class GradioTrellis:
                     return job.result(timeout=left())
                 except TimeoutError as e:
                     job.cancel()
-                    raise Model3DError("It took too long - the 3D service may be busy. "
-                                       "Try again.") from e
+                    raise Model3DError("It took too long - %s may be busy. "
+                                       "Try again." % DISPLAY_NAME) from e
 
-            stage("Connecting to the 3D model")
+            stage("Starting %s" % DISPLAY_NAME)
             try:
                 client = Client(self.src, token=self.token or None, verbose=False,
                                 download_files=work)
             except Exception as e:                     # noqa: BLE001
-                raise Busy("The free 3D service is not answering right now.") from e
+                raise Busy("%s is not answering right now." % DISPLAY_NAME) from e
             try:
                 call(api_name="/start_session")
                 stage("Cutting the object out of the picture")
@@ -250,7 +288,7 @@ class GradioTrellis:
             glb = out[0] if isinstance(out, (list, tuple)) else out
             glb = glb.get("path") if isinstance(glb, dict) else glb
             if not glb or not os.path.exists(glb):
-                raise Model3DError("The 3D service finished without a model.")
+                raise Model3DError("%s finished without a model." % DISPLAY_NAME)
             keep = tempfile.mktemp(suffix=".glb", prefix="trellis-out-")
             shutil.move(glb, keep)
             return keep
@@ -261,22 +299,46 @@ class GradioTrellis:
 def _gradio_error(e):
     text = str(e)
     low = text.lower()
-    if "quota" in low or "zerogpu" in low or "gpu duration" in low:
-        when = re.search(r"try again in ([0-9:]+)", text, re.I)
-        return Busy("The free 3D GPU has used up its quota for now. Try again %s."
-                    % ("in " + when.group(1) if when else "later"))
+    if "quota" in low or "zerogpu" in low or "gpu duration" in low or "runs limit" in low:
+        when = re.search(r"try again in (\d+):(\d+):(\d+)", text, re.I)
+        seconds = (int(when.group(1)) * 3600 + int(when.group(2)) * 60 + int(when.group(3))
+                   if when else REST_SECONDS)
+        return Exhausted("%s has used today's free GPU time." % DISPLAY_NAME, seconds)
     if "queue" in low and ("full" in low or "too many" in low):
-        return Busy("The free 3D service is full right now. Try again in a few minutes.")
+        return Busy("%s is full right now. Try again in a few minutes." % DISPLAY_NAME)
     if "429" in low or "rate" in low and "limit" in low:
-        return Busy("The free 3D service is rate-limiting us. Try again in a few minutes.")
+        return Busy("%s is busy right now. Try again in a few minutes." % DISPLAY_NAME)
     if "sleeping" in low or "building" in low or "paused" in low or "503" in low:
-        return Busy("The free 3D service is starting up or paused. Try again shortly.")
-    return Model3DError("The 3D service could not make this model (%s)."
-                        % (text.split("\n")[0][:140] or e.__class__.__name__))
+        return Busy("%s is starting up. Try again shortly." % DISPLAY_NAME)
+    return Model3DError("%s could not make this model. Try another picture, or try again."
+                        % DISPLAY_NAME)
+
+
+class Exhausted(Busy):
+    """The provider's daily allowance is spent: rest it for `seconds`."""
+
+    def __init__(self, message, seconds=REST_SECONDS):
+        super().__init__(message)
+        self.seconds = max(60, int(seconds or REST_SECONDS))
+
+
+# fal.ai spend today, so the paid overflow cannot run away.
+_fal_spend = {"day": "", "usd": 0.0}
+_fal_lock = threading.Lock()
+
+
+def _today():
+    return time.strftime("%Y-%m-%d", time.gmtime())
+
+
+def _seconds_to_midnight():
+    t = time.gmtime()
+    return 86400 - (t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec)
 
 
 class FalTrellis:
-    """fal.ai's hosted TRELLIS.2 over its queue API. Paid per model."""
+    """fal.ai's hosted TRELLIS.2 over its queue API. Paid per model, so
+    capped per day by FAL_DAILY_USD."""
 
     name = "fal"
     BASE = "https://queue.fal.run/" + FAL_ENDPOINT
@@ -292,6 +354,22 @@ class FalTrellis:
         return {"Authorization": "Key " + self.key(), "Content-Type": "application/json"}
 
     def run(self, image_path, resolution, seed, deadline, stage):
+        cost = FAL_PRICES.get(resolution, 0.35)
+        with _fal_lock:
+            if _fal_spend["day"] != _today():
+                _fal_spend.update(day=_today(), usd=0.0)
+            if _fal_spend["usd"] + cost > FAL_DAILY_USD:
+                raise Exhausted("%s has used today's GPU budget." % DISPLAY_NAME,
+                                _seconds_to_midnight())
+            _fal_spend["usd"] += cost             # reserved now, kept if it runs
+        try:
+            return self._run(image_path, resolution, seed, deadline, stage)
+        except Busy:
+            with _fal_lock:                        # refused before running: not charged
+                _fal_spend["usd"] = max(0.0, _fal_spend["usd"] - cost)
+            raise
+
+    def _run(self, image_path, resolution, seed, deadline, stage):
         with open(image_path, "rb") as fh:
             data = fh.read()
         ext = os.path.splitext(image_path)[1].lstrip(".").lower() or "png"
@@ -299,19 +377,19 @@ class FalTrellis:
         body = dict(SAMPLER, image_url="data:%s;base64,%s" % (mime, base64.b64encode(data).decode()),
                     resolution=resolution, seed=seed, texture_size=str(TEXTURE_SIZE),
                     decimation_target=DECIMATION, remesh=True)
-        stage("Sending the picture to fal.ai")
+        stage("Sending the picture to %s" % DISPLAY_NAME)
         r = requests.post(self.BASE, headers=self._headers(), json=body, timeout=60)
         self._raise_for(r)
         sub = r.json()
         status_url = sub.get("status_url")
         response_url = sub.get("response_url")
         if not status_url or not response_url:
-            raise Model3DError("fal.ai did not accept the job.")
+            raise Model3DError("%s did not accept the job." % DISPLAY_NAME)
         stage("Shaping the model (%s)" % resolution)
         wait = 2.0
         while True:
             if _now() > deadline:
-                raise Model3DError("It took too long - fal.ai may be busy. Try again.")
+                raise Model3DError("It took too long - %s may be busy. Try again." % DISPLAY_NAME)
             time.sleep(wait)
             wait = min(wait * 1.4, 8)
             s = requests.get(status_url, headers=self._headers(), timeout=30)
@@ -320,12 +398,12 @@ class FalTrellis:
             if state == "COMPLETED":
                 break
             if state not in ("IN_QUEUE", "IN_PROGRESS"):
-                raise Model3DError("fal.ai stopped the job (%s)." % state)
+                raise Model3DError("%s stopped the job." % DISPLAY_NAME)
         res = requests.get(response_url, headers=self._headers(), timeout=60)
         self._raise_for(res)
         url = ((res.json() or {}).get("model_glb") or {}).get("url")
         if not url:
-            raise Model3DError("fal.ai finished without a model.")
+            raise Model3DError("%s finished without a model." % DISPLAY_NAME)
         stage("Saving the model")
         return _download(url)
 
@@ -333,13 +411,13 @@ class FalTrellis:
     def _raise_for(r):
         if r.status_code < 400:
             return
-        if r.status_code in (401, 403):
-            raise Busy("The fal.ai key was refused.")
-        if r.status_code in (402,):
-            raise Busy("The fal.ai account is out of credit.")
+        if r.status_code in (401, 403, 402):
+            # A refused key or an empty account: rest it until tomorrow
+            # rather than ask again for every model.
+            raise Exhausted("%s's paid GPU is unavailable." % DISPLAY_NAME, _seconds_to_midnight())
         if r.status_code == 429:
-            raise Busy("fal.ai is rate-limiting us.")
-        raise Model3DError("fal.ai answered with an error (%d)." % r.status_code)
+            raise Busy("%s is busy right now." % DISPLAY_NAME)
+        raise Model3DError("%s answered with an error (%d)." % (DISPLAY_NAME, r.status_code))
 
 
 def _download(url):
@@ -364,15 +442,47 @@ PROVIDERS = {
 }
 
 
-def chain():
-    """The providers to try, in order, that are set up here."""
+_resting = {}            # provider name -> time it may be asked again
+
+
+def configured_chain():
+    """The providers in TRELLIS_PROVIDERS that are set up here, in order."""
     names = [n.strip() for n in os.environ.get("TRELLIS_PROVIDERS", "hf_space").split(",")
              if n.strip()]
     return [PROVIDERS[n] for n in names if n in PROVIDERS and PROVIDERS[n].configured()]
 
 
+def chain():
+    """The providers to try now: set up, and not resting."""
+    now = _now()
+    return [p for p in configured_chain() if _resting.get(p.name, 0) <= now]
+
+
+def rest(name, seconds):
+    _resting[name] = _now() + seconds
+
+
 def available():
-    return bool(chain())
+    """Is 3D generation set up here at all (resting or not)?"""
+    return bool(configured_chain())
+
+
+def resting_for():
+    """Seconds until a provider can take a job, when every one is
+    resting; 0 when one can take it now."""
+    if chain() or not configured_chain():
+        return 0
+    return max(1, int(min(_resting.get(p.name, 0) for p in configured_chain()) - _now()))
+
+
+def rest_message(seconds=None):
+    seconds = resting_for() if seconds is None else seconds
+    if seconds >= 3600:
+        when = "in about %d hour%s" % (round(seconds / 3600), "" if round(seconds / 3600) == 1 else "s")
+    else:
+        when = "in about %d minutes" % max(1, round(seconds / 60))
+    return ("%s has used today's free GPU time and is resting. It's back %s - "
+            "nothing was counted against your models." % (DISPLAY_NAME, when))
 
 
 def price(resolution):
@@ -491,6 +601,8 @@ def _work(job_id):
             db.model_job_update(job_id, image=image)
         providers = chain()
         if not providers:
+            if available():
+                raise Model3DError(rest_message())
             raise Model3DError("3D generation is not set up on this server.")
         seed = random.randrange(0, 2**31 - 1)
         last = None
@@ -500,14 +612,21 @@ def _work(job_id):
             try:
                 out = p.run(image, job["resolution"], seed, deadline, stage)
                 break
+            except Exhausted as e:
+                rest(p.name, e.seconds)                # skip it until its quota is back
+                last = e
+                continue
             except Busy as e:
                 last = e                               # the next provider may have room
                 continue
         if out is None:
-            raise last or Model3DError("No 3D service could take this.")
+            if isinstance(last, Exhausted) and not chain():
+                raise Model3DError(rest_message())
+            raise last or Model3DError("%s could not take this right now." % DISPLAY_NAME)
         stage("Checking the model")
         try:
             info = check_glb(out)
+            _brand_glb(out)
             name = job_id + ".glb"
             shutil.move(out, os.path.join(OUTPUT_DIR, name))
         finally:
@@ -542,7 +661,7 @@ def public(job):
         "source": job["source"],
         "prompt": job.get("prompt") or "",
         "resolution": job.get("resolution"),
-        "provider": job.get("provider") or "",
+        "engine": DISPLAY_NAME,
         "error": job.get("error") or "",
         "created": job["created"],
         "elapsed": round((job["updated"] if job["status"] in ("done", "failed") else _now())
@@ -550,6 +669,8 @@ def public(job):
         "image_url": ("/" + image) if image.startswith("static/") else "",
         "glb_url": ("/api/3d/job/%s/model.glb" % job["id"]) if done else "",
         "download_url": ("/api/3d/job/%s/model.glb?download=1" % job["id"]) if done else "",
+        "blend_url": ("/api/3d/job/%s/model.blend" % job["id"])
+                     if done and blend_available() else "",
         "glb_bytes": job.get("glb_bytes") or 0,
     }
 
@@ -559,3 +680,62 @@ def glb_path(job):
         return None
     path = os.path.join(OUTPUT_DIR, os.path.basename(job["glb"]))
     return path if os.path.exists(path) else None
+
+
+# ------------------------------------------------------------ for Blender
+# "Download for Blender": the same model as a .blend, made by a Blender on
+# this server (scripts/glb_to_blend.py) the first time someone asks, and
+# kept next to the GLB. It opens straight into a ready scene - the model
+# named relo_model, textures packed inside the file, the alpha connected
+# when the texture has any, a camera and lights - instead of an import.
+# Only offered where Blender is installed (BLENDER_BIN, or `blender` on
+# the PATH); one conversion at a time, since this server has two cores.
+BLENDER = os.environ.get("BLENDER_BIN", "").strip() or shutil.which("blender") or ""
+BLEND_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "glb_to_blend.py")
+BLEND_TIMEOUT = 240
+_blend_gate = threading.Semaphore(1)
+
+
+def blend_available():
+    return bool(BLENDER) and os.path.exists(BLENDER) and os.path.exists(BLEND_SCRIPT)
+
+
+def _looks_like_blend(path):
+    with open(path, "rb") as fh:
+        head = fh.read(7)
+    # Plain, gzip (old compression) or zstd (Blender 3.0+ compression).
+    return head.startswith(b"BLENDER") or head[:2] == b"\x1f\x8b" or head[:4] == b"\x28\xb5\x2f\xfd"
+
+
+def make_blend(job):
+    """-> path of the job's .blend, converting on first request. Raises
+    Model3DError with a sentence when it cannot."""
+    glb = glb_path(job)
+    if not glb:
+        raise Model3DError("That model isn't ready yet.")
+    if not blend_available():
+        raise Model3DError("Blender downloads aren't available on this server yet.")
+    out = glb[:-4] + ".blend"
+    if os.path.exists(out):
+        return out
+    if not _blend_gate.acquire(timeout=BLEND_TIMEOUT):
+        raise Model3DError("Blender is busy with another model. Try again in a minute.")
+    try:
+        if os.path.exists(out):                    # made while this one waited
+            return out
+        tmp = out + ".part.blend"
+        import subprocess
+        try:
+            done = subprocess.run(
+                [BLENDER, "-b", "--factory-startup", "--python", BLEND_SCRIPT, "--", glb, tmp],
+                capture_output=True, text=True, timeout=BLEND_TIMEOUT)
+        except subprocess.TimeoutExpired as e:
+            raise Model3DError("Making the Blender file took too long.") from e
+        if done.returncode != 0 or not os.path.exists(tmp) or not _looks_like_blend(tmp):
+            if os.path.exists(tmp):
+                os.remove(tmp)
+            raise Model3DError("The Blender file could not be made.")
+        os.replace(tmp, out)
+        return out
+    finally:
+        _blend_gate.release()

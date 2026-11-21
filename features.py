@@ -70,7 +70,7 @@ FEATURES = {
         # 3D models (model3d.py, TRELLIS.2 on the free Hugging Face
         # Space). Free to us, but the Space's GPU quota is shared by
         # everyone on the site, so it is rationed per day.
-        "models_3d_per_day": 2,
+        "models_3d_per_day": 5,
         # --- capabilities ---
         "deep_mode": True,          # moved to free deliberately
         # THE CALCULATOR IS NOT A PAID FEATURE

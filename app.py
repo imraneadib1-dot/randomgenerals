@@ -7800,6 +7800,10 @@ def _model3d_start(owner, plan, signed_in, source, prompt="", image="", resoluti
     if not signed_in:
         return None, ("Make a free account to create 3D models - it's how the "
                       "daily limit is kept fair.", 401, {"needs_account": True})
+    # Every GPU is out of quota: say so now, count nothing, and say when.
+    if model3d.resting_for():
+        return None, (model3d.rest_message(), 503,
+                      {"resting": True, "retry_after": model3d.resting_for()})
     if source == "text":
         blocked = moderation.check_image_prompt(prompt)
         if blocked is not None:
@@ -7830,9 +7834,13 @@ def _owned_model_job(job_id):
 def model3d_status():
     account, _ = current_account()
     plan = features.normalize_plan(account.get("plan"))
+    resting = model3d.resting_for()
     return jsonify({
         "available": model3d.available(),
-        "providers": [p.name for p in model3d.chain()],
+        "engine": model3d.DISPLAY_NAME,
+        "resting": resting,
+        "resting_message": model3d.rest_message(resting) if resting else "",
+        "blend": model3d.blend_available(),
         "resolutions": list(model3d.RESOLUTIONS),
         "signed_in": bool(session.get("user_id")),
         "quota": _model3d_view(current_owner_id(), plan),
@@ -7905,12 +7913,28 @@ def model3d_job_delete(job_id):
         return jsonify({"error": "Wait for it to finish first."}), 409
     path = model3d.glb_path(job)
     if path:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
+        for p in (path, path[:-4] + ".blend"):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
     db.model_job_delete(job_id)
     return jsonify({"ok": True})
+
+
+@app.route("/api/3d/job/<job_id>/model.blend", methods=["GET"])
+@limited("3d-blend", LIMIT_3D, key=_limit_key_account)
+def model3d_blend(job_id):
+    """The model as a ready-to-open .blend, made on first request."""
+    job = _owned_model_job(job_id)
+    if not job or not model3d.glb_path(job):
+        return jsonify({"error": "No such model."}), 404
+    try:
+        path = model3d.make_blend(job)
+    except model3d.Model3DError as e:
+        return jsonify({"error": str(e)}), 503
+    return send_file(os.path.abspath(path), mimetype="application/x-blender",
+                     as_attachment=True, download_name="relo-%s.blend" % job_id, max_age=3600)
 
 
 @app.route("/api/3d/job/<job_id>/model.glb", methods=["GET"])
@@ -7921,7 +7945,7 @@ def model3d_glb(job_id):
         return jsonify({"error": "No such model."}), 404
     resp = send_file(os.path.abspath(path), mimetype="model/gltf-binary",
                      as_attachment=request.args.get("download") == "1",
-                     download_name="randomgenerals-3d-%s.glb" % job_id, max_age=3600)
+                     download_name="relo-%s.glb" % job_id, max_age=3600)
     resp.headers["Cache-Control"] = "private, max-age=3600"
     return resp
 
@@ -8974,7 +8998,9 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                     image=usable, resolution=_model3d_resolution(asked))
                 if job:
                     model3d_display = {"kind": "model3d", "job_id": job["id"]}
-                    note = ("A 3D model is being made right now with TRELLIS.2, from %s. "
+                    note = ("A 3D model is being made right now with relo 1.0, RandomGenerals' "
+                            "3D model, from %s. Call it relo 1.0 and never name any other "
+                            "model or company behind it. "
                             "It appears in a card above your reply with a live 3D preview "
                             "and a GLB download (it usually takes one to three minutes). "
                             "Reply in one or two short sentences saying what you are "

@@ -4,7 +4,7 @@ import { loadModelViewer } from "./video.js";
 
 /* ----------------------------------------------------------------
    The 3D studio - a picture or a description in, a textured GLB out
-   (TRELLIS.2, see model3d.py). It lives in the workspace pane, like the
+   (relo 1.0, see model3d.py). It lives in the workspace pane, like the
    browser, so a model can sit beside the conversation about it.
 
    Ways in: the 3D button by the modes, + -> Make a 3D model, and the
@@ -85,6 +85,37 @@ function note(text, isError = false) {
   el.classList.toggle("is-error", !!isError);
 }
 
+/** Fetch the .blend (made on the server the first time - a few seconds),
+ *  then save it. A link would leave the button looking idle meanwhile. */
+async function downloadBlend(url, btn, jobId) {
+  if (!url || btn.disabled) return;
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Preparing for Blender…";
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "The Blender file could not be made.");
+    }
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `relo-${jobId}.blend`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+    btn.textContent = "Downloaded for Blender";
+    setTimeout(() => { btn.textContent = label; }, 2500);
+  } catch (err) {
+    btn.textContent = label;
+    note(err.message || "The Blender file could not be made.", true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 /* ---- the studio ------------------------------------------------------------ */
 async function loadStatus() {
   try {
@@ -99,6 +130,13 @@ async function loadStatus() {
     return;
   }
   if (go) go.disabled = false;
+  if (status.resting) {
+    // Every GPU is out of quota: say when it is back, and do not let a
+    // click wait on a refusal.
+    note(status.resting_message, true);
+    if (go) go.disabled = true;
+    return;
+  }
   if (!status.signed_in) {
     note("Make a free account to create 3D models.");
     return;
@@ -176,6 +214,9 @@ function drawJob(job) {
     showModel(/** @type {any} */ ($("m3dViewer")), $("m3dViewerWrap"), job.glb_url);
     const dl = /** @type {HTMLAnchorElement} */ ($("m3dDownload"));
     dl.href = job.download_url;
+    const blend = /** @type {HTMLButtonElement} */ ($("m3dBlend"));
+    blend.hidden = !job.blend_url;
+    blend.onclick = () => downloadBlend(job.blend_url, blend, job.id);
     $("m3dMeta").textContent = `${job.resolution} · ${sizeText(job.glb_bytes)} · made in ${elapsed(job.elapsed)}`;
     $("m3dActions").hidden = false;
   } else if (job.status === "failed") {
@@ -264,7 +305,7 @@ export function open3D(opts = {}) {
   const title = $("artifactTitle");
   const lang = $("artifactLang");
   if (title) title.textContent = "3D studio";
-  if (lang) lang.textContent = "TRELLIS.2";
+  if (lang) lang.textContent = "relo 1.0";
   loadStatus();
   loadHistory();
   if (opts.jobId) showJob(opts.jobId);
@@ -283,7 +324,7 @@ export function renderModel3dCard(msgEl, jobId) {
   icon.className = "m3d-spinner";
   const text = document.createElement("span");
   text.className = "m3d-card-text";
-  text.textContent = "Making a 3D model…";
+  text.textContent = "Making a 3D model with relo 1.0…";
   const time = document.createElement("span");
   time.className = "m3d-elapsed";
   head.append(icon, text, time);
@@ -309,7 +350,12 @@ export function renderModel3dCard(msgEl, jobId) {
   openBtn.className = "m3d-open";
   openBtn.textContent = "Open in 3D studio";
   openBtn.addEventListener("click", () => open3D({ jobId }));
-  actions.append(dl, openBtn);
+  const blendBtn = document.createElement("button");
+  blendBtn.type = "button";
+  blendBtn.className = "m3d-open";
+  blendBtn.textContent = "Download for Blender";
+  blendBtn.hidden = true;
+  actions.append(dl, blendBtn, openBtn);
   card.append(head, wrap, actions);
   const bubble = msgEl.querySelector(".msg-bubble");
   if (bubble) msgEl.insertBefore(card, bubble);
@@ -322,6 +368,8 @@ export function renderModel3dCard(msgEl, jobId) {
       text.textContent = job.source === "text" ? `3D model: ${job.prompt}` : "3D model from your picture";
       time.textContent = `${job.resolution} · ${sizeText(job.glb_bytes)}`;
       dl.href = job.download_url;
+      blendBtn.hidden = !job.blend_url;
+      blendBtn.onclick = () => downloadBlend(job.blend_url, blendBtn, job.id);
       actions.hidden = false;
       showModel(viewer, wrap, job.glb_url);
     } else if (job.status === "failed") {

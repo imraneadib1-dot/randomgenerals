@@ -172,7 +172,9 @@ def account(email, plan="free"):
 print("== the studio API ==")
 uid, c = account("maker@check.example")
 st = c.get("/api/3d/status").get_json()
-check("status: available, 2 a day on Free", (st["available"], st["quota"]["limit"]), (True, 2))
+check("status: available, 5 a day on Free", (st["available"], st["quota"]["limit"]), (True, 5))
+check("status: the engine is called relo 1.0", st.get("engine"), "relo 1.0")
+check("status: no provider names leak", "hf_space" in json.dumps(st) or "fake" in json.dumps(st), False)
 
 r = c.post("/api/3d/generate", data={"image": (io.BytesIO(b"not an image at all" * 20), "x.png"),
                                      "resolution": "512"}, content_type="multipart/form-data")
@@ -199,16 +201,66 @@ check("download is an attachment", "attachment" in d.headers.get("Content-Dispos
 _, other = account("someone@check.example")
 check("someone else gets 404", other.get(view["glb_url"]).status_code, 404)
 check("the history lists it", c.get("/api/3d/jobs").get_json()["jobs"][0]["id"], job["id"])
+check("the job does not say which engine ran", "provider" in view or "fake" in json.dumps(view), False)
+gl = g.data
+gen = json.loads(gl[20:20 + struct.unpack("<I", gl[12:16])[0]])
+check("the file says relo 1.0 made it", gen["asset"]["generator"], model3d.GENERATOR)
+check("the mesh is named relo_model", gen["meshes"][0]["name"], "relo_model")
+check("the download is named relo-<id>.glb",
+      ("relo-%s.glb" % job["id"]) in d.headers.get("Content-Disposition", ""))
+
+print("== for Blender ==")
+if model3d.blend_available():
+    b = c.get(view["blend_url"]) if view.get("blend_url") else None
+    check("a .blend is made on request", (b.status_code, b.mimetype) if b else None,
+          (200, "application/x-blender"))
+    check("it is a Blender file", bool(b) and (b.data[:7] == b"BLENDER" or b.data[:4] == b"\x28\xb5\x2f\xfd"))
+    check("someone else cannot have it", other.get(view["blend_url"]).status_code, 404)
+else:
+    check("no Blender here: no Blender button offered", view.get("blend_url"), "")
+    print("  (set BLENDER_BIN to a Blender to test the .blend itself)")
 
 r = c.post("/api/3d/generate", json={"prompt": "a red ceramic teapot", "resolution": "512"})
 # Text first becomes a picture; imagegen is stubbed so nothing leaves the machine.
 check("a description is accepted", r.status_code, 200)
+wait(r.get_json()["job"]["id"])
 
 print("== limits and refunds ==")
+for _ in range(3):
+    wait(c.post("/api/3d/generate", json={"prompt": "a lamp"}).get_json()["job"]["id"])
 st = c.get("/api/3d/status").get_json()
-check("two used, none left", (st["quota"]["used"], st["quota"]["left"]), (2, 0))
+check("five used, none left", (st["quota"]["used"], st["quota"]["left"]), (5, 0))
 r = c.post("/api/3d/generate", json={"prompt": "a chair"})
-check("the third today is refused with 402", r.status_code, 402)
+check("the sixth today is refused with 402", r.status_code, 402)
+
+print("== when the free GPU is used up ==")
+_, rr = account("resting@check.example")
+
+
+class FakeOut(Fake):
+    name = "fake"
+
+    def run(self, *a, **k):
+        calls.append(("out",))
+        raise model3d.Exhausted("relo 1.0 has used today's free GPU time.", 1200)
+
+
+model3d.PROVIDERS["fake"] = FakeOut()
+os.environ["TRELLIS_PROVIDERS"] = "fake"          # one GPU, so "all resting" can happen
+r = rr.post("/api/3d/generate", json={"prompt": "a vase"})
+j = wait(r.get_json()["job"]["id"])
+check("the job fails with a 'back in about' message", "back in about" in j["error"], True)
+check("and is not counted", rr.get("/api/3d/status").get_json()["quota"]["used"], 0)
+st = rr.get("/api/3d/status").get_json()
+check("status says it is resting, with a message", bool(st["resting"]) and "resting" in st["resting_message"])
+calls.clear()
+r = rr.post("/api/3d/generate", json={"prompt": "a vase"})
+check("the next request is refused at once (503)", r.status_code, 503)
+check("without asking the GPU again", calls, [])
+check("still nothing counted", rr.get("/api/3d/status").get_json()["quota"]["used"], 0)
+model3d._resting.clear()
+model3d.PROVIDERS["fake"] = Fake()
+os.environ["TRELLIS_PROVIDERS"] = "fake_busy,fake"
 
 _, f = account("failing@check.example")
 model3d.PROVIDERS["fake"].run = lambda *a, **k: (_ for _ in ()).throw(model3d.Model3DError("boom"))
@@ -253,7 +305,8 @@ body = chat.post("/api/chat", json={"thread_id": tid, "provider": "ollama", "mod
                                     "message": "make this into a 3d model", "attachments": up}
                  ).get_data(as_text=True)
 check("the reply carries a 3D card", '"kind": "model3d"' in body or '"kind":"model3d"' in body)
-check("the model is told a model is being made", "TRELLIS.2" in seen.get("system", ""))
+check("the model is told relo 1.0 is making it", "relo 1.0" in seen.get("system", ""))
+check("and the engine's real name is not in the prompt", "TRELLIS" in seen.get("system", ""), False)
 msgs = A.THREADS[tid]["messages"]
 saved = [d for d in (msgs[-1].get("tool_displays") or []) if d.get("kind") == "model3d"]
 check("the card is saved with the reply (survives a reload)", len(saved), 1)
