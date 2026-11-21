@@ -18,6 +18,7 @@
  * applyVideoAccess() decides which the bay is, and diagram.js owns the
  * drawing.
  */
+import { openSettings, switchModalTab } from "./modal.js";
 import { state } from "./state.js";
 import { renderGenExamples } from "./bays.js";
 import { updateGenBayLabel } from "./boot.js";
@@ -390,7 +391,11 @@ export async function submitVideo(prompt) {
       const body = (err && err.body) || {};
       videoSay(body.error || explain(err, "Could not start that."), true);
       if (body.quota) renderQuota(body.quota);
-      if (body.upgrade_required || body.needs_account) {
+      if (body.needs_account) {
+        // Generation needs an account: straight to the sign-up form.
+        openSettings();
+        switchModalTab("account");
+      } else if (body.upgrade_required) {
         const pro = $("planProBtn");
         if (pro) pro.scrollIntoView({ behavior: "smooth", block: "center" });
       }

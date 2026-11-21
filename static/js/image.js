@@ -4,6 +4,7 @@ import { loadCredits, renderCredits } from "./credits.js";
 import { modelSelect, sendBtn, topbarModelChip } from "./dom.js";
 import { addMessage, addMessageActions, renderContent } from "./message.js";
 import { loadThreadList } from "./sidebar.js";
+import { openSettings, switchModalTab } from "./modal.js";
 
 /* ----------------------------------------------------------------
    Sending — Image bay
@@ -47,6 +48,16 @@ export async function sendImagePrompt(text) {
     if (!res.ok || data.error) {
       renderContent(bubble, data.error || "Image generation failed.");
       if (data.credits) renderCredits(data.credits);
+      if (data.needs_account) {
+        // Generation needs an account: one click to the sign-up form.
+        const go = document.createElement("button");
+        go.type = "button";
+        go.className = "m3d-download";
+        go.style.marginTop = "10px";
+        go.textContent = "Sign up — it's free";
+        go.addEventListener("click", () => { openSettings(); switchModalTab("account"); });
+        bubble.appendChild(go);
+      }
       return;
     }
 

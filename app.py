@@ -7137,6 +7137,14 @@ def _image_model_name(backend):
 @app.route("/api/generate-image", methods=["POST"])
 @limited("image", LIMIT_IMAGE, key=_limit_key_account)
 def generate_image_route():
+    # Generation needs an account, like video and 3D: the limits are kept
+    # per account, and a guest is a cookie that can be thrown away.
+    if not session.get("user_id"):
+        return jsonify({
+            "error": "Make a free account to generate images - it takes a "
+                     "moment, and it keeps the daily limits fair.",
+            "needs_account": True,
+        }), 401
     payload = request.get_json(force=True, silent=True) or {}
     tid = payload.get("thread_id")
     prompt = (payload.get("prompt") or "").strip()
@@ -8617,6 +8625,13 @@ _3D_VAGUE = {"", "this", "it", "that", "these", "them", "this image", "this pict
              "this photo", "the image", "the picture", "the photo", "my image"}
 
 
+GUEST_GENERATION_NOTE = (
+    "This person is not signed in. Making images, videos and 3D models needs a free "
+    "account. If they ask for one, say so in one friendly sentence and tell them to "
+    "sign up with the button at the bottom left - it takes a moment. Do not describe "
+    "or pretend to make the picture.")
+
+
 def _wants_3d(text):
     t = text or ""
     return bool(_3D_TARGET.search(t) and _3D_VERB.search(t) and not _3D_QUESTION.search(t))
@@ -8980,7 +8995,8 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
             and (provider != "pip"
                  or (pip_api.has_room() and pip_api.supports_tools()))):
         tool_specs = tools.available_specs(
-            allow_images=(mode != "image"),
+            # Drawing needs an account (see generate_image_route).
+            allow_images=(mode != "image" and bool(session.get("user_id"))),
             allow_code=True,
             # Settings > Model > "Web search" was a stored boolean and
             # nothing else; it now decides whether the model is offered
@@ -9009,6 +9025,12 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                     and not _is_website_request(asked))):
             tool_specs = None
             connector_map = {}
+    # Signed out: say what needs an account, so "draw me a cat" gets a
+    # useful answer instead of a model that silently cannot.
+    if not session.get("user_id") and history and history[0].get("role") == "system":
+        history = ([{"role": "system", "content": history[0]["content"] + "\n\n" + GUEST_GENERATION_NOTE}]
+                   + history[1:])
+
     # A 3D MODEL, ASKED FOR IN THE CHAT: start the job now, show its
     # card at the top of the reply, and have the model say what it is
     # making rather than pretend to make it.
