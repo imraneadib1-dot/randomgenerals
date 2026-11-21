@@ -11,6 +11,7 @@ import { addMessage, addMessageActions, renderContent, renderMsgAttachments, ren
 import { loadThreadList } from "./sidebar.js";
 import { shouldAutoSearch } from "./voice.js";
 import { currentPageUrl, openBrowser } from "./browser.js";
+import { renderModel3dCard } from "./model3d.js";
 
 /* ----------------------------------------------------------------
    Creating a thread in the current bay
@@ -36,6 +37,7 @@ export const TOOL_LABELS = {
   run_python: ["Running code", "Ran code"],
   generate_image: ["Creating an image", "Created an image"],
   open_page: ["Opening a page", "Read a page"],
+  make_3d_model: ["Making a 3D model", "Making a 3D model"],
 };
 
 export function toolStatusStrip(msgEl) {
@@ -95,6 +97,8 @@ export function renderToolDisplay(msgEl, d) {
     msgEl.appendChild(img);
   } else if (d.kind === "site") {
     renderSiteCard(msgEl, d);
+  } else if (d.kind === "model3d" && d.job_id) {
+    renderModel3dCard(msgEl, d.job_id);
   } else if (d.kind === "page" && d.url) {
     let row = msgEl.querySelector(".page-opened-row");
     if (!row) {

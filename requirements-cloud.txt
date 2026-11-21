@@ -45,3 +45,4 @@ numpy==2.5.1
 # hfvideo.configured() is False and the bay simply says so.
 huggingface_hub>=0.34
 playwright==1.65.2   # the live workspace browser (livebrowser.py); then: python -m playwright install --with-deps chromium
+gradio_client==2.7.2   # 3D models via the TRELLIS.2 Hugging Face Space (model3d.py)

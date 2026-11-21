@@ -140,6 +140,7 @@ openrouter_api.py  the hosted backup channel, with a daily spend ceiling
 providers.py       how every channel must fail, so failover works
 paddle_billing.py  subscriptions (Paddle is the merchant of record)
 videogen.py        video job engine: persistent jobs, a poller, validation
+model3d.py         picture/description -> 3D model (TRELLIS.2), jobs, GLB checks
 agents/            router, verifier (code is run before it is trusted), evaluate
 brain/             the intent model - see brain/README.md
 connectors.py      paste a link, it becomes a tool the model can call
@@ -150,6 +151,36 @@ desktop/           Electron build (Windows installer via GitHub Actions)
 mobile/            Capacitor shell for iOS and Android
 deploy/            the Oracle VM setup script and notes
 ```
+
+## 3D models
+
+A picture, or a description, becomes a textured 3D model (GLB) made by
+Microsoft's [TRELLIS.2](https://github.com/microsoft/TRELLIS.2) (MIT).
+Three ways in: the **3D** button beside the modes, **+ > Make a 3D
+model**, or simply asking in the chat ("make this into a 3D model" with
+a picture attached, or "a 3D model of a red teapot"). The chat shows a
+live card with a 3D preview and a GLB download; the studio keeps a
+history.
+
+- **Where it runs.** TRELLIS.2 needs a 24 GB NVIDIA GPU, so the work is
+  sent elsewhere (`model3d.py`, `TRELLIS_PROVIDERS`): the free Hugging
+  Face Space by default, fal.ai if you add `FAL_KEY` and list `fal`, or
+  your own GPU machine running TRELLIS.2's `app.py`.
+- **Cost.** The Space is free but shares a daily GPU quota (`HF_TOKEN`
+  raises it); when it runs out, jobs say "try again later". fal.ai is
+  $0.25 / $0.30 / $0.35 per model at 512 / 1024 / 1536.
+- **Limits.** Free accounts make 2 models a day, Pro 10
+  (`features.py`). A failed job gives its count back.
+- **Text to 3D** draws the object first (one object, plain background)
+  and models the drawing; the picture is kept with the job.
+- **The file.** glTF 2.0 binary, a unit cube centred on the origin,
+  PBR textures in WebP (`EXT_texture_webp`), about 200k faces and 2K
+  textures by default. Imports cleanly in Blender 4.x/5.x
+  (File > Import > glTF 2.0). The material exports opaque; connect the
+  texture's alpha by hand if the object has transparent parts.
+- **Checks.** `python check_model3d.py` runs the whole flow against a
+  fake provider. A real run spends the Space's quota, so it is manual:
+  open the studio, upload a picture, Generate.
 
 ## Deploying
 

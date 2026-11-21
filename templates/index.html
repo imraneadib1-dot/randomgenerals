@@ -677,7 +677,14 @@
                       <small>Browse beside the chat, ask about a page</small>
                     </span>
                   </button>
-                  <a class="composer-menu-item" id="customizeLink" role="menuitem" href="/customize?tab=connectors">
+                  <button type="button" class="composer-menu-item" id="make3dBtn" role="menuitem">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2.8 20 7.4v9.2L12 21.2 4 16.6V7.4z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M4 7.4 12 12l8-4.6M12 12v9.2" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+                  <span class="composer-menu-text">
+                    <span>Make a 3D model</span>
+                    <small>From a picture or a description</small>
+                  </span>
+                </button>
+                <a class="composer-menu-item" id="customizeLink" role="menuitem" href="/customize?tab=connectors">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                       <rect x="3" y="3" width="7.5" height="7.5" rx="2" stroke="currentColor" stroke-width="1.8"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2" stroke="currentColor" stroke-width="1.8"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M17.25 13.5v7.5M13.5 17.25H21" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
                     </svg>
@@ -853,6 +860,12 @@
               <span class="bay-icon" id="genBayIcon" aria-hidden="true">&#9671;</span>
               <span id="genBayLabel">Diagram</span>
             </button>
+            <!-- Not a bay: the 3D studio opens in the workspace pane
+                 beside whatever is in the chat (model3d.js). -->
+            <button type="button" class="mode-3d-btn" id="open3dBtn" title="Make a 3D model from a picture or a description">
+              <span class="bay-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2.8 20 7.4v9.2L12 21.2 4 16.6V7.4z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M4 7.4 12 12l8-4.6M12 12v9.2" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></span>
+              <span>3D</span>
+            </button>
           </div>
         </nav>
       </div>
@@ -957,6 +970,57 @@
                 <img id="browserFrame" alt="" draggable="false" />
               </div>
               <article class="rg-reader" id="browserPage"></article>
+            </div>
+            <!-- THE 3D STUDIO (model3d.js): a picture or a description in,
+                 a textured GLB out, made by TRELLIS.2. -->
+            <div class="model3d-view model3d-only" id="artifactModelView">
+              <div class="m3d">
+                <form class="m3d-form" id="m3dForm" novalidate>
+                  <label class="m3d-drop" id="m3dDrop">
+                    <input type="file" id="m3dFile" accept="image/png,image/jpeg,image/webp" hidden />
+                    <img id="m3dPreview" alt="" hidden />
+                    <span class="m3d-drop-text" id="m3dDropText">
+                      <strong>Drop a picture here</strong> or click to choose
+                      <small>PNG, JPEG or WebP up to 10 MB. One object on a plain background works best.</small>
+                    </span>
+                    <button type="button" class="m3d-clear" id="m3dClear" aria-label="Remove the picture" hidden>&times;</button>
+                  </label>
+                  <div class="m3d-or"><span>or describe it</span></div>
+                  <input type="text" class="m3d-prompt" id="m3dPrompt" maxlength="600"
+                         placeholder="A red ceramic teapot with a bamboo handle" autocomplete="off" />
+                  <div class="m3d-row">
+                    <div class="m3d-res" id="m3dRes" role="radiogroup" aria-label="Resolution">
+                      <button type="button" role="radio" data-res="512" aria-checked="true">512<small>Fast</small></button>
+                      <button type="button" role="radio" data-res="1024" aria-checked="false">1024<small>Balanced</small></button>
+                      <button type="button" role="radio" data-res="1536" aria-checked="false">1536<small>Detailed</small></button>
+                    </div>
+                    <button type="submit" class="m3d-go" id="m3dGo">Generate</button>
+                  </div>
+                  <p class="m3d-note" id="m3dNote" role="status" aria-live="polite"></p>
+                </form>
+
+                <section class="m3d-result" id="m3dResult" hidden>
+                  <div class="m3d-stage" id="m3dStage">
+                    <span class="m3d-spinner" aria-hidden="true"></span>
+                    <span id="m3dStageText">Starting…</span>
+                    <span class="m3d-elapsed" id="m3dElapsed"></span>
+                  </div>
+                  <div class="m3d-viewer-wrap" id="m3dViewerWrap" hidden>
+                    <model-viewer id="m3dViewer" camera-controls auto-rotate
+                                  environment-image="neutral" shadow-intensity="0.8"
+                                  exposure="1" touch-action="pan-y" alt="The generated 3D model"></model-viewer>
+                  </div>
+                  <div class="m3d-actions" id="m3dActions" hidden>
+                    <a class="m3d-download" id="m3dDownload" href="#" download>Download GLB</a>
+                    <span class="m3d-meta" id="m3dMeta"></span>
+                  </div>
+                </section>
+
+                <section class="m3d-history">
+                  <h3>Your models</h3>
+                  <div class="m3d-list" id="m3dHistory"></div>
+                </section>
+              </div>
             </div>
           </div>
         </div>

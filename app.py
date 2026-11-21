@@ -64,6 +64,7 @@ import kelviq_billing  # noqa: E402  the payment provider, used first when set
 import anthropic_api  # noqa: E402  pip 2, the Pro model
 import browser  # noqa: E402  the workspace browser (pages read on the server)
 import livebrowser  # noqa: E402  the live workspace browser (real Chromium)
+import model3d  # noqa: E402  image/text to 3D with TRELLIS.2 - see model3d.py
 import pixverse  # noqa: E402  paid text-to-video - see pixverse.py
 import hfvideo  # noqa: E402  free-tier text-to-video - see hfvideo.py
 import tripo3d  # noqa: E402  text-to-3D generation - see tripo3d.py
@@ -1211,6 +1212,13 @@ def plan_perks():
         pro_list.append(("%d video clips a day, up to %ds at %s" % (
             pro["video_clips"], pro["video_max_seconds"],
             pro["video_max_quality"]), True))
+    # 3D models, from a picture or a description - only where a 3D
+    # service is actually set up (model3d.py).
+    if model3d.available():
+        free_list.append(("%d 3D models a day, from a picture or a description"
+                          % free["models_3d_per_day"], True))
+        pro_list.append(("<strong>%d 3D models a day</strong>, Blender-ready GLB"
+                         % pro["models_3d_per_day"], True))
 
     return {"free": free_list, "pro": pro_list}
 
@@ -7760,6 +7768,164 @@ def video_job_download(job_id):
         download_name="pip-%s%s" % (job_id, os.path.splitext(name)[1]))
 
 
+# ======================================================================
+# 3D MODELS (model3d.py): a picture or a description in, a textured GLB
+# out, made by TRELLIS.2. Free to run (the Hugging Face Space), so the
+# limit is per day and exists to share the Space's GPU quota fairly.
+# ======================================================================
+LIMIT_3D = Limiter(rate=6, per=60, burst=3)
+
+
+def _model3d_refund(job):
+    """A job that failed gives its day's count back."""
+    if job and job.get("quota_key"):
+        db.video_refund(job["owner_id"], job["quota_key"])
+
+
+model3d.start(on_failed=_model3d_refund)
+
+
+def _model3d_quota(owner, plan):
+    key = "3d:" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    limit = int(features.get(plan, "models_3d_per_day") or 0)
+    used = db.video_used(owner, key)
+    return key, limit, used
+
+
+def _model3d_start(owner, plan, signed_in, source, prompt="", image="", resolution="512"):
+    """Every way in (the studio, the chat) starts a job here.
+    -> (job, None) or (None, (sentence, status, extra))."""
+    if not model3d.available():
+        return None, ("3D models aren't set up on this server yet.", 503, {})
+    if not signed_in:
+        return None, ("Make a free account to create 3D models - it's how the "
+                      "daily limit is kept fair.", 401, {"needs_account": True})
+    if source == "text":
+        blocked = moderation.check_image_prompt(prompt)
+        if blocked is not None:
+            return None, (blocked, 400, {})
+    key, limit, used = _model3d_quota(owner, plan)
+    if not db.video_try_consume(owner, key, limit):
+        return None, ("You've made all %d of today's 3D models. More tomorrow%s."
+                      % (limit, "" if plan == features.PRO else ", or more with Pro"),
+                      402, {"upgrade_required": plan != features.PRO})
+    job = model3d.submit(owner, source, prompt=prompt, image=image,
+                         resolution=resolution, quota_key=key)
+    return job, None
+
+
+def _model3d_view(owner, plan):
+    key, limit, used = _model3d_quota(owner, plan)
+    return {"limit": limit, "used": min(used, limit), "left": max(0, limit - used)}
+
+
+def _owned_model_job(job_id):
+    job = model3d.get(job_id)
+    if not job or job["owner_id"] != current_owner_id():
+        return None
+    return job
+
+
+@app.route("/api/3d/status", methods=["GET"])
+def model3d_status():
+    account, _ = current_account()
+    plan = features.normalize_plan(account.get("plan"))
+    return jsonify({
+        "available": model3d.available(),
+        "providers": [p.name for p in model3d.chain()],
+        "resolutions": list(model3d.RESOLUTIONS),
+        "signed_in": bool(session.get("user_id")),
+        "quota": _model3d_view(current_owner_id(), plan),
+        "price_usd": {r: model3d.price(r) for r in model3d.RESOLUTIONS},
+    })
+
+
+@app.route("/api/3d/generate", methods=["POST"])
+@limited("3d", LIMIT_3D, key=_limit_key_account)
+def model3d_generate():
+    """A picture (multipart `image`) or a description (`prompt`), and a
+    `resolution` of 512, 1024 or 1536. -> {"job": ...}; poll
+    /api/3d/job/<id> until it is done or failed."""
+    if request.files:
+        f = request.files.get("image")
+        prompt = ""
+        resolution = request.form.get("resolution") or model3d.DEFAULT_RESOLUTION
+    else:
+        payload = request.get_json(silent=True) or {}
+        f = None
+        prompt = str(payload.get("prompt") or "").strip()
+        resolution = str(payload.get("resolution") or model3d.DEFAULT_RESOLUTION)
+    if resolution not in model3d.RESOLUTIONS:
+        return jsonify({"error": "Pick a resolution of 512, 1024 or 1536."}), 400
+    image = ""
+    if f is not None:
+        data = f.read(model3d.MAX_IMAGE_BYTES + 1)
+        try:
+            ext, _w, _h = model3d.check_image(data)
+        except model3d.Model3DError as e:
+            return jsonify({"error": str(e)}), 400
+        image = model3d.save_input(data, ext)
+        source = "image"
+    elif prompt:
+        if len(prompt) > 600:
+            return jsonify({"error": "Keep the description under 600 characters."}), 400
+        source = "text"
+    else:
+        return jsonify({"error": "Add a picture, or describe the object."}), 400
+    account, _ = current_account()
+    plan = features.normalize_plan(account.get("plan"))
+    owner = current_owner_id()
+    job, err = _model3d_start(owner, plan, bool(session.get("user_id")), source,
+                              prompt=prompt, image=image, resolution=resolution)
+    if err:
+        text, status, extra = err
+        return jsonify(dict(extra, error=text, quota=_model3d_view(owner, plan))), status
+    return jsonify({"job": model3d.public(job), "quota": _model3d_view(owner, plan)})
+
+
+@app.route("/api/3d/jobs", methods=["GET"])
+def model3d_jobs():
+    return jsonify({"jobs": [model3d.public(j) for j in model3d.jobs_for(current_owner_id())]})
+
+
+@app.route("/api/3d/job/<job_id>", methods=["GET"])
+def model3d_job(job_id):
+    job = _owned_model_job(job_id)
+    if not job:
+        return jsonify({"error": "No such model."}), 404
+    return jsonify({"job": model3d.public(job)})
+
+
+@app.route("/api/3d/job/<job_id>", methods=["DELETE"])
+def model3d_job_delete(job_id):
+    job = _owned_model_job(job_id)
+    if not job:
+        return jsonify({"error": "No such model."}), 404
+    if job["status"] in ("queued", "running"):
+        return jsonify({"error": "Wait for it to finish first."}), 409
+    path = model3d.glb_path(job)
+    if path:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    db.model_job_delete(job_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/3d/job/<job_id>/model.glb", methods=["GET"])
+def model3d_glb(job_id):
+    job = _owned_model_job(job_id)
+    path = model3d.glb_path(job)
+    if not path:
+        return jsonify({"error": "No such model."}), 404
+    resp = send_file(os.path.abspath(path), mimetype="model/gltf-binary",
+                     as_attachment=request.args.get("download") == "1",
+                     download_name="randomgenerals-3d-%s.glb" % job_id, max_age=3600)
+    resp.headers["Cache-Control"] = "private, max-age=3600"
+    return resp
+
+
 @app.route("/api/video/webhook/<token>", methods=["POST"])
 def video_webhook(token):
     """A provider saying a job ended. Unsigned (Higgsfield documents no
@@ -8382,6 +8548,80 @@ def _auto_continue(provider, model, history, so_far, usage, kwargs):
     return so_far
 
 
+# "MAKE THIS INTO A 3D MODEL", said in the chat. Detected here rather
+# than left to the model: a message with a picture skips the tool loop
+# (see _stream_reply), and that is exactly the message that wants this.
+_3D_TARGET = re.compile(r"\b(3d|3-d|three[- ]?d|glb|gltf|mesh)\b", re.I)
+_3D_VERB = re.compile(r"\b(make|create|generate|build|turn|convert|transform|give|"
+                      r"produce|sculpt|model|want|need|render|into)\b", re.I)
+_3D_QUESTION = re.compile(r"^\s*(what|why|how|when|who|where|explain|is|are|does|do|"
+                          r"should|which)\b", re.I)
+_3D_VAGUE = {"", "this", "it", "that", "these", "them", "this image", "this picture",
+             "this photo", "the image", "the picture", "the photo", "my image"}
+
+
+def _wants_3d(text):
+    t = text or ""
+    return bool(_3D_TARGET.search(t) and _3D_VERB.search(t) and not _3D_QUESTION.search(t))
+
+
+def _model3d_resolution(text):
+    t = (text or "").lower()
+    if "1536" in t or "highest" in t or "max quality" in t:
+        return "1536"
+    if "1024" in t or "high quality" in t or "detailed" in t:
+        return "1024"
+    return "512"
+
+
+def _model3d_picture(thread, files):
+    """The picture to model: one attached now, else the latest one in the
+    last few messages ("make that 3D"). -> path under static/ or ""."""
+    def from_list(items):
+        for f in items or []:
+            url = str(f.get("url") or "")
+            if f.get("kind") == "image" and url.startswith("/static/uploads/"):
+                path = url.lstrip("/")
+                if "/.." not in path and os.path.exists(path):
+                    return path
+        return ""
+    found = from_list(files)
+    if found:
+        return found
+    users = [m for m in (thread.get("messages") or []) if m.get("role") == "user"]
+    for m in reversed(users[-4:]):
+        found = from_list(m.get("attachments"))
+        if found:
+            return found
+    return ""
+
+
+def _model3d_usable(path):
+    """An upload as TRELLIS.2 input: PNG/JPEG/WebP kept as they are,
+    anything else Pillow can read re-saved as PNG. -> path or ""."""
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read(model3d.MAX_IMAGE_BYTES + 1)
+        ext, _w, _h = model3d.check_image(data)
+        return model3d.save_input(data, ext)
+    except model3d.Model3DError:
+        pass
+    except OSError:
+        return ""
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+        with Image.open(path) as im:
+            buf = BytesIO()
+            im.convert("RGBA").save(buf, "PNG")
+        data = buf.getvalue()
+        model3d.check_image(data)
+        return model3d.save_input(data, "png")
+    except Exception:                                  # noqa: BLE001
+        return ""
+
+
 def _stream_reply(thread, provider, model, web_results, files, strength):
     """Builds the system prompt + history from thread["messages"] as it
     currently stands, streams a reply, and persists + charges for it once
@@ -8712,6 +8952,48 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
                     and not _is_website_request(asked))):
             tool_specs = None
             connector_map = {}
+    # A 3D MODEL, ASKED FOR IN THE CHAT: start the job now, show its
+    # card at the top of the reply, and have the model say what it is
+    # making rather than pretend to make it.
+    model3d_display = None
+    if (site_job is None and mode in ("chat", "code") and _wants_3d(asked)
+            and model3d.available()):
+        picture = _model3d_picture(thread, files)
+        subject = model3d.subject_of(asked or "")
+        note = ""
+        if picture or subject.strip(" .!?").lower() not in _3D_VAGUE:
+            usable = _model3d_usable(picture) if picture else ""
+            if picture and not usable:
+                note = ("The user asked for a 3D model from their picture, but that "
+                        "picture could not be read as an image. Say so briefly and "
+                        "ask for a PNG, JPEG or WebP.")
+            else:
+                job, err = _model3d_start(
+                    current_owner_id(), plan, bool(session.get("user_id")),
+                    "image" if usable else "text", prompt=subject,
+                    image=usable, resolution=_model3d_resolution(asked))
+                if job:
+                    model3d_display = {"kind": "model3d", "job_id": job["id"]}
+                    note = ("A 3D model is being made right now with TRELLIS.2, from %s. "
+                            "It appears in a card above your reply with a live 3D preview "
+                            "and a GLB download (it usually takes one to three minutes). "
+                            "Reply in one or two short sentences saying what you are "
+                            "modelling. Do not say it is finished, do not paste links, "
+                            "and do not write code or Blender scripts for it."
+                            % ("the picture they attached" if usable
+                               else "a picture of '%s' drawn first" % subject[:120]))
+                else:
+                    note = ("The user asked for a 3D model, but it could not be started: "
+                            "%s Tell them this plainly in one or two sentences." % err[0])
+        else:
+            note = ("The user wants a 3D model but gave neither a picture nor a "
+                    "description of the object. Ask them to attach a picture or say "
+                    "what the object is, in one sentence.")
+        tool_specs = None
+        connector_map = {}
+        if note and history and history[0].get("role") == "system":
+            history = ([{"role": "system", "content": history[0]["content"] + "\n\n" + note}]
+                       + history[1:])
     if tool_specs is not None:
         # Say the tools exist, in the same breath as offering them.
         # Promising a calculator to a session that has none is worse
@@ -8755,6 +9037,11 @@ def _stream_reply(thread, provider, model, web_results, files, strength):
             for skill in skills_on:
                 yield stream_event({"tool": "skill-" + skill["id"], "status": "done",
                                     "label": "Using the %s skill" % skill["title"]})
+            if model3d_display is not None:
+                tools_used.displays.append(model3d_display)
+                yield stream_event({"tool": "make_3d_model", "status": "done",
+                                    "label": "Making a 3D model",
+                                    "display": model3d_display})
             if site_job is not None:
                 # A website: planned, written file by file and reviewed
                 # by sitebuilder.py, then saved as a project with a card.

@@ -57,7 +57,7 @@ const MODEL_VIEWER_URL =
   "https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js";
 let modelViewerLoading = null;
 
-function loadModelViewer() {
+export function loadModelViewer() {
   if (window.customElements && window.customElements.get("model-viewer")) {
     return Promise.resolve(true);
   }

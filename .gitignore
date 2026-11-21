@@ -108,3 +108,6 @@ finetune/pip-*-merged*/
 
 # Local editor/agent settings (the .me copy of the rule above).
 .me/settings.local.json
+
+# 3D models made by model3d.py (and the pictures they were made from)
+static/models3d/

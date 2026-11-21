@@ -67,6 +67,10 @@ FEATURES = {
         # a lock. Pro has no cap.
         "vision": True,
         "vision_images_per_day": 10,
+        # 3D models (model3d.py, TRELLIS.2 on the free Hugging Face
+        # Space). Free to us, but the Space's GPU quota is shared by
+        # everyone on the site, so it is rationed per day.
+        "models_3d_per_day": 2,
         # --- capabilities ---
         "deep_mode": True,          # moved to free deliberately
         # THE CALCULATOR IS NOT A PAID FEATURE
@@ -147,6 +151,7 @@ FEATURES = {
         "premium_models": True,
         "vision": True,
         "vision_images_per_day": None,      # no cap
+        "models_3d_per_day": 10,
         "deep_mode": True,
         "builtin_tools": True,
         "image_generation": True,
@@ -283,6 +288,7 @@ def public_flags(plan):
         "premium_models": f["premium_models"],
         "vision": f["vision"],
         "vision_images_per_day": f.get("vision_images_per_day"),
+        "models_3d_per_day": f.get("models_3d_per_day"),
         "max_memories": f["max_memories"],
         "max_upload_mb": f["max_upload_mb"],
         "terminal_unrestricted": f["terminal_unrestricted"],

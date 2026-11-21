@@ -4010,3 +4010,170 @@ a.profile-menu-item {
 .main.is-studio .video-bay {
   padding-top: 52px;
 }
+
+/* ==================================================================
+   THE 3D STUDIO (model3d.js), in the workspace pane as data-mode
+   "model3d", and its card in the chat.
+   ================================================================== */
+.artifact-pane:not([data-mode="model3d"]) .model3d-only,
+.artifact-pane[data-mode="model3d"] .artifact-only,
+.artifact-pane[data-mode="model3d"] .browser-only,
+.artifact-pane[data-mode="model3d"] #artifactViews,
+.artifact-pane[data-mode="model3d"] #artifactVersions,
+.artifact-pane[data-mode="model3d"] #artifactCopy,
+.artifact-pane[data-mode="model3d"] #artifactDownload,
+.artifact-pane[data-mode="model3d"] #artifactPopout,
+.artifact-pane[data-mode="model3d"] #artifactCodeView,
+.artifact-pane[data-mode="model3d"] #artifactPreviewView {
+  display: none !important;
+}
+.model3d-view {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  background: var(--ws-2);
+  scrollbar-width: thin;
+}
+.m3d {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 20px 20px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  color: var(--ws-ink);
+}
+.m3d-form { display: flex; flex-direction: column; gap: 10px; }
+.m3d-drop {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 170px;
+  padding: 16px;
+  border: 1.5px dashed var(--ws-line-strong);
+  border-radius: 14px;
+  background: var(--ws-3);
+  color: var(--ws-ink-2);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.m3d-drop:hover, .m3d-drop.is-over { border-color: var(--ws-line-focus); background: var(--ws-hover); }
+.m3d-drop-text { font-size: 14px; line-height: 1.5; }
+.m3d-drop-text strong { color: var(--ws-ink); font-weight: 600; }
+.m3d-drop-text small { display: block; margin-top: 4px; color: var(--ws-ink-3); font-size: 12.5px; }
+.m3d-drop img { max-width: 100%; max-height: 220px; border-radius: 10px; object-fit: contain; }
+.m3d-clear {
+  position: absolute; top: 8px; right: 8px;
+  width: 28px; height: 28px; border: 0; border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 18px; line-height: 1; cursor: pointer;
+}
+.m3d-clear[hidden], .m3d-drop img[hidden], .m3d-drop-text[hidden] { display: none; }
+.m3d-or {
+  display: flex; align-items: center; gap: 10px;
+  color: var(--ws-ink-3); font-size: 12px;
+}
+.m3d-or::before, .m3d-or::after { content: ""; flex: 1; border-top: 1px solid var(--ws-line); }
+.m3d-prompt {
+  height: 40px; padding: 0 14px;
+  border: 1px solid var(--ws-line-strong); border-radius: 10px;
+  background: var(--ws-3); color: var(--ws-ink); font: inherit; font-size: 14px; outline: none;
+}
+.m3d-prompt:focus { border-color: var(--ws-line-focus); }
+.m3d-prompt::placeholder { color: var(--ws-ink-3); }
+.m3d-row { display: flex; align-items: stretch; gap: 10px; flex-wrap: wrap; }
+.m3d-res {
+  display: flex; flex: 1; min-width: 240px; gap: 2px; padding: 3px;
+  border: 1px solid var(--ws-line); border-radius: 10px; background: var(--ws-3);
+}
+.m3d-res button {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px;
+  padding: 5px 6px; border: 0; border-radius: 7px; background: transparent;
+  color: var(--ws-ink-2); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.m3d-res button small { font-size: 11px; font-weight: 400; color: var(--ws-ink-3); }
+.m3d-res button[aria-checked="true"] { background: var(--ws-4); color: var(--ws-ink); }
+.m3d-go {
+  padding: 0 22px; min-height: 44px; border: 0; border-radius: 10px;
+  background: var(--ws-primary); color: var(--ws-on-primary);
+  font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.m3d-go:disabled { background: var(--ws-disabled); color: var(--ws-on-disabled); cursor: default; }
+.m3d-note { margin: 0; min-height: 1.2em; font-size: 12.5px; color: var(--ws-ink-3); }
+.m3d-note.is-error { color: #f87171; }
+
+.m3d-result { display: flex; flex-direction: column; gap: 10px; }
+.m3d-result[hidden], .m3d-viewer-wrap[hidden], .m3d-actions[hidden], .m3d-stage[hidden] { display: none; }
+.m3d-stage, .m3d-card-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px; border: 1px solid var(--ws-line); border-radius: 12px;
+  background: var(--ws-3); font-size: 13.5px; color: var(--ws-ink-2);
+}
+.m3d-stage.is-error { color: #f87171; }
+.m3d-stage.is-error .m3d-spinner { display: none; }
+.m3d-elapsed { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--ws-ink-3); font-size: 12.5px; }
+.m3d-spinner {
+  flex: none; width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid var(--ws-line-strong); border-top-color: var(--ws-ink);
+  animation: m3dSpin 0.8s linear infinite;
+}
+.m3d-spinner[hidden] { display: none; }
+@keyframes m3dSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .m3d-spinner { animation-duration: 2.4s; } }
+.m3d-viewer-wrap, .m3d-card-viewer {
+  border: 1px solid var(--ws-line); border-radius: 14px; overflow: hidden;
+  background: radial-gradient(circle at 50% 40%, #3a3a3e, #1c1c1f);
+}
+.m3d-viewer-wrap model-viewer { display: block; width: 100%; height: 380px; }
+.m3d-actions, .m3d-card-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.m3d-download, .m3d-open {
+  display: inline-flex; align-items: center; height: 34px; padding: 0 14px;
+  border: 1px solid var(--ws-line-strong); border-radius: 9px;
+  background: var(--ws-3); color: var(--ws-ink); font: inherit; font-size: 13px; font-weight: 500;
+  text-decoration: none; cursor: pointer;
+}
+.m3d-download { background: var(--ws-primary); color: var(--ws-on-primary); border-color: transparent; }
+.m3d-download:hover { filter: brightness(0.92); }
+.m3d-open:hover { background: var(--ws-hover); }
+.m3d-meta { font-size: 12.5px; color: var(--ws-ink-3); }
+
+.m3d-history h3 { margin: 6px 0 8px; font-size: 13px; font-weight: 600; color: var(--ws-ink-2); }
+.m3d-list { display: flex; flex-direction: column; gap: 4px; }
+.m3d-empty { margin: 0; font-size: 13px; color: var(--ws-ink-3); }
+.m3d-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 6px 8px; border: 1px solid transparent; border-radius: 10px;
+  background: transparent; color: var(--ws-ink); font: inherit; text-align: left; cursor: pointer;
+}
+.m3d-item:hover, .m3d-item.is-current { background: var(--ws-3); border-color: var(--ws-line); }
+.m3d-thumb {
+  flex: none; width: 40px; height: 40px; border-radius: 8px; overflow: hidden; background: var(--ws-4);
+}
+.m3d-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.m3d-item-text { display: flex; flex-direction: column; min-width: 0; }
+.m3d-item-title { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m3d-item-text small { font-size: 12px; color: var(--ws-ink-3); }
+
+/* The card in the chat. */
+.m3d-card { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 10px; max-width: 560px; }
+.m3d-card.is-error .m3d-card-head { color: #f87171; }
+.m3d-card-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m3d-card-viewer[hidden], .m3d-card-actions[hidden] { display: none; }
+.m3d-card-viewer model-viewer { display: block; width: 100%; height: 300px; }
+
+/* The 3D button beside the modes: dressed like them, not one of them. */
+.mode-dock .mode-3d-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 14px 7px 12px; border-radius: 999px;
+  border: 1px solid var(--ws-glass-border); background: var(--ws-glass);
+  box-shadow: var(--ws-glass-hi); color: var(--ws-ink-2);
+  font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+  transition: all 200ms var(--ws-ease);
+}
+.mode-dock .mode-3d-btn:hover { color: var(--ws-ink); background: var(--ws-glass-strong); border-color: var(--ws-glass-border-strong); }
+.mode-dock .mode-3d-btn .bay-icon { display: inline-grid; place-items: center; opacity: 0.75; }
+.main:not(.is-empty) .mode-dock .mode-3d-btn {
+  padding: 4px 10px 4px 8px; gap: 5px; border: 0; border-radius: 7px;
+  background: transparent; box-shadow: none; font-size: 12.5px;
+}
+.main:not(.is-empty) .mode-dock .mode-3d-btn:hover { background: var(--ws-hover); }

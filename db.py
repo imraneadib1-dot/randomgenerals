@@ -286,6 +286,28 @@ CREATE TABLE IF NOT EXISTS memories (
 -- `month` is 'YYYY-MM'. Storing the period rather than a reset timestamp
 -- means there is no scheduled job to run and no clock to drift: the row
 -- for a past month simply stops being the one that is read.
+-- 3D models (model3d.py): one row per image- or text-to-3D job, from
+-- the upload to a GLB on disk. `glb` is the file's name under
+-- static/models3d once it is saved and checked.
+CREATE TABLE IF NOT EXISTS model_jobs (
+    id         TEXT PRIMARY KEY,
+    owner_id   TEXT NOT NULL,
+    status     TEXT NOT NULL,              -- queued | running | done | failed
+    source     TEXT NOT NULL,              -- image | text
+    prompt     TEXT NOT NULL DEFAULT '',
+    image      TEXT NOT NULL DEFAULT '',   -- the input picture, under static/
+    resolution TEXT NOT NULL DEFAULT '512',
+    provider   TEXT NOT NULL DEFAULT '',
+    stage      TEXT NOT NULL DEFAULT '',   -- what it is doing, for the progress line
+    glb        TEXT NOT NULL DEFAULT '',
+    glb_bytes  INTEGER NOT NULL DEFAULT 0,
+    error      TEXT NOT NULL DEFAULT '',
+    quota_key  TEXT NOT NULL DEFAULT '',
+    created    REAL NOT NULL,
+    updated    REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_model_jobs_owner ON model_jobs(owner_id, created);
+
 CREATE TABLE IF NOT EXISTS video_quota (
     owner_id TEXT NOT NULL,
     month    TEXT NOT NULL,
@@ -3075,3 +3097,63 @@ def signin_take(state, now_ts):
     return {"owner_id": r["owner_id"], "app_id": r["app_id"], "verifier": r["verifier"],
             "auth": json.loads(r["auth_json"]), "client_id": r["client_id"],
             "redirect": r["redirect"]}
+
+
+# ------------------------------------------------------------ 3D model jobs
+_MODEL_JOB_COLS = ("id", "owner_id", "status", "source", "prompt", "image", "resolution",
+                   "provider", "stage", "glb", "glb_bytes", "error", "quota_key",
+                   "created", "updated")
+
+
+def model_job_create(job):
+    cols = [c for c in _MODEL_JOB_COLS if c in job]
+    conn = _connect()
+    with _lock:
+        conn.execute("INSERT INTO model_jobs (%s) VALUES (%s)"
+                     % (", ".join(cols), ", ".join("?" for _ in cols)),
+                     [job[c] for c in cols])
+        conn.commit()
+
+
+def model_job_update(job_id, **fields):
+    bad = [k for k in fields if k not in _MODEL_JOB_COLS or k == "id"]
+    if bad:
+        raise ValueError("unknown model_jobs columns: %s" % bad)
+    if not fields:
+        return
+    conn = _connect()
+    with _lock:
+        conn.execute("UPDATE model_jobs SET %s WHERE id = ?"
+                     % ", ".join("%s = ?" % k for k in fields),
+                     list(fields.values()) + [job_id])
+        conn.commit()
+
+
+def model_job_get(job_id):
+    conn = _connect()
+    with _lock:
+        r = conn.execute("SELECT * FROM model_jobs WHERE id = ?", (job_id,)).fetchone()
+    return dict(r) if r else None
+
+
+def model_jobs_for(owner_id, limit=20):
+    conn = _connect()
+    with _lock:
+        rows = conn.execute("SELECT * FROM model_jobs WHERE owner_id = ? "
+                            "ORDER BY created DESC LIMIT ?", (owner_id, limit)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def model_jobs_unfinished():
+    conn = _connect()
+    with _lock:
+        rows = conn.execute("SELECT * FROM model_jobs WHERE status IN ('queued', 'running')"
+                            ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def model_job_delete(job_id):
+    conn = _connect()
+    with _lock:
+        conn.execute("DELETE FROM model_jobs WHERE id = ?", (job_id,))
+        conn.commit()

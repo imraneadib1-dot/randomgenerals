@@ -225,7 +225,7 @@ function current() {
 function render() {
   // The pane is showing the browser (browser.js): the chat's redraws
   // are not for it.
-  if (pane.dataset.mode === "browser") return;
+  if (pane.dataset.mode && pane.dataset.mode !== "artifact") return;
   const cur = current();
   if (!cur) { closePane(); return; }
   const { a, v } = cur;
@@ -430,9 +430,16 @@ export function openArtifact(key, index, mode) {
 
 /** The pane in browser mode, for browser.js. */
 export function showBrowserPane() {
+  showPaneMode("browser");
+}
+
+/** The pane showing something that is not a file from the chat - the
+ *  browser, the 3D studio. The chat's redraws leave it alone.
+ *  @param {string} mode */
+export function showPaneMode(mode) {
   const wasOpen = isOpen();
   if (!wasOpen) openPane();
-  pane.dataset.mode = "browser";
+  pane.dataset.mode = mode;
   chatLog.querySelectorAll(".code-block.is-in-pane")
     .forEach((el) => el.classList.remove("is-in-pane"));
   // A previewed page stops running while the browser has the pane.
@@ -677,7 +684,7 @@ export function mountArtifacts() {
     if (!isOpen()) return;
     // The browser does not belong to a message: it stays open across
     // a new chat (the first message replaces the welcome screen).
-    if (pane.dataset.mode === "browser") return;
+    if (pane.dataset.mode && pane.dataset.mode !== "artifact") return;
     // A message was added: nothing the pane shows went away.
     const cur = current();
     if (cur && cur.v.block.isConnected) return;
