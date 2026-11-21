@@ -1,210 +1,153 @@
-# pip 1.0
+pip 1.0
+An assistant built and owned by Imrane Adib, designed for chat, code, images, diagrams, a Python sandbox, web search, file reading, persistent memory across conversations, accounts with 2FA, and Pro subscriptions via Paddle.
 
-An AI assistant with its own model. Chat, code, images, diagrams, a
-Python sandbox, web search, file reading, memory across conversations,
-accounts with 2FA, and a Pro plan through Paddle. Owned and built by
-Imrane Adib.
+Under the hood, it’s three pieces in one repo:
 
-It is three things in one repository:
+Layer	What it actually does	Where it lives
+The model	pip 1.0: a Qwen3.5-4B base paired with a small LoRA adapter trained here	finetune/, pip_model.py
+The engine	Loads the weights, exposes an OpenAI-compatible API, and manages its own SQLite working store	pip_server.py, pip_store.py
+The app	A Flask web app with a vanilla-JS frontend that talks to the engine and falls back cleanly when needed	app.py, static/, templates/
+The Model
+The base is Qwen3.5-4B (Apache 2.0, 262,144-token context window)—roughly the largest current open-weight model you can realistically fine-tune and serve on a single 8 GB GPU. On top of that sits a LoRA adapter touching less than 1% of the parameters, trained to anchor its identity, keep everyday answers normal, and produce the structured formats the app expects. You’ll find the base model’s license notice in finetune/NOTICE.
 
-| Part | What it is | Where |
-| --- | --- | --- |
-| The model | pip 1.0: an open-weight base plus a LoRA adapter trained here | `finetune/`, `pip_model.py` |
-| The engine | Loads the weights and serves them over an OpenAI-compatible API, with its own SQLite store | `pip_server.py`, `pip_store.py` |
-| The app | A Flask site with a plain-JavaScript front end that talks to the engine | `app.py`, `static/`, `templates/` |
+Identity (Three Layers, Because One Is Never Enough)
+Ask who owns, made, built, or trained pip, and it’s supposed to give one clear answer: Imrane Adib. Relying on a single layer leaks, so pip_identity.py enforces it in three places:
 
-## The model
+System prompt: Injected at the start of every conversation across every channel.
 
-The base is **Qwen3.5-4B** (Apache 2.0, a 262,144-token context
-window): the largest current open-weight model that can be both
-fine-tuned and served on one 8 GB GPU. What is trained on top of it is a
-LoRA adapter — under one percent of the parameters — on a dataset that
-teaches it who it is, keeps ordinary questions answered ordinarily, and
-drills the structured output the app asks for. `finetune/NOTICE` carries
-the base model's licence notice.
+Weights: Trained directly on hundreds of owner questions across five languages—half of them with no system prompt at all.
 
-Whoever asks who owns, made, built or trained it gets one answer: **its
-owner is Imrane Adib.** That is held in three layers, because each
-alone leaks (`pip_identity.py`):
+Output guard: Inspects completed replies to owner-related questions. If the answer doesn’t credit Imrane Adib—or credits someone else—it swaps in the canonical line instead. Because this guard runs in both the engine and the app, it even catches responses coming back from backup providers.
 
-1. **The prompt** opens every conversation on every channel.
-2. **The weights**: several hundred owner questions, in five languages,
-   are trained in, half of them with no system prompt at all.
-3. **The guard** reads the finished reply to an owner question and, if
-   it does not name the owner or names anyone else as the maker, sends
-   the canonical sentence instead. It runs in the engine and again in
-   the app, so it also covers a reply that came from a backup channel.
-
-## Running it
-
-```bash
+Getting It Running
+Bash
 pip install -r requirements.txt
-cp .env.example .env          # SECRET_KEY is the only required value
+cp .env.example .env          # SECRET_KEY is the only thing you must set
 
-python pip_server.py          # the engine   http://127.0.0.1:8765/v1
-python app.py                 # the app      http://127.0.0.1:5000
-python pip_cli.py             # or talk to the engine from a terminal
-```
+python pip_server.py          # engine at http://127.0.0.1:8765/v1
+python app.py                 # web app at http://127.0.0.1:5000
+python pip_cli.py             # interactive CLI against the engine
+You need weights for the engine to start, though if you haven’t trained an adapter yet, it can still run the base model while relying on the prompt and guard for identity. And if the engine isn’t running at all, the web app doesn’t just crash—it routes through the backup channels below.
 
-The engine needs the weights. Until an adapter has been trained it
-serves the base model alone, with the owner answer still enforced by
-the prompt and the guard. With no engine running, the app still works:
-it answers from the backup channels below.
+Fine-Tuning
+Bash
+python -m finetune.pip_data            # build the training dataset (also runs automatically if needed)
+python -m finetune.train_pip           # full run: Qwen3.5-4B in 4-bit (needs a GPU)
+python -m finetune.train_pip --smoke   # quick CPU smoke test on a 0.5B base (a few minutes)
+The full training run requires a CUDA-enabled torch and bitsandbytes; if you don’t have them, it exits early rather than grinding a 4B model on a CPU. You can pass --base <hf-model-id> if you have the VRAM for a larger base.
 
-## Fine-tuning
+Full runs save to finetune/pip-1.0-adapter/ (loaded automatically by pip_server.py).
 
-```bash
-python -m finetune.pip_data            # write the dataset (also done on demand)
-python -m finetune.train_pip           # the real run: Qwen3.5-4B, 4-bit, needs a GPU
-python -m finetune.train_pip --smoke   # a 0.5B base on the CPU, a few minutes
-```
+Smoke runs save to finetune/pip-1.0-adapter-smoke/—run it with python pip_server.py --adapter finetune/pip-1.0-adapter-smoke.
 
-The real run needs a CUDA build of torch and `bitsandbytes`; the script
-says so and stops rather than starting a 4B model on a CPU. `--base`
-takes any Hugging Face model id, so a bigger base can be trained on a
-machine with the memory for it. The adapter is written to
-`finetune/pip-1.0-adapter/`, which the engine loads by default; the
-smoke run writes to `finetune/pip-1.0-adapter-smoke/`
-(`python pip_server.py --adapter finetune/pip-1.0-adapter-smoke`).
+Once training finishes, the script tests held-out owner questions against the weights alone (no system prompt, no guard), prints the pass rate, and records it in the adapter’s pip.json.
 
-After training, the held-out owner questions are put to the weights
-alone — no system prompt, no guard — and the share that name the owner
-is printed and recorded in the adapter's `pip.json`.
+Routing & Fallbacks
+Before any LLM touches a message, a compact NumPy classifier in brain/ (hand-derived gradients, single file) scores the input and picks which bay should handle it.
 
-## Where the answers come from
+From there, pip 1.0 always gets first shot. Because a single GPU can only juggle a handful of concurrent requests, the engine pushes back with Retry-After when saturated so the app can fail over before a request errors out. A busy or restarting engine makes the site slower, not broken.
 
-pip 1.0 is first in every bay. One GPU answers a few requests at a
-time, so the engine refuses the rest with a `Retry-After`, and the app
-moves that request to a backup channel before it fails rather than
-after. A busy or restarting engine is a slower site, not a broken one.
+Channel	What it runs	When it’s used
+pip	pip 1.0 from the engine	First choice in every bay
+OpenRouter	DeepSeek for code plus select free models	When the engine is busy or unavailable (paid models have a daily spend cap)
+Ollama	Whatever local models you have installed	Last-resort fallback when nothing else can answer
+Routes live in BAY_ROUTES in app.py as ordered (channel, model_pattern) lists per bay, picking the first available match. Backup channels are completely optional—if you leave OPENROUTER_API_KEY unset and keep Ollama off, pip is the only active channel.
 
-| Channel | What it runs | When |
-| --- | --- | --- |
-| pip | pip 1.0, from the engine | always first |
-| OpenRouter | DeepSeek for code, a few free models | when the engine cannot answer; paid models have a daily ceiling |
-| Ollama | whatever is installed locally | the floor, when nothing else answers |
+Storage
+There are two SQLite databases, both running in WAL mode with one connection per thread:
 
-The routing table is `BAY_ROUTES` in `app.py`: a ranked list per bay of
-`(channel, model-name-pattern)`, and the first one that actually exists
-wins. The backup channels are optional — leave `OPENROUTER_API_KEY`
-unset and stop Ollama, and pip 1.0 is the only thing that answers.
+app.db (db.py): The application’s source of truth—user accounts, sessions, credits, billing records, conversation threads, and cross-session memory.
 
-Before any of those models sees a message, a tiny network in `brain/`
-reads it first — plain NumPy, gradients derived by hand, one file — and
-decides which bay it belongs to.
+pip.db (pip_store.py): Ephemeral working state for the engine—server-side conversation history (for clients passing a conversation_id instead of full transcripts), cached token counts so long contexts don’t get re-counted on every turn, and runtime metadata. Safe to delete without losing user data.
 
-## The database
+Testing & Verification
+Bash
+python check_pip.py            # checks identity, DBs, engine, channels, and dataset
+python check_pip.py --model    # also queries the trained weights directly (slow on CPU)
+To catch quiet regressions across billing, rate limits, streaming, routing, and webhooks:
 
-Two SQLite files, both in WAL mode with one connection per thread:
-
-- `app.db` (`db.py`) is the product: accounts, sessions, credits,
-  billing, people's threads, memories.
-- `pip.db` (`pip_store.py`) is the engine's working state:
-  conversations it keeps for callers that send a `conversation_id`
-  instead of their whole history, a cache of token counts so fitting a
-  long conversation into the context window does not re-count every
-  turn on every request, and metadata about what is being served. It
-  can be deleted without losing anything a person owns.
-
-## Checks
-
-```bash
-python check_pip.py            # identity, database, engine, channel, training data
-python check_pip.py --model    # also asks the real trained weights (slow on a CPU)
-```
-
-The rest of the suite covers the parts of the app that fail quietly —
-billing lifecycle, rate limits, streaming, the reply path, webhooks:
-
-```bash
+Bash
 for f in check_*.py; do OLLAMA_URL=http://127.0.0.1:1 python $f || echo "FAILED $f"; done
 npx tsc -p jsconfig.json
-```
+(Note: check_paddle.py, check_mail.py, and check_webhook_security.py hit external services or require live secrets, so run those on the server.)
 
-`check_paddle.py`, `check_mail.py` and `check_webhook_security.py` need
-network or keys and belong on the server.
+Repository Map
+pip_identity.py — Identity constants, owner-question detection, and the output guard
 
-## What's where
+pip_model.py — Base model and LoRA adapter loader
 
-```
-pip_identity.py    the name, the owner, the owner-question detector, the guard
-pip_model.py       loads the base model and the adapter
-pip_server.py      the engine: OpenAI-compatible API over the weights
-pip_store.py       the engine's SQLite store
-pip_api.py         the app's client for the engine (the "pip" channel)
-pip_cli.py         the engine from a terminal
-finetune/          pip_data.py (dataset), train_pip.py (LoRA with PEFT), NOTICE
-app.py             routes, the routing table, chat streaming
-db.py              the app's SQLite, migrations on boot
-openrouter_api.py  the hosted backup channel, with a daily spend ceiling
-providers.py       how every channel must fail, so failover works
-paddle_billing.py  subscriptions (Paddle is the merchant of record)
-videogen.py        video job engine: persistent jobs, a poller, validation
-model3d.py         picture/description -> 3D model (TRELLIS.2), jobs, GLB checks
-agents/            router, verifier (code is run before it is trusted), evaluate
-brain/             the intent model - see brain/README.md
-connectors.py      paste a link, it becomes a tool the model can call
-keystore.py        AES-GCM for provider keys; TOTP from RFC 6238
-tools.py           web search, Python runner, image generation
-static/js/         ES modules, no bundler, an import map for versioning
-desktop/           Electron build (Windows installer via GitHub Actions)
-mobile/            Capacitor shell for iOS and Android
-deploy/            the Oracle VM setup script and notes
-```
+pip_server.py — OpenAI-compatible inference server
 
-## 3D models
+pip_store.py — Engine SQLite store (pip.db)
 
-A picture, or a description, becomes a textured 3D model (GLB) made by
-Microsoft's [TRELLIS.2](https://github.com/microsoft/TRELLIS.2) (MIT).
-Three ways in: the **3D** button beside the modes, **+ > Make a 3D
-model**, or simply asking in the chat ("make this into a 3D model" with
-a picture attached, or "a 3D model of a red teapot"). The chat shows a
-live card with a 3D preview and a GLB download; the studio keeps a
-history.
+pip_api.py — App-side client for the pip channel
 
-- **Where it runs.** TRELLIS.2 needs a 24 GB NVIDIA GPU, so the work is
-  sent elsewhere (`model3d.py`, `TRELLIS_PROVIDERS`): the free Hugging
-  Face Space by default, fal.ai if you add `FAL_KEY` and list `fal`, or
-  your own GPU machine running TRELLIS.2's `app.py`.
-- **Cost.** The Space is free but shares a daily GPU quota (`HF_TOKEN`
-  raises it); when it runs out, jobs say "try again later". fal.ai is
-  $0.25 / $0.30 / $0.35 per model at 512 / 1024 / 1536.
-- **Limits.** Free accounts make 2 models a day, Pro 10
-  (`features.py`). A failed job gives its count back.
-- **Text to 3D** draws the object first (one object, plain background)
-  and models the drawing; the picture is kept with the job.
-- **The file.** glTF 2.0 binary, a unit cube centred on the origin,
-  PBR textures in WebP (`EXT_texture_webp`), about 200k faces and 2K
-  textures by default. Imports cleanly in Blender 4.x/5.x
-  (File > Import > glTF 2.0). The material exports opaque; connect the
-  texture's alpha by hand if the object has transparent parts.
-- **Checks.** `python check_model3d.py` runs the whole flow against a
-  fake provider. A real run spends the Space's quota, so it is manual:
-  open the studio, upload a picture, Generate.
+pip_cli.py — Terminal client for the engine
 
-## Deploying
+finetune/ — Dataset generator (pip_data.py), PEFT LoRA trainer (train_pip.py), and NOTICE
 
-The web app runs on one small VM, gunicorn under systemd, with a
-Cloudflare tunnel in front (`deploy/ORACLE.md`). That VM has no GPU, so
-the engine runs on a machine that has one and the app is pointed at it
-with `PIP_ENGINE_URL` and `PIP_ENGINE_KEY`. Every update after the first
-is `bash deploy.sh` on the VM, which pulls, restarts, and then reads the
-build id out of the live page to prove the new code is what is serving.
+app.py — Flask routes, BAY_ROUTES, and streaming chat handler
 
-## Limitations, honestly
+db.py — App SQLite layer (app.db) with boot-time migrations
 
-- **The model is 4B parameters.** That is what one 8 GB GPU can train
-  and serve. It is good at what it was tuned for and it is not a
-  frontier model; a bigger base needs a bigger GPU, and `--base` is
-  there for the day there is one.
-- **The engine is text-only for now.** The base model can read images;
-  the engine does not pass them through yet, so an attached picture goes
-  to a backup channel that can see.
-- **One GPU, one reply at a time.** Right for the traffic it has.
-- **One process, one SQLite file per service.** Also right for the
-  traffic it has.
+openrouter_api.py — OpenRouter backup client with daily spend enforcement
 
-## Licence
+providers.py — Standardized error/backoff contract for clean failover
 
-The code is MIT — see [LICENSE](LICENSE). The base model is Apache 2.0 —
-see [finetune/NOTICE](finetune/NOTICE).
+paddle_billing.py — Subscription and webhook logic (Paddle as merchant of record)
+
+videogen.py — Persistent video generation jobs, poller, and validation
+
+model3d.py — Image/text-to-3D pipeline via TRELLIS.2, job tracking, and GLB checks
+
+agents/ — Task router, code-execution verifier, and evaluation helpers
+
+brain/ — Lightweight NumPy intent classifier (see brain/README.md)
+
+connectors.py — Turns pasted links into callable tools for the model
+
+keystore.py — AES-GCM encryption for provider keys; RFC 6238 TOTP
+
+tools.py — Web search, Python sandbox, and image generation
+
+static/js/ — Unbundled ES modules using an import map for version control
+
+desktop/ — Electron wrapper (Windows builds via GitHub Actions)
+
+mobile/ — Capacitor shell for iOS and Android
+
+deploy/ — Oracle VM setup script and deployment notes (deploy/ORACLE.md)
+
+3D Model Generation
+Turn an image or text prompt into a textured .glb asset powered by Microsoft’s TRELLIS.2 (MIT). You can trigger it via the 3D mode button, + > Make a 3D model, or naturally in chat (like attaching an image and asking for a 3D model, or requesting "a 3D model of a red teapot"). Completed items render inline with a live preview and GLB download, and stay saved in the studio history.
+
+Where it runs: TRELLIS.2 wants a 24 GB NVIDIA GPU, so jobs offload to TRELLIS_PROVIDERS in model3d.py—defaulting to the free Hugging Face Space, or optionally fal.ai (with FAL_KEY) or a self-hosted TRELLIS.2 app.py instance.
+
+Pricing & quotas: The HF Space is free with a shared daily GPU quota (add HF_TOKEN for higher limits; expect a "try again later" message when exhausted). fal.ai runs roughly $0.25 / $0.30 / $0.35 per generation at 512 / 1024 / 1536 resolution.
+
+Daily limits: Free accounts get 2 models/day and Pro accounts get 10/day (features.py). Failed jobs refund your daily count.
+
+Text-to-3D flow: Generates a clean single-object reference image on a plain background first, keeps that image alongside the job, and reconstructs the 3D mesh from it.
+
+Output format: Binary glTF 2.0 (.glb) normalized to a unit cube centered at the origin, typically ~200k faces with 2K WebP textures (EXT_texture_webp). Opens cleanly in Blender 4.x/5.x (File > Import > glTF 2.0). Materials export opaque by default—wire the alpha channel manually if your mesh has transparent regions.
+
+Testing: Run python check_model3d.py to test the pipeline end-to-end with a mock provider. Real runs consume quota, so test those manually in the studio.
+
+Deployment
+The web app is built to run on a lightweight VM under gunicorn + systemd behind a Cloudflare Tunnel (deploy/ORACLE.md). Since that VM has no GPU, point it at a separate GPU machine running the engine via PIP_ENGINE_URL and PIP_ENGINE_KEY.
+
+After initial setup, shipping updates is just running bash deploy.sh on the VM—it pulls the latest changes, restarts the service, and checks the live page’s build ID to confirm the new build is actually serving.
+
+Honest Limitations
+4B scale: Fits an 8 GB GPU for both training and serving, which is great for targeted tasks—not a frontier model. Use --base when you have hardware for a larger checkpoint.
+
+Text-only engine (for now): Even when the base model supports vision, the engine doesn’t pass images through yet, so image inputs route to a vision-capable backup channel.
+
+Single-GPU concurrency: Handles a small number of requests at a time—appropriate for current traffic, with failover handling spikes.
+
+Single-process SQLite: One process and one SQLite file per service—simple, reliable, and well-matched to current scale.
+
+License
+Application & repository code: MIT (LICENSE)
+
+Base model (Qwen3.5-4B): Apache 2.0 (finetune/NOTICE)
