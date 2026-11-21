@@ -533,4 +533,55 @@ def generate_image(prompt, backend="flux", size=DEFAULT_SIZE,
         if backend == "cloudflare":
             return None, error
 
-    return generate_image_flux(prompt, size, style, seed)
+    url, error = generate_image_flux(prompt, size, style, seed)
+    if url:
+        return url, error
+    # Pollinations started answering 402 (payment required) for every
+    # request from this server in November 2026, which took image
+    # generation - and the drawing step of text-to-3D - down with it.
+    # The free FLUX.1-schnell Space on Hugging Face is the keyless
+    # fallback: the same HF_TOKEN as the 3D models, Apache-2.0 weights.
+    hf_url, hf_error = generate_image_hf_space(prompt, size, style, seed)
+    if hf_url:
+        return hf_url, None
+    return None, hf_error or error
+
+
+# -------------------------------------------------------- Hugging Face
+HF_IMAGE_SPACE = os.environ.get("HF_IMAGE_SPACE", "black-forest-labs/FLUX.1-schnell")
+
+
+def generate_image_hf_space(prompt, size=DEFAULT_SIZE, style=DEFAULT_STYLE, seed=None):
+    """FLUX.1-schnell on its public Hugging Face Space, over gradio_client.
+    Free; shares the account's daily ZeroGPU quota. -> (url, error)."""
+    try:
+        from gradio_client import Client
+    except ImportError:
+        return None, "Image generation is not available right now."
+    width, height = _dimensions(size)
+    full = build_prompt(prompt, style)
+    try:
+        client = Client(HF_IMAGE_SPACE, token=os.environ.get("HF_TOKEN", "").strip() or None,
+                        verbose=False)
+        job = client.submit(full, seed if seed is not None else 0, seed is None,
+                            int(width), int(height), 4, api_name="/infer")
+        result = job.result(timeout=120)
+    except Exception as e:                             # noqa: BLE001
+        low = str(e).lower()
+        if "quota" in low or "zerogpu" in low:
+            return None, "The free image GPU has used up its quota for now. Try again later."
+        return None, "The image service is busy right now. Try again in a moment."
+    image = result[0] if isinstance(result, (list, tuple)) else result
+    path = image.get("path") if isinstance(image, dict) else image
+    if not path or not os.path.exists(path):
+        return None, "The image service returned nothing."
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+    if len(raw) < 1024:
+        return None, "The image service returned an empty image."
+    ext = "webp" if raw[:4] == b"RIFF" else "jpg" if raw[:3] == b"\xff\xd8\xff" else "png"
+    return _save_bytes(raw, ext), None
