@@ -1998,17 +1998,29 @@ def stats_page():
     return render_template("stats.html", s=stats.collect())
 
 
+def _dashboard_data():
+    """The dashboard's figures for ?range=7|30|90|all (all by default)."""
+    rng = (request.args.get("range") or "all").lower()
+    try:
+        pro_price = float(re.sub(r"[^0-9.]", "", PLANS["pro"]["price"].split("/")[0]) or 0)
+    except (KeyError, ValueError):
+        pro_price = 0.0
+    if rng in ("7", "30", "90"):
+        return dashboard.collect(days=int(rng), pro_price=pro_price)
+    return dashboard.collect(pro_price=pro_price)
+
+
 @app.route("/dashboard")
 def dashboard_page():
     """Visitors, money and requests, on one page."""
     _owner_only()
-    return render_template("dashboard.html", d=dashboard.collect())
+    return render_template("dashboard.html", d=_dashboard_data())
 
 
 @app.route("/api/dashboard")
 def dashboard_json():
     _owner_only()
-    return jsonify(dashboard.collect())
+    return jsonify(_dashboard_data())
 
 
 @app.route("/api/stats")
@@ -3243,6 +3255,19 @@ def _paddle_subscription_live(user: dict) -> bool:
                 in paddle_billing.ACTIVE_STATUSES)
 
 
+def _kelviq_payment_is_sample(payment, now=None):
+    """True for an invoice dated more than 7 days from when it arrived."""
+    raw = str(payment.get("created") or "")
+    try:
+        when = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=datetime.timezone.utc)
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    return abs((now - when).total_seconds()) > 7 * 86400
+
+
 def _kelviq_subscription_live(user: dict) -> bool:
     """A Kelviq subscription that is billing, or scheduled to stop."""
     return bool(kelviq_billing.configured()
@@ -3515,6 +3540,14 @@ def kelviq_webhook():
         return jsonify({"received": True, "duplicate": True})
 
     payment = kelviq_billing.parse_payment(payload)
+    # Kelviq's "send test event" button posts a SAMPLE invoice - fixed
+    # id, a date months in the past, $40 - signed exactly like a real
+    # one. It was recorded as income once. A real invoice.paid arrives
+    # within days of being paid (retries included); one dated weeks
+    # before it arrived is a sample, and is acknowledged but not booked.
+    if payment and _kelviq_payment_is_sample(payment):
+        app.logger.info("kelviq: ignoring a sample invoice.paid (%s)", payment.get("txn_id"))
+        payment = None
     if payment:
         payer = USERS.get(payment["user_id"])
         if payment["txn_id"]:

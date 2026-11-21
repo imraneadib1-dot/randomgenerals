@@ -1,16 +1,13 @@
 <!doctype html>
-{# The owner's dashboard: visitors, money, requests.
+{# The owner's dashboard: visitors, users, money, AI, 3D and the box.
 
-   Sibling of stats.html - same shell, same palette, same 404-for-
-   everyone-else gate - but a different question. stats.html describes
-   the product from the database. This one answers "is it working, and
-   is it earning", which needs the two counters stats.py deliberately
-   does not have.
+   Dressed like the app itself (the same neutral matte palette, Inter,
+   the crescent) and following the theme picked in the app - it reads
+   the same localStorage key before first paint.
 
    Charts are CSS bars over a server-computed peak. No chart library:
-   this is thirty numbers, and pulling in a charting bundle to draw
-   thirty bars would be the largest thing on the page by an order of
-   magnitude. #}
+   this is a few hundred numbers, and a charting bundle would be the
+   largest thing on the page by an order of magnitude. #}
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -20,519 +17,431 @@
     <link rel="icon" href="{{ asset('favicon.svg') }}" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400&display=swap"
-      rel="stylesheet"
-    />
-    <link rel="stylesheet" href="{{ asset('landing.css') }}" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("theme") || "system";
+          var dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+          if ((t === "system" ? (dark ? "dark" : "light") : t) === "light") {
+            document.documentElement.setAttribute("data-theme", "light");
+          }
+        } catch (e) { /* the dark default is fine */ }
+      })();
+    </script>
     <style>
-      .dash { max-width: 1080px; margin: 0 auto; padding: 32px 24px 96px; }
-      .dash h1 { font-family: Sora, system-ui, sans-serif; margin: 0 0 4px; }
-      .dash-sub { color: var(--text-faint); font-size: 14px; margin: 0 0 26px; }
-      .dash-nav { margin-bottom: 20px; font-size: 13px; }
-      .dash-nav a { color: var(--text-faint); margin-right: 16px; }
+      :root {
+        --bg: #181818; --side: #111111; --card: #1f1f1f; --card-2: #262626;
+        --line: rgba(255,255,255,.08); --line-2: rgba(255,255,255,.14);
+        --ink: #f4f4f5; --ink-2: #a1a1aa; --ink-3: #8b8b93;
+        --bar: #d4d4d8; --bar-2: #71717a; --bar-0: rgba(255,255,255,.06);
+        --good: #4ade80; --bad: #f87171; --warn: #fbbf24;
+        --good-bg: rgba(74,222,128,.08); --bad-bg: rgba(248,113,113,.08); --warn-bg: rgba(251,191,36,.08);
+        --primary: #f4f4f5; --on-primary: #09090b;
+        color-scheme: dark;
+      }
+      :root[data-theme="light"] {
+        --bg: #fafafa; --side: #f4f4f5; --card: #ffffff; --card-2: #f4f4f5;
+        --line: rgba(0,0,0,.08); --line-2: rgba(0,0,0,.14);
+        --ink: #18181b; --ink-2: #52525b; --ink-3: #71717a;
+        --bar: #3f3f46; --bar-2: #a1a1aa; --bar-0: rgba(0,0,0,.06);
+        --good: #16a34a; --bad: #dc2626; --warn: #b45309;
+        --good-bg: rgba(22,163,74,.07); --bad-bg: rgba(220,38,38,.07); --warn-bg: rgba(180,83,9,.08);
+        --primary: #18181b; --on-primary: #fafafa;
+        color-scheme: light;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; background: var(--bg); color: var(--ink); }
+      body { font: 14px/1.55 Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+      a { color: inherit; }
+      code { font-family: "JetBrains Mono", monospace; font-size: 12px; background: var(--card-2);
+             padding: 1px 5px; border-radius: 5px; }
 
-      .banner {
-        border-radius: 12px; padding: 14px 18px; margin: 0 0 28px;
-        font-size: 14px; line-height: 1.6; border: 1px solid var(--line);
-      }
-      .banner.bad {
-        border-color: rgba(220, 120, 90, .45);
-        background: rgba(220, 120, 90, .08);
-      }
-      .banner.good {
-        border-color: rgba(120, 190, 140, .35);
-        background: rgba(120, 190, 140, .07);
-      }
-      .banner strong { color: var(--text); }
+      .top { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent);
+             backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+      .top-in { max-width: 1180px; margin: 0 auto; padding: 12px 20px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+      .brand { display: flex; align-items: center; gap: 9px; font-weight: 600; letter-spacing: -.01em; text-decoration: none; }
+      .brand svg { width: 22px; height: 22px; color: var(--ink); }
+      .brand small { color: var(--ink-3); font-weight: 500; }
+      .range { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); margin-left: auto; }
+      .range a { padding: 5px 11px; border-radius: 7px; text-decoration: none; color: var(--ink-2); font-size: 13px; font-weight: 500; }
+      .range a.on { background: var(--card-2); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-2); }
+      .top-links { display: flex; gap: 14px; font-size: 13px; }
+      .top-links a { color: var(--ink-3); text-decoration: none; }
+      .top-links a:hover { color: var(--ink); }
 
-      .stat-grid {
-        display: grid; gap: 14px; margin-bottom: 10px;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      }
-      .stat {
-        border: 1px solid var(--line); border-radius: 14px;
-        padding: 16px 18px; background: var(--ink-1);
-      }
-      .stat-label {
-        font-size: 11px; letter-spacing: .09em; text-transform: uppercase;
-        color: var(--text-faint); margin-bottom: 8px;
-      }
-      .stat-value {
-        font-family: Sora, system-ui, sans-serif; font-size: 30px;
-        font-weight: 700; color: var(--accent-ink); line-height: 1;
-        word-break: break-word;
-      }
-      .stat-note { font-size: 12px; color: var(--text-soft); margin-top: 7px; }
+      main { max-width: 1180px; margin: 0 auto; padding: 22px 20px 80px; }
+      .sub { color: var(--ink-3); font-size: 13px; margin: 0 0 18px; }
+      .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 18px; }
+      .tabs a { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-2);
+                text-decoration: none; font-size: 13px; background: var(--card); }
+      .tabs a:hover { color: var(--ink); border-color: var(--line-2); }
 
-      .dash h2 {
-        font-family: Sora, system-ui, sans-serif; font-size: 17px;
-        margin: 36px 0 12px; color: var(--text);
-      }
-      .dash h2 span { color: var(--text-faint); font-weight: 400;
-        font-size: 13px; font-family: Inter, system-ui, sans-serif; }
+      .banner { border-radius: 12px; padding: 12px 16px; margin: 0 0 14px; font-size: 13.5px; border: 1px solid var(--line); background: var(--card); }
+      .banner.bad { border-color: color-mix(in srgb, var(--bad) 40%, transparent); background: var(--bad-bg); }
+      .banner.good { border-color: color-mix(in srgb, var(--good) 35%, transparent); background: var(--good-bg); }
+      .banner.warn { border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-bg); }
+      .banner strong { color: var(--ink); }
 
-      .spark {
-        display: flex; align-items: flex-end; gap: 2px; height: 92px;
-        border: 1px solid var(--line); border-radius: 12px;
-        padding: 10px; background: var(--ink-1);
-      }
-      .spark span {
-        flex: 1; background: var(--accent); border-radius: 2px 2px 0 0;
-        min-height: 2px; opacity: .85;
-      }
-      .spark span.zero { background: var(--ink-3); opacity: .45; }
-      /* A day BEFORE counting existed. Visually distinct from a counted
-         day that happened to be quiet, because those mean opposite
-         things and a flat bar cannot say which it is. */
-      .spark span.blank {
-        background: repeating-linear-gradient(
-          45deg, var(--ink-2), var(--ink-2) 2px,
-          transparent 2px, transparent 4px);
-        opacity: .5;
-        min-height: 100%;
-      }
-      /* A column split in two: returning people at the bottom, new
-         ones stacked on top. The column's HEIGHT is still the day's
-         total, so the chart reads as "how many" first and "who" second
-         - two separate charts would have made the comparison a memory
-         test. Only bars with data get this class; a quiet day and an
-         uncounted one keep the flat and hatched treatments above,
-         because those distinctions matter more than the split does. */
-      .spark span.col {
-        background: none; opacity: 1; display: flex;
-        flex-direction: column; overflow: hidden;
-      }
-      .spark span.col i { display: block; width: 100%; }
-      .spark span.col i.new { background: var(--accent-ink); }
-      .spark span.col i.ret { background: var(--accent); }
-      .key {
-        display: inline-block; width: 9px; height: 9px; border-radius: 2px;
-        margin: 0 5px 0 12px; vertical-align: baseline;
-      }
-      .key.new { background: var(--accent-ink); }
-      .key.ret { background: var(--accent); }
-      .spark-axis .legend .key:first-child { margin-left: 0; }
+      .kpis { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(138px, 1fr)); margin-bottom: 26px; }
+      .kpi { border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; background: var(--card); }
+      .kpi-label { font-size: 12px; color: var(--ink-3); margin-bottom: 6px; display: flex; justify-content: space-between; gap: 6px; }
+      .kpi-value { font-size: 26px; font-weight: 600; letter-spacing: -.02em; line-height: 1.1; word-break: break-word; }
+      .kpi-note { font-size: 12px; color: var(--ink-2); margin-top: 6px; }
+      .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; background: var(--ink-3); vertical-align: middle; }
+      .dot.good { background: var(--good); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
 
-      .note {
-        font-size: 12px; color: var(--text-faint); margin: 8px 0 0;
-        line-height: 1.6;
-      }
-      .spark-axis {
-        display: flex; justify-content: space-between; font-size: 11px;
-        color: var(--text-faint); margin-top: 6px;
-      }
+      section { scroll-margin-top: 70px; }
+      h2 { font-size: 15px; font-weight: 600; margin: 30px 0 12px; letter-spacing: -.01em; display: flex; align-items: baseline; gap: 8px; }
+      h2 span { color: var(--ink-3); font-weight: 400; font-size: 13px; }
+      .grid2 { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+      .charts { display: grid; gap: 18px 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      @media (max-width: 760px) { .charts { grid-template-columns: 1fr; } }
+      .panel { border: 1px solid var(--line); border-radius: 14px; background: var(--card); padding: 14px 16px; min-width: 0; }
+      .panel h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
 
-      .bars { display: grid; gap: 9px; }
-      .bar-row {
-        display: grid; grid-template-columns: 200px 1fr 62px;
-        align-items: center; gap: 12px; font-size: 13px;
-      }
-      .bar-name { color: var(--text-soft); overflow: hidden;
-        text-overflow: ellipsis; white-space: nowrap;
-        font-family: 'JetBrains Mono', monospace; font-size: 12px; }
-      .bar-track {
-        background: var(--ink-2); border-radius: 999px; height: 9px;
-        overflow: hidden;
-      }
-      .bar-fill { background: var(--accent); height: 100%;
-        border-radius: 999px; }
-      .bar-num { text-align: right; color: var(--text);
-        font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+      .spark { display: flex; align-items: flex-end; gap: 2px; height: 110px; border: 1px solid var(--line); border-radius: 12px; padding: 10px; background: var(--card); }
+      .spark span { flex: 1; background: var(--bar); border-radius: 3px 3px 0 0; min-height: 2px; opacity: .9; display: flex; flex-direction: column-reverse; overflow: hidden; }
+      .spark span:hover { opacity: 1; filter: brightness(1.15); }
+      .spark span.zero { background: var(--bar-0); opacity: 1; }
+      .spark span.blank { background: repeating-linear-gradient(45deg, var(--bar-0), var(--bar-0) 2px, transparent 2px, transparent 6px); opacity: 1; }
+      .spark span.col { background: transparent; }
+      .spark span.col i { display: block; min-height: 1px; }
+      .spark i.new { background: var(--bar); } .spark i.ret { background: var(--bar-2); }
+      .axis { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--ink-3); margin: 6px 2px 0; font-family: "JetBrains Mono", monospace; }
+      .key { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin: 0 4px 0 10px; vertical-align: -1px; }
+      .key.new { background: var(--bar); } .key.ret { background: var(--bar-2); }
 
-      table.money {
-        width: 100%; border-collapse: collapse; font-size: 13px;
-        border: 1px solid var(--line); border-radius: 12px;
-        overflow: hidden;
-      }
-      table.money th, table.money td {
-        padding: 10px 14px; text-align: right;
-        border-bottom: 1px solid var(--line);
-      }
-      table.money th:first-child, table.money td:first-child {
-        text-align: left;
-      }
-      table.money th {
-        font-size: 11px; letter-spacing: .07em; text-transform: uppercase;
-        color: var(--text-faint); font-weight: 500; background: var(--ink-1);
-      }
-      table.money tr:last-child td { border-bottom: none; }
-      table.money td { color: var(--text-soft);
-        font-family: 'JetBrains Mono', monospace; }
-      table.money td.earn { color: var(--accent-ink); }
+      .meter { height: 8px; border-radius: 999px; background: var(--bar-0); overflow: hidden; margin: 6px 0 4px; }
+      .meter i { display: block; height: 100%; background: var(--bar); border-radius: 999px; }
+      .meter.hot i { background: var(--warn); } .meter.full i { background: var(--bad); }
+      .row { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+      .row:last-child { border-bottom: 0; }
+      .row span:first-child { color: var(--ink-2); }
+      .row span:last-child { font-variant-numeric: tabular-nums; text-align: right; }
+      .split { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--bar-0); margin: 8px 0; }
+      .split i { display: block; height: 100%; }
 
-      .empty {
-        border: 1px dashed var(--line); border-radius: 12px;
-        padding: 18px; color: var(--text-faint); font-size: 13px;
-        line-height: 1.6;
-      }
-      .caveat {
-        border-left: 2px solid var(--accent); padding: 2px 0 2px 14px;
-        color: var(--text-soft); font-size: 13px; margin: 36px 0 0;
-        line-height: 1.6;
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th { text-align: left; font-weight: 500; color: var(--ink-3); font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+      td { padding: 7px 8px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+      tr:last-child td { border-bottom: 0; }
+      td.earn { font-weight: 600; }
+      .pill { font-size: 11.5px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--ink-2); }
+      .pill.pro { color: var(--ink); background: var(--card-2); }
+      .pill.good { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, transparent); }
+      .pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+      .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+      .bars .bar-row { display: grid; grid-template-columns: minmax(0, 1.2fr) 2fr 56px; gap: 10px; align-items: center; padding: 4px 0; font-size: 13px; }
+      .bar-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--ink-2); }
+      .bar-track { height: 8px; background: var(--bar-0); border-radius: 999px; overflow: hidden; }
+      .bar-fill { height: 100%; background: var(--bar); border-radius: 999px; }
+      .bar-num { text-align: right; font-variant-numeric: tabular-nums; }
+      .empty, .note { color: var(--ink-3); font-size: 13px; margin: 8px 0 0; }
+      .caveat { color: var(--ink-3); font-size: 12.5px; line-height: 1.65; margin-top: 34px; border-top: 1px solid var(--line); padding-top: 16px; }
+      .muted { color: var(--ink-3); }
+      .scroll-x { overflow-x: auto; }
+      @media (max-width: 640px) {
+        .range { margin-left: 0; }
+        .kpi-value { font-size: 22px; }
+        .grid2 { grid-template-columns: 1fr; }
+        .bars .bar-row { grid-template-columns: minmax(0,1fr) 1fr 44px; }
       }
     </style>
   </head>
-  <body class="legal-page">
-    <main class="dash">
-      <p class="dash-nav">
-        <a href="/">← randomgenerals.com</a>
-        <a href="/stats">product stats →</a>
-      </p>
-      <h1>Dashboard</h1>
-      <p class="dash-sub">
-        {% if d.launch %}
-          Everything since launch — {{ d.launch }} to today,
-          {{ d.days }} day{{ '' if d.days == 1 else 's' }}{% if
-            d.bucket == 'week' %}, shown by week{% endif %}.
-        {% else %}
-          No activity recorded yet.
-        {% endif %}
-        · Generated {{ d.generated }} · UTC
-      </p>
+  <body>
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <symbol id="mark" viewBox="0 0 200 200"><path fill="currentColor" fill-rule="evenodd" d="M57.89 27.97 L66.47 26.75 L75.14 26.55 L83.78 27.37 L92.25 29.20 L100.46 32.02 L108.27 35.79 L115.58 40.45 L122.30 45.94 L128.32 52.18 L133.56 59.09 L137.96 66.57 L141.44 74.51 L143.96 82.81 L145.49 91.34 L146.00 100.00 L145.49 108.66 L143.96 117.19 L141.44 125.49 L137.96 133.43 L133.56 140.91 L128.32 147.82 L122.30 154.06 L115.58 159.55 L108.27 164.21 L100.46 167.98 L92.25 170.80 L83.78 172.63 L75.14 173.45 L66.47 173.25 L57.89 172.03 L62.74 170.81 L69.05 168.67 L75.15 165.97 L80.98 162.73 L86.49 158.98 L91.64 154.74 L96.39 150.06 L100.69 144.97 L104.52 139.50 L107.83 133.72 L110.61 127.66 L112.83 121.37 L114.48 114.91 L115.53 108.32 L115.98 101.67 L115.83 95.00 L115.08 88.37 L113.73 81.84 L111.80 75.46 L109.29 69.28 L106.24 63.35 L102.67 57.72 L98.60 52.44 L94.07 47.54 L89.12 43.08 L83.78 39.08 L78.10 35.58 L72.13 32.61 L65.92 30.19 L59.51 28.34 L57.89 27.97Z M101.75 42.52 L105.89 44.81 L109.84 47.41 L113.59 50.29 L117.13 53.43 L120.42 56.83 L123.45 60.45 L126.21 64.29 L128.69 68.32 L130.86 72.53 L132.71 76.88 L134.24 81.35 L135.45 85.92 L136.31 90.57 L136.83 95.27 L137.00 100.00 L136.83 104.73 L136.31 109.43 L135.45 114.08 L134.24 118.65 L132.71 123.12 L130.86 127.47 L128.69 131.68 L126.21 135.71 L123.45 139.55 L120.42 143.17 L117.13 146.57 L113.59 149.71 L109.84 152.59 L105.89 155.19 L101.75 157.48 L103.92 155.16 L106.66 151.93 L109.24 148.56 L111.64 145.07 L113.86 141.46 L115.88 137.74 L117.72 133.93 L119.36 130.02 L120.80 126.03 L122.03 121.98 L123.05 117.87 L123.86 113.71 L124.45 109.51 L124.83 105.29 L124.99 101.06 L124.94 96.82 L124.67 92.59 L124.18 88.39 L123.48 84.21 L122.56 80.07 L121.44 75.99 L120.10 71.97 L118.57 68.02 L116.83 64.15 L114.89 60.38 L112.77 56.72 L110.46 53.17 L107.97 49.74 L105.31 46.44 L102.49 43.28 L101.75 42.52Z" /></symbol>
+    </svg>
 
-      {# The first thing on the page, because a revenue chart reading
-         zero looks the same whether nobody wanted to pay or nobody was
-         able to. This site spent time in the second state. #}
-      {% if d.money.health.ok %}
-        <p class="banner good">
-          <strong>Payments are live.</strong>
-          {{ d.money.health.detail }}
-        </p>
-      {% else %}
-        <p class="banner bad">
-          <strong>Payments cannot be taken right now.</strong>
-          {{ d.money.health.detail }}
-        </p>
-      {% endif %}
-
-      <div class="stat-grid">
-        <div class="stat">
-          <div class="stat-label">Visitors today</div>
-          <div class="stat-value">{{ d.visitors.today }}</div>
-          <div class="stat-note">
-            {{ '{:,}'.format(d.visitors.views_today) }} page views today
-          </div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">Users today</div>
-          <div class="stat-value">{{ d.users.today }}</div>
-          <div class="stat-note">
-            {% if d.users.today %}
-              {{ d.users.new_today }} new,
-              {{ d.users.returning_today }} back again ·
-              {{ d.users.signed_in_today }} signed in
-            {% else %}
-              nobody has come back with a cookie today
-            {% endif %}
-          </div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">Active this week</div>
-          <div class="stat-value">{{ '{:,}'.format(d.users.active_7) }}</div>
-          <div class="stat-note">
-            people, not visits ·
-            {{ '{:,}'.format(d.users.active_30) }} in the last 30 days
-          </div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">Visitors, all time</div>
-          <div class="stat-value">
-            {{ '{:,}'.format(d.visitors.all_time.total) }}
-          </div>
-          <div class="stat-note">
-            distinct browsers ·
-            {{ '{:,}'.format(d.visitors.all_time.registered) }} signed up,
-            {{ '{:,}'.format(d.visitors.all_time.guests) }} never did
-          </div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">Page views, all time</div>
-          <div class="stat-value">
-            {{ '{:,}'.format(d.visitors.views_total) }}
-          </div>
-          <div class="stat-note">
-            {{ '{:,}'.format(d.visitors.window_views) }} since launch
-          </div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">Earned</div>
-          <div class="stat-value">{{ d.money.headline }}</div>
-          <div class="stat-note">
-            after Paddle's fees · {{ d.money.payments }} payment{{
-              '' if d.money.payments == 1 else 's' }}
-          </div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">Subscribers</div>
-          <div class="stat-value">{{ d.money.subscribers }}</div>
-          <div class="stat-note">active in Paddle</div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">AI requests</div>
-          <div class="stat-value">{{ '{:,}'.format(d.requests.total) }}</div>
-          <div class="stat-note">
-            {{ '{:,}'.format(d.requests.today) }} today
-          </div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">Credits spent</div>
-          <div class="stat-value">
-            {{ '{:,}'.format(d.requests.credits) }}
-          </div>
-          <div class="stat-note">across every account</div>
-        </div>
-      </div>
-
-      <h2>Page views <span>· since launch</span></h2>
+    {% macro spark(series, key, peak, label) -%}
       <div class="spark">
-        {% for row in d.visitors.series %}
-          <span
-            class="{{ 'blank' if not row.counted else ('zero' if not row.views) }}"
-            style="height: {{ 100 if not row.counted else (100 * row.views / d.visitors.peak_views)|round(1) }}%"
-            title="{% if not row.counted %}{{ row.day }} — not counted yet{% else %}{{ row.day }} — {{ row.views }} views, {{ row.visitors }} visitors{% endif %}"
-          ></span>
-        {% endfor %}
-      </div>
-      <div class="spark-axis">
-        <span>{{ d.visitors.series[0].day }}</span>
-        <span>peak {{ d.visitors.peak_views }}</span>
-        <span>{{ d.visitors.series[-1].day }}</span>
-      </div>
-      {% if d.visitors.counted_days < d.days %}
-        <p class="note">
-          The hatched bars are before {{ d.visits_began }}, when visit
-          counting was added. The app was running then — nobody was
-          counting. Only {{ d.visitors.counted_days }} of {{ d.days }}
-          {{ 'weeks' if d.bucket == 'week' else 'days' }} have visitor
-          data behind them, and drawing the rest as zero would say
-          nobody came rather than nobody looked.
-        </p>
-      {% endif %}
-
-      <h2>Distinct visitors <span>· since launch</span></h2>
-      <div class="spark">
-        {% for row in d.visitors.series %}
-          <span
-            class="{{ 'blank' if not row.counted else ('zero' if not row.visitors) }}"
-            style="height: {{ 100 if not row.counted else (100 * row.visitors / d.visitors.peak_visitors)|round(1) }}%"
-            title="{% if not row.counted %}{{ row.day }} — not counted yet{% else %}{{ row.day }} — {{ row.visitors }} visitors{% endif %}"
-          ></span>
-        {% endfor %}
-      </div>
-      <div class="spark-axis">
-        <span>{{ d.visitors.series[0].day }}</span>
-        <span>peak {{ d.visitors.peak_visitors }}</span>
-        <span>{{ d.visitors.series[-1].day }}</span>
-      </div>
-
-      <h2>Daily users
-        <span>· real people, new and returning</span></h2>
-      <div class="spark">
-        {% for row in d.users.series %}
-          {% if not row.counted %}
-            <span class="blank" style="height: 100%"
-              title="{{ row.day }} — not counted yet"></span>
-          {% elif not row.users %}
-            <span class="zero" style="height: 0%"
-              title="{{ row.day }} — nobody"></span>
+        {% for row in series %}
+          {% set v = row[key] %}
+          {% if row.counted is defined and not row.counted %}
+            <span class="blank" style="height:100%" title="{{ row.day }} — not counted yet"></span>
           {% else %}
-            <span class="col"
-              style="height: {{ (100 * row.users / d.users.peak)|round(1) }}%"
-              title="{{ row.day }} — {{ row.users }} user{{ '' if row.users == 1 else 's' }}: {{ row.new }} new, {{ row.returning }} returning · {{ row.signed_in }} signed in"
-            ><i class="new" style="flex: {{ row.new }} 0 0"></i
-            ><i class="ret" style="flex: {{ row.returning }} 0 0"></i
-            ></span>
+            <span class="{{ 'zero' if not v }}" style="height: {{ (100 * v / peak)|round(1) if v else 0 }}%"
+                  title="{{ row.day }} — {{ v }} {{ label }}"></span>
           {% endif %}
         {% endfor %}
       </div>
-      <div class="spark-axis">
-        <span>{{ d.users.series[0].day }}</span>
-        <span class="legend">
-          <i class="key new"></i>new<i class="key ret"></i>returning ·
-          peak {{ d.users.peak }}{% if d.users.average %} · average
-          {{ d.users.average }} a {{ 'week' if d.bucket == 'week' else 'day'
-          }}{% endif %}
-        </span>
-        <span>{{ d.users.series[-1].day }}</span>
+      <div class="axis">
+        <span>{{ series[0].day if series else '' }}</span>
+        <span>peak {{ peak if peak > 1 or (series and series|map(attribute=key)|max) else 0 }}</span>
+        <span>{{ series[-1].day if series else '' }}</span>
       </div>
-      {% if d.users.began %}
-        <p class="note">
-          A <strong>user</strong> here is one person, counted once a
-          {{ 'week' if d.bucket == 'week' else 'day' }} however many
-          pages they open — the same identity the app already keeps in
-          the session cookie to hold your credits and your threads, so
-          somebody who came yesterday and comes again today is one
-          person twice and not two people. That is the difference
-          between this chart and the visitor chart above it, whose hash
-          is thrown away every night and cannot tell those two apart.
-          {% if d.bucket == 'week' %}
-            Weeks count distinct people per week, so they are smaller
-            than their days added up — a regular reader is one user a
-            week, not seven.
-          {% endif %}
-          Counting started {{ d.users.began }}, and someone's very first
-          page load lands as a visitor rather than a user: they are
-          counted from the moment they come back with the cookie they
-          were given, which is what keeps cookie-less crawlers from
-          arriving here as a new person per page.
-        </p>
+    {%- endmacro %}
+
+    <header class="top">
+      <div class="top-in">
+        <a class="brand" href="/app"><svg><use href="#mark"></use></svg>RandomGenerals <small>Dashboard</small></a>
+        <nav class="range" aria-label="Range">
+          {% for key, label in [("7", "7 days"), ("30", "30 days"), ("90", "90 days"), ("all", "All time")] %}
+            <a href="?range={{ key }}" class="{{ 'on' if d.range == key or (key == 'all' and d.range not in ['7','30','90']) }}">{{ label }}</a>
+          {% endfor %}
+        </nav>
+        <div class="top-links"><a href="/stats">Stats</a><a href="/api/dashboard{{ '?range=' ~ d.range if d.range in ['7','30','90'] else '' }}">JSON</a><a href="/app">Back to app</a></div>
+      </div>
+    </header>
+
+    <main>
+      <p class="sub">
+        {% if d.range in ['7','30','90'] %}Last {{ d.range }} days{% else %}Since launch ({{ d.launch }}){% endif %}
+        · updated {{ d.generated[11:16] }} UTC · up {{ d.system.uptime_hours }} h
+      </p>
+
+      <nav class="tabs" aria-label="Sections">
+        <a href="#people">People</a><a href="#money">Money</a><a href="#ai">AI</a>
+        <a href="#models3d">3D models</a><a href="#system">System</a>
+      </nav>
+
+      {% set h = d.money.health %}
+      {% if h.ok %}
+        <div class="banner good"><span class="dot good"></span> <strong>Payments are live</strong> — {{ h.detail }}</div>
       {% else %}
-        <p class="note">
-          Nothing counted yet. Daily users start being recorded the
-          first time a browser comes back with the session cookie it was
-          given — the numbers above this line are still live in the
-          meantime.
-        </p>
+        <div class="banner bad"><span class="dot bad"></span> <strong>Payments can't come in right now</strong> — {{ h.detail }}</div>
+      {% endif %}
+      {% if d.models3d.engine.resting %}
+        <div class="banner warn"><span class="dot warn"></span> <strong>relo 1.0 is resting</strong> — {{ d.models3d.engine.message }}</div>
       {% endif %}
 
-      <h2>Most visited pages <span>· since launch</span></h2>
-      {% if d.visitors.top_pages %}
-        <div class="bars">
-          {% for page in d.visitors.top_pages %}
-            <div class="bar-row">
-              <div class="bar-name" title="{{ page.path }}">{{ page.path }}</div>
-              <div class="bar-track">
-                <div
-                  class="bar-fill"
-                  style="width: {{ (100 * page.views / d.visitors.top_pages[0].views)|round(1) }}%"
-                ></div>
-              </div>
-              <div class="bar-num">{{ '{:,}'.format(page.views) }}</div>
+      <div class="kpis">
+        <div class="kpi"><div class="kpi-label">Visitors today</div>
+          <div class="kpi-value">{{ '{:,}'.format(d.visitors.today) }}</div>
+          <div class="kpi-note">{{ '{:,}'.format(d.visitors.views_today) }} page views</div></div>
+        <div class="kpi"><div class="kpi-label">Users today</div>
+          <div class="kpi-value">{{ '{:,}'.format(d.users.today) }}</div>
+          <div class="kpi-note">{{ d.users.new_today }} new · {{ d.users.returning_today }} returning · {{ d.users.active_7 }} this week</div></div>
+        <div class="kpi"><div class="kpi-label">Accounts</div>
+          <div class="kpi-value">{{ '{:,}'.format(d.accounts.total) }}</div>
+          <div class="kpi-note">+{{ d.accounts.signups_today }} today · +{{ d.accounts.signups_window }} in range</div></div>
+        <div class="kpi"><div class="kpi-label">Pro subscribers</div>
+          <div class="kpi-value">{{ d.accounts.paying }}</div>
+          <div class="kpi-note">≈ {{ d.accounts.mrr_text }}/month at {{ d.accounts.pro_price_text }}</div></div>
+        <div class="kpi"><div class="kpi-label">Earned</div>
+          <div class="kpi-value">{{ d.money.headline }}</div>
+          <div class="kpi-note">{{ d.money.payments }} payment{{ '' if d.money.payments == 1 else 's' }} recorded</div></div>
+        <div class="kpi"><div class="kpi-label">AI requests</div>
+          <div class="kpi-value">{{ '{:,}'.format(d.requests.today) }}</div>
+          <div class="kpi-note">today · {{ '{:,}'.format(d.requests.total) }} all time</div></div>
+        <div class="kpi"><div class="kpi-label">3D models <span class="dot {{ 'warn' if d.models3d.engine.resting else ('good' if d.models3d.engine.available else '') }}"></span></div>
+          <div class="kpi-value">{{ d.models3d.today }}</div>
+          <div class="kpi-note">today · {{ d.models3d.total }} all time</div></div>
+      </div>
+
+      <section id="people">
+        <h2>People <span>· who came, who stayed, who signed up</span></h2>
+        <div class="charts">
+          <div>
+            <div class="panel" style="padding:0;border:0;background:none">
+              <h3>Page views</h3>
+              {{ spark(d.visitors.series, 'views', d.visitors.peak_views, 'views') }}
             </div>
-          {% endfor %}
+          </div>
+          <div>
+            <div class="panel" style="padding:0;border:0;background:none">
+              <h3>Daily users <span class="muted" style="font-weight:400"><i class="key new"></i>new<i class="key ret"></i>returning</span></h3>
+              <div class="spark">
+                {% for row in d.users.series %}
+                  {% if not row.counted %}
+                    <span class="blank" style="height:100%" title="{{ row.day }} — not counted yet"></span>
+                  {% elif not row.users %}
+                    <span class="zero" style="height:100%" title="{{ row.day }} — nobody"></span>
+                  {% else %}
+                    <span class="col" style="height: {{ (100 * row.users / d.users.peak)|round(1) }}%"
+                      title="{{ row.day }} — {{ row.users }} user{{ '' if row.users == 1 else 's' }}: {{ row.new }} new, {{ row.returning }} returning, {{ row.signed_in }} signed in"
+                    ><i class="new" style="flex: {{ row.new }} 0 0"></i><i class="ret" style="flex: {{ row.returning }} 0 0"></i></span>
+                  {% endif %}
+                {% endfor %}
+              </div>
+              <div class="axis"><span>{{ d.users.series[0].day }}</span><span>peak {{ d.users.peak }}{% if d.users.average %} · avg {{ d.users.average }}{% endif %}</span><span>{{ d.users.series[-1].day }}</span></div>
+              {% if not d.users.began %}
+                <p class="note">Nothing counted yet. Daily users are recorded from the first time a browser comes back with the session cookie it was given.</p>
+              {% endif %}
+            </div>
+          </div>
+          <div>
+            <div class="panel" style="padding:0;border:0;background:none">
+              <h3>New accounts</h3>
+              {{ spark(d.accounts.series, 'value', d.accounts.peak, 'signups') }}
+            </div>
+          </div>
+          <div>
+            <div class="panel" style="padding:0;border:0;background:none">
+              <h3>Distinct visitors</h3>
+              {{ spark(d.visitors.series, 'visitors', d.visitors.peak_visitors, 'visitors') }}
+            </div>
+          </div>
         </div>
-      {% else %}
-        <p class="empty">
-          No page views recorded yet. Counting started when this dashboard
-          was deployed — there is no history before that, because nothing
-          was being written down.
-        </p>
-      {% endif %}
 
-      <h2>AI requests <span>· since launch</span></h2>
-      <div class="spark">
-        {% for row in d.requests.series %}
-          <span
-            class="{{ 'zero' if not row.messages }}"
-            style="height: {{ (100 * row.messages / d.requests.peak)|round(1) }}%"
-            title="{{ row.day }} — {{ row.messages }} requests, {{ row.credits }} credits"
-          ></span>
-        {% endfor %}
-      </div>
-      <div class="spark-axis">
-        <span>{{ d.requests.series[0].day }}</span>
-        <span>peak {{ d.requests.peak }}</span>
-        <span>{{ d.requests.series[-1].day }}</span>
-      </div>
+        <div class="grid2" style="margin-top:14px">
+          <div class="panel">
+            <h3>Plans</h3>
+            {% set tot = d.accounts.total or 1 %}
+            <div class="split">
+              <i style="width: {{ (100 * d.accounts.pro / tot)|round(1) }}%; background: var(--bar)"></i>
+              <i style="width: {{ (100 * d.accounts.free / tot)|round(1) }}%; background: var(--bar-2)"></i>
+            </div>
+            <div class="row"><span>Free</span><span>{{ '{:,}'.format(d.accounts.free) }}</span></div>
+            <div class="row"><span>Pro</span><span>{{ '{:,}'.format(d.accounts.pro) }} ({{ d.accounts.conversion }}%)</span></div>
+            <div class="row"><span>Paying now</span><span>{{ d.accounts.paying }}</span></div>
+            <div class="row"><span>Monthly income, estimated</span><span>{{ d.accounts.mrr_text }}</span></div>
+            <div class="row"><span>Active this week · this month</span><span>{{ d.users.active_7 }} · {{ d.users.active_30 }}</span></div>
+            <div class="row"><span>Distinct browsers, all time</span><span>{{ '{:,}'.format(d.visitors.all_time.total) }}</span></div>
+          </div>
+          <div class="panel">
+            <h3>Newest accounts</h3>
+            {% if d.accounts.recent %}
+              <table>
+                {% for u in d.accounts.recent %}
+                  <tr><td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ u.email }}</td>
+                      <td><span class="pill {{ 'pro' if u.plan == 'pro' }}">{{ u.plan }}</span></td>
+                      <td class="muted" style="text-align:right;white-space:nowrap">{{ u.created[:10] }}</td></tr>
+                {% endfor %}
+              </table>
+            {% else %}<p class="empty">No accounts yet.</p>{% endif %}
+          </div>
+          <div class="panel">
+            <h3>Most visited pages</h3>
+            {% if d.visitors.top_pages %}
+              <div class="bars">
+                {% for page in d.visitors.top_pages[:8] %}
+                  <div class="bar-row"><div class="bar-name" title="{{ page.path }}">{{ page.path }}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width: {{ (100 * page.views / d.visitors.top_pages[0].views)|round(1) }}%"></div></div>
+                    <div class="bar-num">{{ '{:,}'.format(page.views) }}</div></div>
+                {% endfor %}
+              </div>
+            {% else %}<p class="empty">No page views recorded yet.</p>{% endif %}
+          </div>
+        </div>
+      </section>
 
-      <h2>Channels <span>· last 24 hours</span></h2>
-      {% if d.channels %}
-        <table class="money">
-          <tr>
-            <th>Model</th><th>Replies</th><th>Failed</th>
-            <th>First token</th><th>Whole reply</th><th>Speed</th><th>Now</th>
-          </tr>
-          {% for c in d.channels %}
-            <tr>
-              <td>{{ c.provider }} · {{ c.model.split('/')[-1] }}</td>
-              <td>{{ c.replies }}</td>
-              <td>{{ c.failures }}{% if c.failures %} ({{ (c.failure_rate * 100)|round|int }}%){% endif %}</td>
-              <td>{% if c.ttft_p50 is not none %}{{ c.ttft_p50 }}s{% else %}—{% endif %}</td>
-              <td>{% if c.total_p50 is not none %}{{ c.total_p50 }}s{% else %}—{% endif %}</td>
-              <td>{% if c.tokens_per_s %}{{ c.tokens_per_s }} tok/s{% else %}—{% endif %}</td>
-              <td>{% if c.now.failing %}failing — demoted{% elif c.now.slow %}slow — demoted{% else %}fine{% endif %}</td>
-            </tr>
-          {% endfor %}
-        </table>
-      {% else %}
-        <p class="empty">
-          Nothing yet. Every reply from now on records which channel
-          answered and how fast, and the router uses the last ten
-          minutes of it to route around a channel that is failing.
-        </p>
-      {% endif %}
+      <section id="money">
+        <h2>Money <span>· {{ h.provider or 'Paddle' }}{% if h.environment %} ({{ h.environment }}){% endif %}</span></h2>
+        <div class="grid2">
+          <div class="panel">
+            <h3>Earned, by currency</h3>
+            {% if d.money.by_currency %}
+              <table>
+                <tr><th>Currency</th><th>Payments</th><th>Charged</th><th>Fee</th><th>You earned</th></tr>
+                {% for row in d.money.by_currency %}
+                  <tr><td>{{ row.currency }}</td><td>{{ row.payments }}</td><td>{{ row.gross_text }}</td>
+                      <td class="muted">−{{ row.fee_text }}</td><td class="earn">{{ row.earnings_text }}</td></tr>
+                {% endfor %}
+              </table>
+            {% else %}<p class="empty">No payments yet. Each one lands here from the payment webhook the moment it clears.</p>{% endif %}
+          </div>
+          <div class="panel">
+            <h3>Recent payments</h3>
+            {% if d.money.recent %}
+              <table>
+                <tr><th>Date</th><th>Who</th><th>Earned</th></tr>
+                {% for p in d.money.recent %}
+                  <tr><td>{{ p.day }}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.email or '—' }}</td><td class="earn">{{ p.earnings_text }}</td></tr>
+                {% endfor %}
+              </table>
+            {% else %}<p class="empty">Nothing yet.</p>{% endif %}
+          </div>
+        </div>
+        <div class="panel" style="padding:0;border:0;background:none;margin-top:14px">
+          <h3>Payments over time</h3>
+          {{ spark(d.money.series, 'payments', (d.money.series|map(attribute='payments')|max) or 1, 'payments') }}
+        </div>
+      </section>
 
-      <h2>What people thought <span>· last 30 days</span></h2>
-      {% if d.feedback %}
-        <table class="money">
-          <tr><th>Model</th><th>👍</th><th>👎</th></tr>
-          {% for f in d.feedback %}
-            <tr>
-              <td>{{ f.provider }} · {{ (f.model or '')[-32:] }}</td>
-              <td>{{ f.up }}</td><td>{{ f.down }}</td>
-            </tr>
-          {% endfor %}
-        </table>
-        <p class="caveat">
-          Disliked replies can be turned into test cases:
-          <code>python -m agents.evaluate --from-feedback</code>.
-        </p>
-      {% else %}
-        <p class="empty">
-          No thumbs yet. Each reply has 👍 / 👎 under it; a dislike is
-          kept with the question so it can become a test case.
-        </p>
-      {% endif %}
+      <section id="ai">
+        <h2>AI <span>· requests, channels and what people thought</span></h2>
+        {{ spark(d.requests.series, 'messages', d.requests.peak, 'requests') }}
+        <div class="grid2" style="margin-top:14px">
+          <div class="panel scroll-x">
+            <h3>Channels · last 24 hours</h3>
+            {% if d.channels %}
+              <table>
+                <tr><th>Model</th><th>Replies</th><th>Failed</th><th>First token</th><th>Speed</th><th>Now</th></tr>
+                {% for c in d.channels %}
+                  <tr><td>{{ c.provider }} · {{ c.model.split('/')[-1] }}</td><td>{{ c.replies }}</td>
+                      <td>{{ c.failures }}{% if c.failures %} ({{ (c.failure_rate * 100)|round|int }}%){% endif %}</td>
+                      <td>{% if c.ttft_p50 is not none %}{{ c.ttft_p50 }}s{% else %}—{% endif %}</td>
+                      <td>{% if c.tokens_per_s %}{{ c.tokens_per_s }} tok/s{% else %}—{% endif %}</td>
+                      <td>{% if c.now.failing %}<span class="pill bad">failing</span>{% elif c.now.slow %}<span class="pill warn">slow</span>{% else %}<span class="pill good">fine</span>{% endif %}</td></tr>
+                {% endfor %}
+              </table>
+            {% else %}<p class="empty">No replies in the last day.</p>{% endif %}
+          </div>
+          <div class="panel">
+            <h3>What people thought · last 30 days</h3>
+            {% if d.feedback %}
+              <table>
+                <tr><th>Model</th><th>Liked</th><th>Disliked</th></tr>
+                {% for f in d.feedback %}
+                  <tr><td>{{ f.provider }} · {{ (f.model or '')[-32:] }}</td><td>{{ f.up }}</td><td>{{ f.down }}</td></tr>
+                {% endfor %}
+              </table>
+              <p class="note">Disliked replies can become test cases: <code>python -m agents.evaluate --from-feedback</code></p>
+            {% else %}<p class="empty">No thumbs yet.</p>{% endif %}
+          </div>
+        </div>
+      </section>
 
-      <h2>Money</h2>
-      {% if d.money.by_currency %}
-        <table class="money">
-          <tr>
-            <th>Currency</th><th>Payments</th><th>Charged</th>
-            <th>Paddle's fee</th><th>You earned</th>
-          </tr>
-          {% for row in d.money.by_currency %}
-            <tr>
-              <td>{{ row.currency }}</td>
-              <td>{{ row.payments }}</td>
-              <td>{{ row.gross_text }}</td>
-              <td>−{{ row.fee_text }}</td>
-              <td class="earn">{{ row.earnings_text }}</td>
-            </tr>
-          {% endfor %}
-        </table>
+      {% set m = d.models3d %}
+      <section id="models3d">
+        <h2>3D models <span>· {{ m.engine.name }}</span></h2>
+        <div class="grid2">
+          <div class="panel">
+            <h3>In this range</h3>
+            <div class="row"><span>Made</span><span>{{ m.done }}</span></div>
+            <div class="row"><span>Failed</span><span>{{ m.failed }}</span></div>
+            <div class="row"><span>Success rate</span><span>{% if m.success_rate is not none %}{{ m.success_rate }}%{% else %}—{% endif %}</span></div>
+            <div class="row"><span>Typical time</span><span>{% if m.median_seconds is not none %}{{ m.median_seconds }}s{% else %}—{% endif %}</span></div>
+            <div class="row"><span>From a picture · from a description</span><span>{{ m.from_picture }} · {{ m.from_text }}</span></div>
+            <div class="row"><span>Running now</span><span>{{ m.running }}</span></div>
+          </div>
+          <div class="panel">
+            <h3>Engine</h3>
+            <div class="row"><span>Status</span><span>
+              {% if not m.engine.available %}<span class="pill">not set up</span>
+              {% elif m.engine.resting %}<span class="pill warn">resting</span>
+              {% else %}<span class="pill good">ready</span>{% endif %}</span></div>
+            <div class="row"><span>Where it runs, in order</span><span>{{ m.engine.providers|join(' → ') or '—' }}</span></div>
+            <div class="row"><span>Download for Blender</span><span>{% if m.engine.blend %}<span class="pill good">on</span>{% else %}<span class="pill">needs Blender on the server</span>{% endif %}</span></div>
+            {% if m.engine.resting %}<p class="note">{{ m.engine.message }}</p>{% endif %}
+          </div>
+        </div>
+      </section>
 
-        <h2>Recent payments</h2>
-        <table class="money">
-          <tr>
-            <th>Date</th><th>Who</th><th>Charged</th><th>You earned</th>
-          </tr>
-          {% for p in d.money.recent %}
-            <tr>
-              <td>{{ p.day }}</td>
-              <td>{{ p.email or '—' }}</td>
-              <td>{{ p.gross_text }}</td>
-              <td class="earn">{{ p.earnings_text }}</td>
-            </tr>
-          {% endfor %}
-        </table>
-      {% else %}
-        <p class="empty">
-          No payments yet. Every completed Paddle transaction lands here
-          automatically — the webhook writes it the moment the money
-          clears, so nothing has to be entered by hand.
-        </p>
-      {% endif %}
+      {% set s = d.system %}
+      <section id="system">
+        <h2>System <span>· this server</span></h2>
+        <div class="grid2">
+          <div class="panel">
+            <h3>Today's spending limits</h3>
+            {% if s.spend %}
+              {% for item in s.spend %}
+                <div class="row" style="border:0;padding-bottom:0"><span>{{ item.name }}</span><span>${{ '%.2f'|format(item.spent) }} of ${{ '%.2f'|format(item.cap) }}</span></div>
+                <div class="meter {{ 'full' if item.pct >= 100 else ('hot' if item.pct >= 75) }}"><i style="width: {{ item.pct }}%"></i></div>
+              {% endfor %}
+            {% else %}<p class="empty">Nothing here spends money per use right now.</p>{% endif %}
+          </div>
+          <div class="panel">
+            <h3>Storage and load</h3>
+            <div class="row" style="border:0;padding-bottom:0"><span>Disk</span><span>{{ s.disk_used_pct }}% used · {{ s.disk_free }} free</span></div>
+            <div class="meter {{ 'full' if s.disk_used_pct >= 90 else ('hot' if s.disk_used_pct >= 75) }}"><i style="width: {{ s.disk_used_pct }}%"></i></div>
+            <div class="row"><span>Database</span><span>{{ s.db_size }}</span></div>
+            <div class="row"><span>Uploads · generated images · 3D models</span><span>{{ s.uploads }} · {{ s.generated }} · {{ s.models3d }}</span></div>
+            <div class="row"><span>Open browser tabs</span><span>{% if s.browser_tabs is not none %}{{ s.browser_tabs }}{% else %}—{% endif %}</span></div>
+            <div class="row"><span>Up since restart</span><span>{{ s.uptime_hours }} h</span></div>
+          </div>
+        </div>
+      </section>
 
       <p class="caveat">
-        <strong>What these numbers are.</strong>
-        Page views and visitors are counted here, on this server. No
-        third-party analytics, no advertising script, no tracking cookie.
-        A <em>visitor</em> is a salted hash of an address and browser
-        that is thrown away every night — so today's visitor count is
-        real, and nobody can be followed from one day to the next,
-        including by this dashboard. A <em>user</em> is the session id
-        the app already keeps for credits and threads, which is why that
-        one number can say new or returning: it is the single identifier
-        here that outlives midnight, and it is one the site was setting
-        anyway. Two people behind one office address are one visitor and
-        two users; one person on a phone and a laptop is two of both.
-        Requests come from counters the app already kept.
-        Money comes from Paddle's own webhooks, and shows what reaches
-        your balance after their fee, not what the customer was charged.
-        Bots and crawlers are filtered out by user agent, which catches
-        the honest ones and not the rest.
+        <strong>What these numbers are.</strong> Page views and visitors are counted on this server — no
+        third-party analytics or tracking cookie. A <em>visitor</em> is a salted hash of address and browser,
+        thrown away nightly; a <em>user</em> is the session id the app already keeps, the one figure that can
+        say new or returning. Hatched bars are days before counting began. Money comes from the payment
+        provider's webhooks; sample events sent from its dashboard are ignored. "Monthly income, estimated"
+        is paying subscribers times the Pro price, before the provider's fee.
       </p>
     </main>
   </body>

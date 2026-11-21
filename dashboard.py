@@ -69,6 +69,30 @@ def _money(minor, currency="USD"):
 
 
 def _billing_health():
+    """Can this site take money right now? Kelviq is the processor now;
+    Paddle is checked only where Kelviq is not set up."""
+    try:
+        import kelviq_billing
+        if kelviq_billing.configured():
+            problem = kelviq_billing.config_problem()
+            env = kelviq_billing.environment()
+            if problem:
+                return {"ok": False, "provider": "Kelviq", "environment": env, "detail": problem}
+            if not kelviq_billing.webhook_ready():
+                return {"ok": False, "provider": "Kelviq", "environment": env,
+                        "detail": "No webhook secret, so payments would succeed "
+                                  "without anyone being upgraded."}
+            if env != "production":
+                return {"ok": False, "provider": "Kelviq", "environment": env,
+                        "detail": "Running against the Kelviq sandbox: no real money can arrive."}
+            return {"ok": True, "provider": "Kelviq", "environment": env,
+                    "detail": "Kelviq is set up for real payments."}
+    except ImportError:
+        pass
+    return _paddle_health()
+
+
+def _paddle_health():
     """Can this site actually take money right now?
 
     On the dashboard because it is the question the numbers cannot
@@ -132,7 +156,170 @@ def _bucket(rows, keys):
     return out
 
 
-def collect(days=None, since=None):
+def _day_series(rows, start, n):
+    """{day: value} -> [{"day", "value"}] for n days from start, zeros filled."""
+    out = []
+    for i in range(n):
+        d = (start + datetime.timedelta(days=i)).isoformat()
+        out.append({"day": d, "value": rows.get(d, 0)})
+    return out
+
+
+def _accounts(since, span_days, pro_price):
+    """Signups, plans and subscription income, from the users table."""
+    conn = db._connect()
+    today_d = datetime.datetime.now(datetime.timezone.utc).date()
+    start = datetime.date.fromisoformat(since) if since else (
+        today_d - datetime.timedelta(days=span_days - 1))
+    rows = dict(conn.execute(
+        "select substr(created,1,10) d, count(*) from users "
+        "where substr(created,1,10) >= ? group by d", (start.isoformat(),)).fetchall())
+    series = _day_series(rows, start, span_days)
+    if span_days > BUCKET_AFTER_DAYS:
+        weekly = _bucket([{"day": r["day"], "signups": r["value"], "counted": True}
+                          for r in series], ("signups",))
+        series = [{"day": r["day"], "value": r["signups"]} for r in weekly]
+    plans = dict(conn.execute(
+        "select coalesce(nullif(plan, ''), 'free'), count(*) from users group by 1").fetchall())
+    active = conn.execute(
+        "select count(*) from users where plan = 'pro' and "
+        "coalesce(subscription_status, '') in ('active', 'trialing', 'past_due')").fetchone()[0]
+    total = sum(plans.values())
+    recent = [{"email": r[0], "plan": r[1] or "free",
+               "created": (r[2] or "")[:16].replace("T", " ")}
+              for r in conn.execute("select email, plan, created from users "
+                                    "order by created desc limit 8").fetchall()]
+    return {
+        "total": total,
+        "free": plans.get("free", 0),
+        "pro": plans.get("pro", 0),
+        "paying": active,
+        "conversion": round(100.0 * plans.get("pro", 0) / total, 1) if total else 0.0,
+        "mrr_text": "$%.2f" % (active * pro_price),
+        "pro_price_text": "$%.2f" % pro_price,
+        "signups_today": rows.get(today_d.isoformat(), 0),
+        "signups_window": sum(r["value"] for r in series),
+        "series": series,
+        "peak": max([r["value"] for r in series] or [0]) or 1,
+        "recent": recent,
+    }
+
+
+def _models3d(since):
+    """3D models: how many, how they ended, how long they took."""
+    conn = db._connect()
+    try:
+        rows = conn.execute("select status, source, created, updated from model_jobs").fetchall()
+    except Exception:                                  # noqa: BLE001 - table not there yet
+        rows = []
+    try:
+        import model3d
+        resting = model3d.resting_for()
+        engine = {
+            "name": model3d.DISPLAY_NAME,
+            "available": model3d.available(),
+            "resting": resting,
+            "message": model3d.rest_message(resting) if resting else "",
+            "providers": [p.name for p in model3d.configured_chain()],
+            "blend": model3d.blend_available(),
+        }
+    except Exception:                                  # noqa: BLE001
+        engine = {"name": "relo 1.0", "available": False, "resting": 0, "message": "",
+                  "providers": [], "blend": False}
+    today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    start_ts = (datetime.datetime.fromisoformat(since + "T00:00:00+00:00").timestamp()
+                if since else 0)
+    window = [r for r in rows if r[2] >= start_ts]
+    done = [r for r in window if r[0] == "done"]
+    failed = [r for r in window if r[0] == "failed"]
+    times = sorted(r[3] - r[2] for r in done)
+
+    def day(ts):
+        return datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).date().isoformat()
+    return {
+        "engine": engine,
+        "total": len(rows),
+        "today": sum(1 for r in rows if day(r[2]) == today),
+        "window": len(window),
+        "done": len(done),
+        "failed": len(failed),
+        "running": sum(1 for r in rows if r[0] in ("queued", "running")),
+        "success_rate": (round(100.0 * len(done) / (len(done) + len(failed)))
+                         if (done or failed) else None),
+        "median_seconds": round(times[len(times) // 2]) if times else None,
+        "from_picture": sum(1 for r in window if r[1] == "image"),
+        "from_text": sum(1 for r in window if r[1] == "text"),
+    }
+
+
+def _dir_bytes(path):
+    import os
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return total
+
+
+def _human(n):
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return ("%.0f %s" if unit in ("B", "KB") else "%.1f %s") % (n, unit)
+        n /= 1024.0
+
+
+_STARTED = datetime.datetime.now(datetime.timezone.utc)
+
+
+def _system():
+    """Is the box healthy: disk, database, stored files, and the paid or
+    rationed things the app leans on."""
+    import os
+    import shutil as _sh
+    disk = _sh.disk_usage(".")
+    db_path = os.environ.get("DB_PATH") or "app.db"
+    out = {
+        "disk_free": _human(disk.free),
+        "disk_used_pct": round(100.0 * disk.used / disk.total) if disk.total else 0,
+        "db_size": _human(os.path.getsize(db_path)) if os.path.exists(db_path) else "-",
+        "uploads": _human(_dir_bytes(os.path.join("static", "uploads"))),
+        "generated": _human(_dir_bytes(os.path.join("static", "generated"))),
+        "models3d": _human(_dir_bytes(os.path.join("static", "models3d"))),
+        "uptime_hours": round((datetime.datetime.now(datetime.timezone.utc) - _STARTED)
+                              .total_seconds() / 3600, 1),
+        "spend": [],
+        "browser_tabs": None,
+    }
+    try:
+        import anthropic_api
+        if anthropic_api.configured():
+            out["spend"].append({"name": "pip 2", "spent": round(anthropic_api.spent_today(), 2),
+                                 "cap": round(anthropic_api.daily_ceiling(), 2)})
+    except Exception:                                  # noqa: BLE001
+        pass
+    try:
+        import model3d
+        if "fal" in [p.name for p in model3d.configured_chain()]:
+            spent = model3d._fal_spend["usd"] if model3d._fal_spend["day"] == model3d._today() else 0
+            out["spend"].append({"name": "relo 1.0 (paid GPU)", "spent": round(spent, 2),
+                                 "cap": model3d.FAL_DAILY_USD})
+    except Exception:                                  # noqa: BLE001
+        pass
+    try:
+        import livebrowser
+        if livebrowser.available():
+            out["browser_tabs"] = len(livebrowser._engine.sessions)
+    except Exception:                                  # noqa: BLE001
+        pass
+    for item in out["spend"]:
+        item["pct"] = min(100, round(100.0 * item["spent"] / item["cap"])) if item["cap"] else 0
+    return out
+
+
+def collect(days=None, since=None, pro_price=3.99):
     """Everything the dashboard shows, as one plain dict.
 
     Defaults to EVERYTHING SINCE LAUNCH rather than a rolling window.
@@ -292,6 +479,11 @@ def collect(days=None, since=None):
         # and what people thought of the answers. See agents/.
         "channels": agent_router.summary(24),
         "feedback": db.feedback_summary(_iso_days_ago(30)),
+        "accounts": _accounts(since or (visit_days[0]["day"] if visit_days else None),
+                              span_days, pro_price),
+        "models3d": _models3d(since or (visit_days[0]["day"] if visit_days else None)),
+        "system": _system(),
+        "range": "all" if (since and since == launch) else str(days or span_days),
     }
 
 
