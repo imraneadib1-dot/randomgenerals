@@ -1,7 +1,7 @@
 <!doctype html>
-{# Owner-only statistics. Same shell and palette as the legal pages, so
-   this reads as part of the site rather than a debug view - but it is
-   never linked from anywhere, and the route 404s for everyone else. #}
+{# Product statistics, from the database (stats.py) - the owner's second
+   page, in the same look as the dashboard (static/owner.css). It leads
+   with REAL PEOPLE: everyone who typed something (realusers.py). #}
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -11,199 +11,156 @@
     <link rel="icon" href="{{ asset('favicon.svg') }}" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400&display=swap"
-      rel="stylesheet"
-    />
-    <link rel="stylesheet" href="{{ asset('landing.css') }}" />
-    <style>
-      .stats { max-width: 1080px; margin: 0 auto; padding: 32px 24px 96px; }
-      .stats h1 { font-family: Sora, system-ui, sans-serif; margin: 0 0 4px; }
-      .stats-sub { color: var(--text-faint); font-size: 14px; margin: 0 0 32px; }
-      .stat-grid {
-        display: grid; gap: 14px; margin-bottom: 34px;
-        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-      }
-      .stat {
-        border: 1px solid var(--line); border-radius: 14px;
-        padding: 16px 18px; background: var(--ink-1);
-      }
-      .stat-label {
-        font-size: 11px; letter-spacing: .09em; text-transform: uppercase;
-        color: var(--text-faint); margin-bottom: 8px;
-      }
-      .stat-value {
-        font-family: Sora, system-ui, sans-serif; font-size: 30px;
-        font-weight: 700; color: var(--accent-ink); line-height: 1;
-      }
-      .stat-note { font-size: 12px; color: var(--text-soft); margin-top: 7px; }
-      .stats h2 {
-        font-family: Sora, system-ui, sans-serif; font-size: 17px;
-        margin: 34px 0 12px; color: var(--text);
-      }
-      .bars { display: grid; gap: 9px; }
-      .bar-row {
-        display: grid; grid-template-columns: 160px 1fr 62px;
-        align-items: center; gap: 12px; font-size: 13px;
-      }
-      .bar-name { color: var(--text-soft); overflow: hidden;
-        text-overflow: ellipsis; white-space: nowrap; }
-      .bar-track {
-        background: var(--ink-2); border-radius: 999px; height: 9px;
-        overflow: hidden;
-      }
-      .bar-fill { background: var(--accent); height: 100%; border-radius: 999px; }
-      .bar-num { text-align: right; color: var(--text);
-        font-family: 'JetBrains Mono', monospace; font-size: 12px; }
-      .spark {
-        display: flex; align-items: flex-end; gap: 2px; height: 74px;
-        border: 1px solid var(--line); border-radius: 12px;
-        padding: 10px; background: var(--ink-1);
-      }
-      .spark span {
-        flex: 1; background: var(--accent); border-radius: 2px 2px 0 0;
-        min-height: 2px; opacity: .85;
-      }
-      .spark span.zero { background: var(--ink-3); opacity: .5; }
-      .spark-axis {
-        display: flex; justify-content: space-between; font-size: 11px;
-        color: var(--text-faint); margin-top: 6px;
-      }
-      .caveat {
-        border-left: 2px solid var(--accent); padding: 2px 0 2px 14px;
-        color: var(--text-soft); font-size: 13px; margin: 30px 0 0;
-        line-height: 1.6;
-      }
-      .stats-nav { margin-bottom: 20px; font-size: 13px; }
-      .stats-nav a { color: var(--text-faint); }
-    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("theme") || "system";
+          var dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+          if ((t === "system" ? (dark ? "dark" : "light") : t) === "light") {
+            document.documentElement.setAttribute("data-theme", "light");
+          }
+        } catch (e) { /* the dark default is fine */ }
+      })();
+    </script>
+    <link rel="stylesheet" href="{{ asset('owner.css') }}" />
   </head>
-  <body class="legal-page">
-    <main class="stats">
-      <p class="stats-nav"><a href="/">← randomgenerals.com</a></p>
-      <h1>Stats</h1>
-      <p class="stats-sub">
-        From the database, generated {{ s.generated }}. Nothing here is
-        tracked — see the note at the foot.
-      </p>
+  <body>
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <symbol id="mark" viewBox="0 0 200 200"><path fill="currentColor" fill-rule="evenodd" d="M57.89 27.97 L66.47 26.75 L75.14 26.55 L83.78 27.37 L92.25 29.20 L100.46 32.02 L108.27 35.79 L115.58 40.45 L122.30 45.94 L128.32 52.18 L133.56 59.09 L137.96 66.57 L141.44 74.51 L143.96 82.81 L145.49 91.34 L146.00 100.00 L145.49 108.66 L143.96 117.19 L141.44 125.49 L137.96 133.43 L133.56 140.91 L128.32 147.82 L122.30 154.06 L115.58 159.55 L108.27 164.21 L100.46 167.98 L92.25 170.80 L83.78 172.63 L75.14 173.45 L66.47 173.25 L57.89 172.03 L62.74 170.81 L69.05 168.67 L75.15 165.97 L80.98 162.73 L86.49 158.98 L91.64 154.74 L96.39 150.06 L100.69 144.97 L104.52 139.50 L107.83 133.72 L110.61 127.66 L112.83 121.37 L114.48 114.91 L115.53 108.32 L115.98 101.67 L115.83 95.00 L115.08 88.37 L113.73 81.84 L111.80 75.46 L109.29 69.28 L106.24 63.35 L102.67 57.72 L98.60 52.44 L94.07 47.54 L89.12 43.08 L83.78 39.08 L78.10 35.58 L72.13 32.61 L65.92 30.19 L59.51 28.34 L57.89 27.97Z M101.75 42.52 L105.89 44.81 L109.84 47.41 L113.59 50.29 L117.13 53.43 L120.42 56.83 L123.45 60.45 L126.21 64.29 L128.69 68.32 L130.86 72.53 L132.71 76.88 L134.24 81.35 L135.45 85.92 L136.31 90.57 L136.83 95.27 L137.00 100.00 L136.83 104.73 L136.31 109.43 L135.45 114.08 L134.24 118.65 L132.71 123.12 L130.86 127.47 L128.69 131.68 L126.21 135.71 L123.45 139.55 L120.42 143.17 L117.13 146.57 L113.59 149.71 L109.84 152.59 L105.89 155.19 L101.75 157.48 L103.92 155.16 L106.66 151.93 L109.24 148.56 L111.64 145.07 L113.86 141.46 L115.88 137.74 L117.72 133.93 L119.36 130.02 L120.80 126.03 L122.03 121.98 L123.05 117.87 L123.86 113.71 L124.45 109.51 L124.83 105.29 L124.99 101.06 L124.94 96.82 L124.67 92.59 L124.18 88.39 L123.48 84.21 L122.56 80.07 L121.44 75.99 L120.10 71.97 L118.57 68.02 L116.83 64.15 L114.89 60.38 L112.77 56.72 L110.46 53.17 L107.97 49.74 L105.31 46.44 L102.49 43.28 L101.75 42.52Z" /></symbol>
+    </svg>
 
-      <div class="stat-grid">
-        <div class="stat">
-          <div class="stat-label">People who used it</div>
-          <div class="stat-value">{{ s.reach.owners }}</div>
-          <div class="stat-note">
-            {{ s.reach.guests }} without an account
-          </div>
+    {% macro bars(items) -%}
+      {% set top = (items.values()|max) if items else 1 %}
+      {% if items %}
+        <div class="bars">
+          {% for name, n in items.items() %}
+            <div class="bar-row"><div class="bar-name" title="{{ name }}">{{ name }}</div>
+              <div class="bar-track"><div class="bar-fill" style="width: {{ (100 * n / (top or 1))|round(1) }}%"></div></div>
+              <div class="bar-num">{{ '{:,}'.format(n) }}</div></div>
+          {% endfor %}
         </div>
-        <div class="stat">
-          <div class="stat-label">Accounts</div>
-          <div class="stat-value">{{ s.accounts.users }}</div>
-          <div class="stat-note">
-            {{ s.accounts.signup_rate }}% of users signed up
-          </div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">Pro</div>
-          <div class="stat-value">{{ s.accounts.pro }}</div>
-          <div class="stat-note">
-            {{ s.accounts.subscriptions.get('active', 0) }} active in Paddle
-          </div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">Conversations</div>
-          <div class="stat-value">{{ s.usage.threads }}</div>
-          <div class="stat-note">{{ s.usage.messages }} messages</div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">Images made</div>
-          <div class="stat-value">{{ s.usage.images }}</div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">Credits used</div>
-          <div class="stat-value">{{ s.credits.used_pct }}%</div>
-          <div class="stat-note">
-            {{ '{:,}'.format(s.credits.spent) }} of
-            {{ '{:,}'.format(s.credits.granted) }} granted
-          </div>
-        </div>
-      </div>
+      {% else %}<p class="empty">Nothing yet.</p>{% endif %}
+    {%- endmacro %}
 
-      <h2>Signups, last 30 days</h2>
-      {% set smax = (s.signups | map(attribute=1) | max) or 1 %}
+    {% macro pairs(series, label) -%}
+      {% set top = (series|map(attribute=1)|max) or 1 %}
       <div class="spark">
-        {% for day, n in s.signups %}
-          <span class="{{ 'zero' if not n }}"
-                style="height: {{ (100 * n / smax) if n else 3 }}%"
-                title="{{ day }}: {{ n }}"></span>
+        {% for day, n in series %}
+          <span class="{{ 'zero' if not n }}" style="height: {{ (100 * n / top)|round(1) if n else 0 }}%" title="{{ day }} — {{ n }} {{ label }}"></span>
         {% endfor %}
       </div>
-      <div class="spark-axis">
-        <span>{{ s.signups[0][0] }}</span><span>{{ s.signups[-1][0] }}</span>
+      <div class="axis"><span>{{ series[0][0] }}</span><span>peak {{ top if series|map(attribute=1)|max else 0 }}</span><span>{{ series[-1][0] }}</span></div>
+    {%- endmacro %}
+
+    <header class="top">
+      <div class="top-in">
+        <a class="brand" href="/app"><svg><use href="#mark"></use></svg>RandomGenerals <small>Stats</small></a>
+        <div class="top-links" style="margin-left:auto"><a href="/dashboard">Dashboard</a><a href="/api/stats">JSON</a><a href="/app">Back to app</a></div>
+      </div>
+    </header>
+
+    {% set r = s.real %}
+    <main>
+      <p class="sub">From the database · {{ s.generated[:16].replace('T', ' ') }} UTC{% if r.excludes_owner %} · not counting your own account{% endif %}</p>
+
+      <div class="kpis">
+        <div class="kpi"><div class="kpi-label">Real people, all time</div>
+          <div class="kpi-value">{{ '{:,}'.format(r.all_time.total) }}</div>
+          <div class="kpi-note">typed something</div></div>
+        <div class="kpi"><div class="kpi-label">…with an account</div>
+          <div class="kpi-value">{{ r.all_time.accounts }}</div>
+          <div class="kpi-note">{{ s.accounts.signup_rate }}% of real people</div></div>
+        <div class="kpi"><div class="kpi-label">…visitors, no account</div>
+          <div class="kpi-value">{{ r.all_time.visitors }}</div>
+          <div class="kpi-note">typed without signing up</div></div>
+        <div class="kpi"><div class="kpi-label">Real people today</div>
+          <div class="kpi-value">{{ r.today.total }}</div>
+          <div class="kpi-note">{{ r.today.accounts }} account · {{ r.today.visitors }} visitor{{ '' if r.today.visitors == 1 else 's' }}</div></div>
+        <div class="kpi"><div class="kpi-label">Last 7 days</div>
+          <div class="kpi-value">{{ r.last_7.total }}</div>
+          <div class="kpi-note">yesterday {{ r.yesterday.total }}</div></div>
+        <div class="kpi"><div class="kpi-label">Last 30 days</div>
+          <div class="kpi-value">{{ r.last_30.total }}</div>
+          <div class="kpi-note">average {{ r.average }} a day</div></div>
       </div>
 
-      <h2>Active conversations, last 30 days</h2>
-      {% set amax = (s.activity | map(attribute=1) | max) or 1 %}
-      <div class="spark">
-        {% for day, n in s.activity %}
-          <span class="{{ 'zero' if not n }}"
-                style="height: {{ (100 * n / amax) if n else 3 }}%"
-                title="{{ day }}: {{ n }}"></span>
-        {% endfor %}
-      </div>
-      <div class="spark-axis">
-        <span>{{ s.activity[0][0] }}</span><span>{{ s.activity[-1][0] }}</span>
-      </div>
-
-      <h2>Which bay people use</h2>
-      {% set mmax = (s.usage.by_mode.values() | max) or 1 %}
-      <div class="bars">
-        {% for name, n in s.usage.by_mode.items() %}
-          <div class="bar-row">
-            <div class="bar-name">{{ name }}</div>
-            <div class="bar-track">
-              <div class="bar-fill" style="width: {{ 100 * n / mmax }}%"></div>
-            </div>
-            <div class="bar-num">{{ n }}</div>
+      <h2>Daily real people <span>· who typed, each day for 30 days</span></h2>
+      <div class="grid2">
+        <div>
+          <div class="spark">
+            {% for row in r.series %}
+              {% if not row.counted %}
+                <span class="blank" style="height:100%" title="{{ row.day }} — before this was counted"></span>
+              {% elif not row.total %}
+                <span class="zero" style="height:0%" title="{{ row.day }} — nobody typed"></span>
+              {% else %}
+                <span class="col" style="height: {{ (100 * row.total / r.peak)|round(1) }}%"
+                  title="{{ row.day }} — {{ row.total }} {{ 'person' if row.total == 1 else 'people' }}: {{ row.accounts }} with an account, {{ row.visitors }} visitors"
+                ><i class="new" style="flex: {{ row.accounts }} 0 0"></i><i class="ret" style="flex: {{ row.visitors }} 0 0"></i></span>
+              {% endif %}
+            {% endfor %}
           </div>
-        {% endfor %}
+          <div class="axis"><span>{{ r.series[0].day }}</span><span><i class="key new"></i>account<i class="key ret"></i>visitor</span><span>{{ r.series[-1].day }}</span></div>
+        </div>
+        <div class="panel">
+          <h3>Day by day</h3>
+          <table>
+            <tr><th>Day</th><th>People</th><th>Account</th><th>Visitors</th></tr>
+            {% for row in r.series|reverse %}
+              {% if loop.index <= 10 %}
+                <tr><td class="muted">{{ row.day }}</td><td class="earn">{{ row.total }}</td><td>{{ row.accounts }}</td><td>{{ row.visitors }}</td></tr>
+              {% endif %}
+            {% endfor %}
+          </table>
+        </div>
       </div>
 
-      <h2>What answered</h2>
-      {% set pmax = (s.usage.by_provider.values() | max) or 1 %}
-      <div class="bars">
-        {% for name, n in s.usage.by_provider.items() %}
-          <div class="bar-row">
-            <div class="bar-name">{{ name }}</div>
-            <div class="bar-track">
-              <div class="bar-fill" style="width: {{ 100 * n / pmax }}%"></div>
-            </div>
-            <div class="bar-num">{{ n }}</div>
-          </div>
-        {% endfor %}
+      <h2>Accounts and use</h2>
+      <div class="grid2">
+        <div class="panel">
+          <h3>Accounts</h3>
+          <div class="row"><span>Accounts</span><span>{{ s.accounts.users }}</span></div>
+          <div class="row"><span>Free · Pro</span><span>{{ s.accounts.free }} · {{ s.accounts.pro }}</span></div>
+          <div class="row"><span>Signed up with Google</span><span>{{ s.accounts.google }}</span></div>
+          <div class="row"><span>Subscriptions active</span><span>{{ s.accounts.subscriptions.get('active', 0) }}</span></div>
+        </div>
+        <div class="panel">
+          <h3>Use</h3>
+          <div class="row"><span>Conversations</span><span>{{ '{:,}'.format(s.usage.threads) }}</span></div>
+          <div class="row"><span>Messages</span><span>{{ '{:,}'.format(s.usage.messages) }}</span></div>
+          <div class="row"><span>Images made</span><span>{{ '{:,}'.format(s.usage.images) }}</span></div>
+          <div class="row"><span>Credits used</span><span>{{ s.credits.used_pct }}% · {{ '{:,}'.format(s.credits.spent) }} of {{ '{:,}'.format(s.credits.granted) }}</span></div>
+        </div>
       </div>
 
-      <h2>Models</h2>
-      {% set xmax = (s.usage.by_model.values() | max) or 1 %}
-      <div class="bars">
-        {% for name, n in s.usage.by_model.items() %}
-          <div class="bar-row">
-            <div class="bar-name" title="{{ name }}">{{ name }}</div>
-            <div class="bar-track">
-              <div class="bar-fill" style="width: {{ 100 * n / xmax }}%"></div>
-            </div>
-            <div class="bar-num">{{ n }}</div>
+      <div class="charts" style="margin-top:22px">
+        <div><h3 style="margin:0 0 10px;font-size:13px;font-weight:600;color:var(--ink-2)">New accounts, last 30 days</h3>{{ pairs(s.signups, 'signups') }}</div>
+        <div><h3 style="margin:0 0 10px;font-size:13px;font-weight:600;color:var(--ink-2)">Active conversations, last 30 days</h3>{{ pairs(s.activity, 'conversations') }}</div>
+      </div>
+
+      <h2>What people use</h2>
+      <div class="grid2">
+        <div class="panel"><h3>Which mode</h3>{{ bars(s.usage.by_mode) }}</div>
+        <div class="panel"><h3>What answered</h3>{{ bars(s.usage.by_provider) }}</div>
+        <div class="panel"><h3>Models</h3>{{ bars(s.usage.by_model) }}</div>
+        {% if s.kimi.configured %}
+          <div class="panel">
+            <h3>Paid model spend</h3>
+            <div class="row"><span>Today</span><span>${{ s.kimi.today if s.kimi.today is not none else '—' }} of ${{ s.kimi.daily_limit }}</span></div>
+            <div class="row"><span>Last 7 days</span><span>${{ s.kimi.week }}</span></div>
           </div>
-        {% endfor %}
+        {% endif %}
       </div>
 
       <p class="caveat">
-        <strong>What this cannot see.</strong> Everyone here typed
-        something. A visitor who opened the site, read it and left is
-        invisible, because the app records nothing about them — there is
-        no tracking, and adding it would make the privacy page untrue.
-        For raw traffic — visits, countries, referrers — use the
-        Cloudflare dashboard, which has been recording it since the
-        tunnel was set up.
+        <strong>What these numbers are.</strong> A <em>real person</em> is anyone who sent at least one
+        message — loading a page is not enough, so crawlers, link previews and people who bounced off the
+        landing page are not in it. <em>With an account</em> means they were signed in; <em>visitors</em>
+        typed without one. Each person is counted once per day however much they wrote, and once in
+        "all time". Day-by-day counting began {{ r.began or 'recently' }}; "all time" also includes everyone
+        with a conversation from before then. Everything comes from rows the app writes to do its job —
+        nothing extra is tracked.
       </p>
     </main>
   </body>

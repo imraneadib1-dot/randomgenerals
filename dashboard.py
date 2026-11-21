@@ -58,6 +58,7 @@ number that is not an amount of money.
 import datetime
 
 import db
+import realusers
 from agents import router as agent_router
 
 
@@ -483,6 +484,9 @@ def collect(days=None, since=None, pro_price=3.99):
                               span_days, pro_price),
         "models3d": _models3d(since or (visit_days[0]["day"] if visit_days else None)),
         "system": _system(),
+        # People who TYPED something - see realusers.py.
+        "real": realusers.collect(start=(since or (visit_days[0]["day"] if visit_days else None)),
+                                  days=span_days),
         "range": "all" if (since and since == launch) else str(days or span_days),
     }
 

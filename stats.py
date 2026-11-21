@@ -127,7 +127,13 @@ def collect():
     except Exception:                  # noqa: BLE001 - a stats page must
         kimi = {"configured": False}   # not fail over an optional figure
 
+    import realusers                  # noqa: PLC0415
+    real = realusers.collect(days=30)
+
     return {
+        # People who TYPED something (realusers.py): the honest count of
+        # who used it, split into accounts and visitors without one.
+        "real": real,
         "generated": datetime.datetime.now(
             datetime.timezone.utc).replace(microsecond=0).isoformat(),
         "kimi": kimi,
@@ -138,9 +144,10 @@ def collect():
             "google": _one("select count(*) from users where google_id "
                            "is not null and google_id <> ''"),
             "subscriptions": subs,
-            # Of everyone who used the app, how many made an account.
-            "signup_rate": (round(100.0 * users_total / owners_total, 1)
-                            if owners_total else 0.0),
+            # Of everyone who typed something, how many had an account.
+            "signup_rate": (round(100.0 * real["all_time"]["accounts"]
+                                  / real["all_time"]["total"], 1)
+                            if real["all_time"]["total"] else 0.0),
         },
         "reach": {
             "owners": owners_total,
