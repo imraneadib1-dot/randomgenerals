@@ -17,9 +17,15 @@ What the file has that a plain GLB import does not:
 import math
 import sys
 
+import array
+
 import bpy
-import numpy as np
 from mathutils import Vector
+
+try:                      # bundled with blender.org builds, not with Ubuntu's
+    import numpy as np
+except ImportError:
+    np = None
 
 
 def main():
@@ -85,9 +91,15 @@ def main():
         w, h = img.size
         if w * h > 4096 * 4096:
             continue
-        rgba = np.empty(w * h * 4, dtype=np.float32)
-        img.pixels.foreach_get(rgba)
-        if float(rgba[3::4].min()) < 0.98:
+        if np is not None:
+            rgba = np.empty(w * h * 4, dtype=np.float32)
+            img.pixels.foreach_get(rgba)
+            lowest = float(rgba[3::4].min())
+        else:
+            rgba = array.array("f", bytes(4 * w * h * 4))
+            img.pixels.foreach_get(rgba)
+            lowest = min(rgba[3::4])
+        if lowest < 0.98:
             links.new(tex.outputs["Alpha"], bsdf.inputs["Alpha"])
             if hasattr(mat, "blend_method"):
                 mat.blend_method = "HASHED"
