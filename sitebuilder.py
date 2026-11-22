@@ -67,6 +67,102 @@ CONTRACT = """PROJECT CONTRACT - every file must follow it exactly.
 - Footer: <footer class="site-footer"> with the photo credit line inside <small class="credits"> and the year in <span data-year></span>, filled by script.js.
 - Images: only the photo URLs provided, each <img> with width, height and real alt text; loading="lazy" on all but the hero."""
 
+# ---- the component kit -------------------------------------------------
+# A model writing every rule of a stylesheet from nothing designs every
+# card, button and navbar from scratch, and most of the "made by AI" look
+# comes from there. New builds instead compose Tailwind utilities and
+# DaisyUI components - the toolkits Lovable, v0 and Bolt build on - and
+# styles.css shrinks to the few things a class cannot say.
+#
+# Both load from jsDelivr, both free and open source, at pinned versions
+# so a release next month cannot restyle a site published today.
+#
+# Only for projects whose plan says kit = KIT. A site built before this
+# was styled entirely by hand; dropping Tailwind's reset into it on its
+# next edit would undo the margins, list bullets and button looks its
+# stylesheet relied on the browser for.
+KIT = "tailwind-daisyui"
+DAISY_URL = "https://cdn.jsdelivr.net/npm/daisyui@5.7.50/daisyui.css"
+TAILWIND_URL = "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.5"
+KIT_TAGS = ('<link rel="stylesheet" href="%s">\n<script src="%s"></script>'
+            % (DAISY_URL, TAILWIND_URL))
+
+
+def uses_kit(plan: dict | None) -> bool:
+    return bool(plan) and plan.get("kit") == KIT
+
+
+CONTRACT_KIT = CONTRACT.replace(
+    'index.html links styles.css in <head> (<link rel="stylesheet" href="styles.css">)',
+    '<html> carries data-theme="light". In <head>, in this order: '
+    '<link rel="stylesheet" href="' + DAISY_URL + '">, '
+    '<script src="' + TAILWIND_URL + '"></script>, then '
+    '<link rel="stylesheet" href="styles.css">').replace(
+    "no other local files.",
+    "no other local files and no other CDNs.") + """
+- Styling: Tailwind CSS v4 utility classes and DaisyUI 5 components, written straight into class attributes - that is how the page is styled. Use DaisyUI components wherever one fits: navbar, btn (btn-primary, btn-outline, btn-ghost, btn-lg), card (card-body, card-title, card-actions), hero (hero-content), badge, stats/stat, steps, timeline, collapse or join for FAQs, tabs, carousel, avatar, rating, table, alert, footer, and for forms fieldset + label + input, textarea, select, checkbox (all with w-full). Layout with Tailwind: container mx-auto px-4, grid md:grid-cols-3 gap-8, flex items-center, py-24, max-w-3xl, rounded-box, shadow-xl, responsive md:/lg: prefixes.
+- Colour comes from DaisyUI's semantic names, never hard-coded hex in classes: bg-base-100 (page), bg-base-200 (alternate sections, cards), bg-base-300, text-base-content, text-base-content/70 (muted), bg-primary text-primary-content, btn-primary, text-primary, bg-neutral text-neutral-content (dark bands). The plan's palette is mapped onto these names, so they always match the brand. Gradients may use from-primary to-secondary.
+- Fonts: headings carry class "font-display" (the plan's display face); body text inherits the body face. Both are set in styles.css.
+- Keep the contract's own classes (site-header, site-nav, nav-toggle, reveal, rg-form, form-status, site-footer, credits) alongside the Tailwind and DaisyUI ones - script.js and styles.css rely on them.
+- styles.css is short: the font-family rules, the menu and reveal behaviour above, and only what classes cannot express (keyframes, a decorative gradient, an image overlay). It never restyles bare elements like a, button, h1-h6, section or input, because plain CSS overrides every Tailwind utility on them."""
+
+
+def theme_css(plan: dict) -> str:
+    """The plan's palette and fonts, mapped onto DaisyUI's colour names.
+
+    Written here, not by the model, so btn-primary is the brand colour on
+    every build. Plain (unlayered) CSS, so it outranks DaisyUI's own
+    themes, which live in a cascade layer.
+    """
+    # The planner's words go into CSS here. Only the colour itself is
+    # kept - a hex, a colour function or a name - so a "palette" can
+    # neither close the rule and add its own nor leave a broken value.
+    def colour(v):
+        m = re.match(r"\s*(#[0-9a-fA-F]{3,8}\b|[a-z-]+\([\w\s,.%/-]*\)|[a-zA-Z]+\b)", v or "")
+        return m.group(1) if m else "#888888"
+    pal = {k: colour(v) for k, v in plan["palette"].items()}
+    fonts = plan["fonts"]
+    display = re.sub(r"[^\w\s-]", "", fonts["display"])[:60] or "serif"
+    body = re.sub(r"[^\w\s-]", "", fonts["body"])[:60] or "sans-serif"
+    return (THEME_MARK + "\n:root, [data-theme] {\n"
+            "  color-scheme: light;\n"
+            "  --color-base-100: %(background)s;\n"
+            "  --color-base-200: %(surface)s;\n"
+            "  --color-base-300: color-mix(in oklab, %(text)s 10%%, %(background)s);\n"
+            "  --color-base-content: %(text)s;\n"
+            "  --color-primary: %(accent)s;\n"
+            "  --color-primary-content: %(accent_text)s;\n"
+            "  --color-secondary: color-mix(in oklab, %(accent)s 55%%, %(text)s);\n"
+            "  --color-secondary-content: %(accent_text)s;\n"
+            "  --color-accent: color-mix(in oklab, %(accent)s 70%%, %(background)s);\n"
+            "  --color-accent-content: %(text)s;\n"
+            "  --color-neutral: %(text)s;\n"
+            "  --color-neutral-content: %(background)s;\n"
+            "}\n" % pal
+            + "body { font-family: '%s', system-ui, sans-serif; }\n" % body
+            + ".font-display { font-family: '%s', Georgia, serif; }\n" % display
+            + THEME_END + "\n")
+
+
+THEME_MARK = "/* RandomGenerals theme: the plan's palette as DaisyUI colours */"
+THEME_END = "/* end of RandomGenerals theme */"
+
+
+def add_theme(files: dict, plan: dict) -> None:
+    """Put the plan's theme at the top of styles.css, replacing an older
+    one - a revision can change the palette."""
+    css = files.get("styles.css")
+    if css is None or not uses_kit(plan):
+        return
+    css = re.sub(re.escape(THEME_MARK) + r".*?" + re.escape(THEME_END) + r"\n*", "",
+                 css, flags=re.S)
+    files["styles.css"] = theme_css(plan) + "\n" + css.lstrip()
+
+
+def _contract(plan: dict | None) -> str:
+    return CONTRACT_KIT if uses_kit(plan) else CONTRACT
+
+
 DESIGN = """You are a senior web designer and front-end engineer at a top studio, building a real, production-quality website for a client. Take your time and get every detail right: this is not a demo.
 Design standards: a distinctive Google Fonts pairing (a characterful display face for headings, a clean sans for body); a palette in :root custom properties built around one bold accent; fluid type with clamp(); an 8px spacing rhythm and generous whitespace; containers around 1200px; CSS grid and flexbox; cards with soft shadows and rounded corners; buttons with hover, active and :focus-visible states; 200ms transitions; a sticky translucent header; smooth scrolling. Mobile-first and fully responsive - nothing scrolls sideways at 360px, grids stack, images keep an aspect-ratio with object-fit: cover. Text contrast at least 4.5:1.
 Content standards: real, specific copy for this business - names, services or menu items with prices, opening hours, testimonials with first names and a detail that sounds lived. No lorem ipsum, no "Your text here". Use example.com emails and 555 phone numbers for invented contact details."""
@@ -260,6 +356,9 @@ def check_files(files: dict, plan: dict) -> dict[str, list[str]]:
         h.append("It must be a complete document from <!doctype html> to </html>.")
     if 'href="styles.css"' not in html:
         h.append('Link the stylesheet with <link rel="stylesheet" href="styles.css">.')
+    kit = uses_kit(plan)
+    if kit and (DAISY_URL not in html or TAILWIND_URL not in html):
+        h.append("Load DaisyUI and Tailwind in <head> before styles.css: " + KIT_TAGS)
     if 'src="script.js"' not in html:
         h.append('Load the script with <script src="script.js" defer></script>.')
     if "nav-toggle" not in html or 'id="site-nav"' not in html:
@@ -284,7 +383,9 @@ def check_files(files: dict, plan: dict) -> dict[str, list[str]]:
     used -= {"reveal", "is-visible", "nav-open"}
     defined = set(re.findall(r"\.([a-zA-Z][\w-]*)", css))
     missing = sorted(u for u in used if u not in defined)
-    if used and len(missing) > max(3, len(used) // 5):
+    # With the kit, nearly every class is a Tailwind utility or a DaisyUI
+    # component that styles.css rightly never mentions.
+    if not kit and used and len(missing) > max(3, len(used) // 5):
         c.append("These classes in index.html have no styles: %s." % ", ".join(missing[:40]))
     if "nav-open" not in css or "@media" not in css:
         c.append("Add the responsive rules: hide .site-nav links below 768px unless body.nav-open, and show .nav-toggle only there.")
@@ -343,14 +444,30 @@ def _plan_messages(brief: str, photos: list[dict]) -> list[dict]:
 def _file_messages(name: str, brief: str, plan: dict, photos: list[dict],
                    files: dict, instruction: str = "") -> list[dict]:
     plan_json = json.dumps(plan, indent=1)
-    head = DESIGN + "\n\n" + CONTRACT
-    if name == "index.html":
+    kit = uses_kit(plan)
+    head = DESIGN + "\n\n" + _contract(plan)
+    if name == "index.html" and kit:
+        task = ("Write index.html: the complete page, following the plan section by section with real, specific content. "
+                "Load the two planned Google Fonts with <link>, then DaisyUI, Tailwind and styles.css exactly as the contract says. "
+                "Style everything with Tailwind utilities and DaisyUI components in the class attributes - a polished, "
+                "modern layout: a sticky navbar, a big hero with a clear call to action, cards in responsive grids, "
+                "alternating bg-base-100 / bg-base-200 sections, generous py-20 spacing. Give sections and cards the class \"reveal\" "
+                "and headings the class \"font-display\".")
+    elif name == "index.html":
         task = ("Write index.html: the complete page, following the plan section by section with real, specific content. "
                 "Load the two planned Google Fonts with <link>. Give sections and cards the class \"reveal\". "
                 "Use semantic HTML and descriptive class names (they will be styled in styles.css from this file alone).")
+    if name == "index.html":
         ctx = ("Plan:\n" + plan_json + "\n\n" + _photo_lines(photos)
                + ("\n\nFooter photo credit line (put it in <small class=\"credits\">): "
                   + plan["credit"] if plan.get("credit") else ""))
+    elif name == "styles.css" and kit:
+        task = ("Write styles.css for this exact index.html. The page is already styled by Tailwind and DaisyUI, "
+                "and the palette and fonts are added to this file automatically - do not define colours or font-family. "
+                "Write only: the menu rules (below 768px hide .site-nav unless body.nav-open, show .nav-toggle only there), "
+                ".reveal / .reveal.is-visible with a prefers-reduced-motion override, and any keyframes, decorative "
+                "gradients or image overlays the page's classes cannot express. Never restyle bare elements. Keep it short.")
+        ctx = "Plan:\n" + plan_json + "\n\nPage outline (every tag, class and id of index.html):\n" + _html_outline(files.get("index.html", ""))
     elif name == "styles.css":
         task = ("Write styles.css for this exact index.html: style every class and element it uses. "
                 "Define the plan's palette and fonts as :root custom properties and use them everywhere. "
@@ -396,7 +513,7 @@ def _fix_messages(name: str, plan: dict, files: dict, problems: list[str]) -> li
     if name in ("styles.css", "script.js"):
         ctx = "Page outline:\n" + _html_outline(files.get("index.html", "")) + "\n\n"
     return [
-        {"role": "system", "content": DESIGN + "\n\n" + CONTRACT},
+        {"role": "system", "content": DESIGN + "\n\n" + _contract(plan)},
         {"role": "user", "content": (
             ctx + "Current " + name + ":\n" + files.get(name, "") + "\n\n"
             "A review found these problems:\n- " + "\n- ".join(problems) + "\n\n"
@@ -432,7 +549,7 @@ Built with RandomGenerals.
 ## Files
 
 - `index.html` - the page
-- `styles.css` - all styling ({plan['fonts']['display']} and {plan['fonts']['body']}, palette in `:root`)
+- `styles.css` - {"the theme and the few custom rules; the page itself is styled with [Tailwind CSS](https://tailwindcss.com) and [DaisyUI](https://daisyui.com) classes, loaded from jsDelivr" if uses_kit(plan) else "all styling"} ({plan['fonts']['display']} and {plan['fonts']['body']}, palette in `:root`)
 - `script.js` - mobile menu, scroll reveal, and form submission
 - `app.py` - a small Flask backend that serves the site and stores form submissions
 - `requirements.txt` - Python dependencies
@@ -543,6 +660,7 @@ def build(brief: str, photos: list[dict], credit: str, llm):
             log("plan did not parse twice; building from the default plan")
     plan = normalise_plan(obj, brief)
     plan["credit"] = credit
+    plan["kit"] = KIT
     yield ("step", "plan", "done", "Planned %s: %d sections, %s" % (
         plan["name"], len(plan["sections"]), ", ".join(f["name"] + " form" for f in plan["forms"])))
 
@@ -558,6 +676,8 @@ def build(brief: str, photos: list[dict], credit: str, llm):
         yield ("step", name, "done", "Wrote %s (%.1f KB)" % (name, len(files[name]) / 1024))
 
     fixed = yield from _review(llm, plan, files)
+    files["index.html"] = _repair_html(files["index.html"], False, uses_kit(plan))
+    add_theme(files, plan)
     add_safety(files)
     files["requirements.txt"] = "flask>=3.0\n"
     files.update(local_kit(plan, files, False))
@@ -579,6 +699,11 @@ def revise(instruction: str, project: dict, photos: list[dict], llm):
         plan = normalise_plan(decision["plan"], instruction)
         plan["slug"] = project["plan"].get("slug") or plan["slug"]
     plan["credit"] = plan.get("credit") or project["plan"].get("credit", "")
+    # The kit is the project's, not the reviser's to pick: a hand-styled
+    # site stays hand-styled, a kit site keeps its kit.
+    plan.pop("kit", None)
+    if uses_kit(project["plan"]):
+        plan["kit"] = KIT
     touched = [n for n in ["index.html", "styles.css", "script.js", "app.py"]
                if n in (decision.get("files") or [])] or ["index.html", "styles.css"]
     yield ("step", "plan", "done", decision.get("summary") or "Changing " + ", ".join(touched))
@@ -594,6 +719,9 @@ def revise(instruction: str, project: dict, photos: list[dict], llm):
         yield ("step", name, "done", "Updated %s (%.1f KB)" % (name, len(files[name]) / 1024))
 
     fixed = yield from _review(llm, plan, files)
+    if "index.html" in files:
+        files["index.html"] = _repair_html(files["index.html"], False, uses_kit(plan))
+    add_theme(files, plan)
     add_safety(files)
     files["requirements.txt"] = files.get("requirements.txt") or "flask>=3.0\n"
     files.update(local_kit(plan, files, False))
@@ -628,8 +756,21 @@ def _review(llm, plan, files):
 REWRITE_LIMIT = 14000
 
 
-def _repair_html(html: str, premium: bool) -> str:
+def _repair_html(html: str, premium: bool, kit: bool = False) -> str:
     """Insert missing stylesheet links and script tags - no model needed."""
+    if kit and not premium:
+        # The kit before styles.css, so the page's own rules come last.
+        if DAISY_URL not in html or TAILWIND_URL not in html:
+            html = re.sub(r'<link[^>]*href="%s"[^>]*>\s*' % re.escape(DAISY_URL), "", html)
+            html = re.sub(r'<script[^>]*src="%s"[^>]*>\s*</script>\s*' % re.escape(TAILWIND_URL), "", html)
+            link = re.search(r'<link[^>]*href="styles\.css"[^>]*>', html)
+            if link:
+                html = html[:link.start()] + KIT_TAGS + "\n" + html[link.start():]
+            elif "</head>" in html:
+                html = html.replace("</head>", KIT_TAGS + "\n</head>", 1)
+        # DaisyUI follows the visitor's dark mode unless the page names a
+        # theme, and the palette it was built with is a light one.
+        html = re.sub(r"<html\b(?![^>]*\bdata-theme=)", '<html data-theme="light"', html, count=1)
     css = ["css/tokens.css", "css/main.css"] if premium else ["styles.css"]
     js = PREMIUM_JS if premium else ["script.js"]
     for href in css:
@@ -647,7 +788,7 @@ def _css_additions_messages(name, plan, files, problems, premium):
     root = (re.search(r":root\s*\{[^}]*\}", tokens or current) or [""])[0] if (tokens or current) else ""
     return [
         {"role": "system", "content": (PREMIUM_DESIGN if premium else DESIGN) + "\n\n"
-         + (PREMIUM_CONTRACT if premium else CONTRACT)},
+         + (PREMIUM_CONTRACT if premium else _contract(plan))},
         {"role": "user", "content": (
             "The stylesheet " + name + " already exists and is good; do NOT rewrite it. "
             "A review found it is missing rules:\n- " + "\n- ".join(problems) + "\n\n"
@@ -664,7 +805,7 @@ def _fix_one(llm, name, plan, files, problems, premium):
     before = files.get(name, "")
     try:
         if name == "index.html":
-            repaired = _repair_html(before, premium)
+            repaired = _repair_html(before, premium, uses_kit(plan))
             if repaired != before:
                 files[name] = before = repaired
                 left = (check_premium if premium else check_files)(files, plan).get(name)
