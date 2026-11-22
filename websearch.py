@@ -197,6 +197,72 @@ def _brave(query, limit=5):
             for h in hits if h.get("url")][:limit]
 
 
+# Parallel's credits are a fixed pot, not a monthly free tier, so a
+# single script hammering web_search must not be able to drain it in an
+# afternoon. A day's allowance per process; past it, the free backends
+# below carry on alone. "fast" mode is $1 per 1,000 searches, so the
+# default 2,000 a day is at most $2.
+_PARALLEL_DAY = {"day": "", "count": 0}
+
+
+def _parallel_allowance():
+    try:
+        cap = int(os.environ.get("PARALLEL_DAILY_LIMIT", "2000"))
+    except ValueError:
+        cap = 2000
+    today = time.strftime("%Y-%m-%d")
+    if _PARALLEL_DAY["day"] != today:
+        _PARALLEL_DAY.update(day=today, count=0)
+    if _PARALLEL_DAY["count"] >= cap:
+        return False
+    _PARALLEL_DAY["count"] += 1
+    return True
+
+
+def _parallel(query, limit=5):
+    """Parallel's Search API - built for an assistant reading the
+    results, so instead of a one-line snippet each hit comes with
+    excerpts of the page that actually bear on the question. That is
+    the difference between the model quoting a fact and guessing at one.
+
+    Off unless PARALLEL_API_KEY is set. Out of credits, over the daily
+    allowance, or down: it returns nothing and the others answer.
+    """
+    key = os.environ.get("PARALLEL_API_KEY", "").strip()
+    if not key or not _parallel_allowance():
+        return []
+    try:
+        r = requests.post(
+            "https://api.parallel.ai/v1/search",
+            headers={"x-api-key": key, "Content-Type": "application/json"},
+            json={
+                "objective": "Find current, factual information that "
+                             "answers this question from a chat user: "
+                             + query,
+                "search_queries": [query],
+                "mode": "fast",
+                "max_chars_total": 5000,
+                "advanced_settings": {"max_results": min(max(limit, 1), 10)},
+            },
+            timeout=TIMEOUT + 7)
+        if r.status_code != 200:
+            return []
+        hits = r.json().get("results") or []
+    except (requests.RequestException, ValueError):
+        return []
+
+    out = []
+    for h in hits:
+        url = h.get("url") or ""
+        if not url:
+            continue
+        excerpt = " ".join(h.get("excerpts") or [])
+        out.append({"title": _clean(h.get("title") or "") or url,
+                    "url": url,
+                    "snippet": _trim(_clean(excerpt), 900)})
+    return out[:limit]
+
+
 # ------------------------------------------------------------------ public
 
 # Words too common to prove a result has anything to do with the query.
@@ -314,7 +380,8 @@ def search(query, max_results=5):
     # Order matters: an independent crawler first for breadth, then the
     # encyclopedia for anything factual, then the one most likely to
     # refuse us.
-    for backend, source in ((_brave, "brave"),
+    for backend, source in ((_parallel, "parallel"),
+                            (_brave, "brave"),
                             (_marginalia, "marginalia"),
                             (_wikipedia, "wikipedia"),
                             (_duckduckgo, "web")):
@@ -337,7 +404,8 @@ def which_backends():
     reports a false failure is worse than no diagnostic.
     """
     state = {}
-    for name, fn in (("brave", _brave),
+    for name, fn in (("parallel", _parallel),
+                     ("brave", _brave),
                      ("marginalia", _marginalia),
                      ("wikipedia", _wikipedia),
                      ("duckduckgo", _duckduckgo)):
