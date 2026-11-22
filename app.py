@@ -9552,10 +9552,17 @@ def _builder_llm(usage: dict, use_gemma: bool = False):
         gemma = _gemma_model() if (use_gemma and not deepseek) else None
         if gemma:
             order = [("google", gemma)] + order
+        # Gemini writes every site when the Google key has it - free, and
+        # the only model measured here to write one worth publishing.
+        # Everything above stays behind it: busy or out of quota, the step
+        # goes to the next model instead of failing the build.
+        gemini = google_api.site_model()
+        if gemini:
+            order = [("google", gemini)] + [o for o in order if o[1] != gemini]
         order = [o for o in order if o[1] not in daily_out
                  and not (o[0] == "openrouter" and not openrouter_api.is_free(o[1])
                           and not openrouter_api.has_credit())
-                 and not (o[0] == "google" and not google_api.ready())] or order
+                 and not (o[0] == "google" and not google_api.ready(o[1]))] or order
         if not order:
             raise RuntimeError("No model is available to build with.")
         opts = {"num_predict": max_tokens, "temperature": 0.4,
@@ -9581,9 +9588,11 @@ def _builder_llm(usage: dict, use_gemma: bool = False):
             pool.shutdown(wait=False)
             if isinstance(err, providers.ProviderUnavailable) and provider == "google" \
                     and len(order) > 1:
-                # Gemma's free tier is out for now: hand the step to Groq
-                # at once instead of waiting on Google's cool-down.
-                order = [o for o in order if o[0] != "google"] or order
+                # This Google model is busy or out of free quota for now:
+                # hand the step to the next model at once instead of
+                # waiting on Google's cool-down. Only this one - Google's
+                # quotas are per model.
+                order = [o for o in order if o != (provider, model)] or order
                 idx = 0
                 continue
             if isinstance(err, providers.ProviderUnavailable) or (

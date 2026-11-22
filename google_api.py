@@ -56,7 +56,26 @@ def strip_thoughts(text):
         return ""
     return _THOUGHT.sub("", text, count=1)
 
-_state = {"cool_until": 0.0, "no_system": False, "last_error": ""}
+# Per model: Google's free quotas are per model, so Gemini running out
+# for the day says nothing about Gemma - one shared pause used to take
+# Gemma out of the chat whenever anything else on the key hit a limit.
+_state = {"cool_until": {}, "no_system": False, "last_error": ""}
+
+# The model that builds websites. Measured on this key (2026-11-22):
+# Gemini 3.5 Flash answered on the free tier and wrote a clean, complete
+# DaisyUI site; gpt-oss and Gemma 4 wrote sites nobody would publish.
+# The Pro models have no free quota at all. GEMINI_SITE_MODEL changes it.
+SITE_MODEL = "gemini-3.5-flash"
+# Gemini thinks inside the same token allowance as Gemma does, and on a
+# whole stylesheet or page it thinks for longer.
+GEMINI_THINKING_ALLOWANCE = 4096
+
+
+def site_model():
+    """The Gemini model for the website builder, or None without a key."""
+    if not configured():
+        return None
+    return (os.environ.get("GEMINI_SITE_MODEL") or SITE_MODEL).strip() or None
 
 
 def api_key():
@@ -112,19 +131,34 @@ def _with_images(messages, images):
     return out
 
 
-def ready():
-    """Configured and not cooling down after a rate limit."""
-    return configured() and time.time() >= _state["cool_until"]
+def ready(model=None):
+    """Configured and this model not cooling down after a rate limit.
+    No model means the chat's Gemma."""
+    model = model or model_id()
+    return configured() and time.time() >= _state["cool_until"].get(model, 0.0)
 
 
-def cool_down(seconds):
+def cool_down(seconds, model=None, daily=False):
+    model = model or model_id()
     try:
         seconds = float(seconds)
     except (TypeError, ValueError):
         seconds = 60.0
-    seconds = max(10.0, min(seconds, 3600.0))
-    _state["cool_until"] = time.time() + seconds
-    print("[google] rate limited - Gemma paused for %ds, Groq answers meanwhile" % seconds)
+    # A day's quota spent comes back no sooner for asking every minute;
+    # an hour's pause costs one refused request an hour instead of sixty.
+    seconds = max(10.0, min(max(seconds, 3600.0 if daily else 0.0), 3600.0))
+    _state["cool_until"][model] = time.time() + seconds
+    print("[google] rate limited - %s paused for %ds%s, others answer meanwhile"
+          % (model, seconds, " (daily quota)" if daily else ""))
+
+
+def _rate_limited(r, model):
+    """A 429: pause this model and raise. Google names a per-day quota
+    in the message when that is the one spent."""
+    text = (r.text or "").lower()
+    daily = "perday" in text.replace(" ", "").replace("_", "") or "per day" in text
+    cool_down(r.headers.get("retry-after") or 60, model, daily)
+    raise RateLimited(r.headers.get("retry-after") or "%s rate limit" % model)
 
 
 def last_error():
@@ -168,7 +202,8 @@ def _body(model, history, options, stream, tools=None, images=None):
     if tools:
         body["tools"] = tools
         body["tool_choice"] = "auto"
-    body["max_tokens"] = int(opts.get("num_predict") or 2048) + THINKING_ALLOWANCE
+    body["max_tokens"] = int(opts.get("num_predict") or 2048) + (
+        GEMINI_THINKING_ALLOWANCE if body["model"].startswith("gemini") else THINKING_ALLOWANCE)
     if "temperature" in opts:
         body["temperature"] = opts["temperature"]
     if stream:
@@ -203,8 +238,12 @@ def chat_once(model, history, tools=None, options=None, timeout=TIMEOUT):
             continue
         break
     if r.status_code == 429:
-        cool_down(r.headers.get("retry-after") or 60)
-        raise RateLimited(r.headers.get("retry-after") or "Gemma rate limit")
+        _rate_limited(r, model or model_id())
+    if r.status_code in (500, 502, 503, 504):
+        # "This model is currently experiencing high demand" - Google's
+        # problem, not this request's, so the caller's failover takes it.
+        _refusal(r)
+        raise Unreachable("Google returned %d for %s" % (r.status_code, model or model_id()))
     if r.status_code != 200:
         why = _refusal(r)
         print("[google] turn refused %d: %s" % (r.status_code, why[:200]))
@@ -224,8 +263,8 @@ def stream_chat(model, history, options=None, images=None, usage=None):
     """Stream a reply. Yields text pieces."""
     if not configured():
         raise Unreachable("Google AI Studio is not configured")
-    if not ready():
-        raise RateLimited("Gemma is cooling down after a rate limit")
+    if not ready(model):
+        raise RateLimited("%s is cooling down after a rate limit" % (model or model_id()))
     finish = None
     sent_any = False
     try:
@@ -240,8 +279,7 @@ def stream_chat(model, history, options=None, images=None, usage=None):
             break
         with r:
             if r.status_code == 429:
-                cool_down(r.headers.get("retry-after") or 60)
-                raise RateLimited(r.headers.get("retry-after") or "Gemma rate limit")
+                _rate_limited(r, model or model_id())
             if r.status_code != 200:
                 why = _refusal(r)
                 print("[google] stream refused %d: %s" % (r.status_code, why[:200]))
